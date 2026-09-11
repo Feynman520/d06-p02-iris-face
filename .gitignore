@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .playwright-mcp/
 _archive/
+modules/
 
 # docs 는 설계·디자인·각인 캡처만 공개한다. 구현계획·조사 근거·조합 규칙표·실측·스파이크·시안 갤러리는 제작 기록(내부).
 docs/*
@@ -12,3 +13,4 @@ docs/*
 !docs/디자인.md
 !docs/각인-*.png
 !docs/readme-*.png
+!docs/모듈-계약-v1.md
