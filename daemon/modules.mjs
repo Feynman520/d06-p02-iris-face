@@ -75,9 +75,46 @@ export class ModuleHost {
   list() {
     return [...this.mods.values()].map(m => ({ name: m.name, label: String(m.info?.label || m.name), icon: String(m.info?.icon || '▫'), version: String(m.info?.version || '?'), contract: Number(m.info?.contract) || null, grade: Number(m.info?.grade ?? 0), status: m.status, reason: m.reason || '', panel: m.panel, badge: m.badge || 0, official: !!m.official, pid: m.pid }));
   }
-  // ---- 프로세스(Task 4) ----
-  start(name) { throw new Error('not implemented'); }
-  stop(name) { return Promise.resolve(); }
+  // ---- 프로세스: node <entry> 를 자식으로. stdin/stdout = 계약 전선, stderr = 로그. PID 는 메모리 + 로그. ----
+  start(name) {
+    const m = this.mods.get(name); if (!m || m.proc || m.status !== 'stopped') return;
+    const stateDir = path.join(m.dir, 'state'); fs.mkdirSync(stateDir, { recursive: true });
+    const entry = path.join(m.dir, String(m.info.entry || 'index.mjs'));
+    const proc = spawn(process.execPath, [entry], { cwd: m.dir, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, IRIS_MODULE_NAME: name, IRIS_MODULE_STATE: stateDir } });
+    m.proc = proc; m.pid = proc.pid; m.status = 'running'; m.reason = ''; m.stopping = false; m.panel = null; m.badge = 0;
+    this.log(`module start ${name} pid=${proc.pid}`);
+    readline.createInterface({ input: proc.stdout }).on('line', (line) => this._line(m, line));
+    readline.createInterface({ input: proc.stderr }).on('line', (line) => this.log(`module ${name} stderr: ${line.slice(0, 300)}`));
+    proc.on('error', (e) => this.log(`module ${name} spawn error: ${e.message}`));
+    proc.on('exit', (code, sig) => {
+      const wasStopping = m.stopping; m.proc = null; m.pid = null; m.panel = null; m.badge = 0;
+      if (wasStopping) { m.status = 'stopped'; m.reason = ''; this.log(`module exit ${name} (requested)`); }
+      else if (m.restarts < this.restartMax) { m.restarts++; m.status = 'stopped'; this.log(`module exit ${name} code=${code} sig=${sig} → restart ${m.restarts}/${this.restartMax}`); setTimeout(() => { if (!m.proc && m.status === 'stopped') this.start(name); }, this.restartDelayMs); }
+      else { m.status = 'failed'; m.reason = `crashed ${this.restartMax} times (last code=${code})`; this.log(`module exit ${name} → failed`); }
+      this.onChange();
+    });
+    this._send(m, { t: 'hello', contract: CONTRACT, face: this.faceVersion, stateDir, lang: this.lang, theme: this.theme() });
+    this.onChange();
+  }
+  stop(name) {
+    const m = this.mods.get(name); if (!m || !m.proc) return Promise.resolve();
+    m.stopping = true; const proc = m.proc; this._send(m, { t: 'shutdown' });
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { if (m.proc === proc) { this.log(`module ${name} ignored shutdown → kill pid=${proc.pid}`); try { proc.kill(); } catch {} } }, 2000);
+      proc.once('exit', () => { clearTimeout(timer); setTimeout(resolve, 10); });
+    });
+  }
   startAll() { for (const m of this.mods.values()) if (m.status === 'stopped') this.start(m.name); }
   stopAll() { return Promise.all([...this.mods.keys()].map(n => this.stop(n))); }
+  _send(m, obj) { try { m.proc?.stdin.write(JSON.stringify(obj) + '\n'); } catch (e) { this.log(`module ${m.name} stdin write failed: ${e.message}`); } }
+  // 허용 목록: panel · badge · notify · queue(무시). 그 밖은 버리고 로그.
+  _line(m, line) {
+    let msg; try { msg = JSON.parse(line); } catch { this.log(`module ${m.name} not json: ${line.slice(0, 120)}`); return; }
+    const t = msg?.t;
+    if (t === 'panel') { const url = String(msg.url || ''); if (/^http:\/\/127\.0\.0\.1:\d+\//.test(url) && url.length <= 300) { m.panel = url; this.onChange(); } else this.log(`module ${m.name} panel rejected: ${url.slice(0, 120)}`); }
+    else if (t === 'badge') { m.badge = Math.max(0, Math.min(999, Math.floor(Number(msg.count) || 0))); this.onChange(); }
+    else if (t === 'notify') { const s = (v, n) => String(v ?? '').slice(0, n); this.onNotify({ module: m.name, title: s(msg.title, 80) || m.info?.label || m.name, sub: s(msg.sub, 120), target: s(msg.target, 120) }); }
+    else if (t === 'queue') this.log(`module ${m.name} queue ignored (contract v1)`);
+    else this.log(`module ${m.name} dropped: ${String(t).slice(0, 60)}`);
+  }
 }

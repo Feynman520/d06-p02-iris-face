@@ -84,6 +84,54 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   ok(none.list().length === 0, 'scan: modules 폴더 없음 → 빈 목록(오류 없음)');
 }
 
+// ---- 4) 프로세스·계약 v1 ----
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+{
+  const FACE = '2.43.0';
+  const logs = []; const notes = []; let changes = 0;
+  const FIX = path.resolve('scripts/fixtures/hello-module');
+  const hd = path.join(tmp, 'mods4', 'hello'); fs.mkdirSync(hd, { recursive: true });
+  for (const f of ['module.json', 'index.mjs']) fs.copyFileSync(path.join(FIX, f), path.join(hd, f));
+  // 모르는 말·잘못된 panel·hello 로 받은 값 되돌려 보기
+  fs.mkdirSync(path.join(tmp, 'mods4', 'noisy'));
+  fs.writeFileSync(path.join(tmp, 'mods4', 'noisy', 'module.json'), JSON.stringify({ name: 'noisy', contract: 1, grade: 0, version: '1', entry: 'index.mjs' }));
+  fs.writeFileSync(path.join(tmp, 'mods4', 'noisy', 'index.mjs'), `import readline from 'node:readline';
+    const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+    out({ t: 'sessions.list' }); out({ t: 'panel', url: 'http://example.com/evil' }); out({ t: 'badge', count: -5 }); out({ t: 'queue', x: 1 });
+    process.stdout.write('this is not json\\n');
+    readline.createInterface({ input: process.stdin }).on('line', (l) => { const m = JSON.parse(l); if (m.t === 'hello') out({ t: 'notify', title: 'got ' + m.contract + ' ' + (m.sessions === undefined ? 'nosess' : 'SESS'), sub: m.stateDir, target: 'x' }); if (m.t === 'shutdown') process.exit(0); });`);
+  // 곧바로 죽는 모듈
+  fs.mkdirSync(path.join(tmp, 'mods4', 'crash'));
+  fs.writeFileSync(path.join(tmp, 'mods4', 'crash', 'module.json'), JSON.stringify({ name: 'crash', contract: 1, grade: 0, version: '1', entry: 'index.mjs' }));
+  fs.writeFileSync(path.join(tmp, 'mods4', 'crash', 'index.mjs'), 'process.exit(1);');
+  // shutdown 을 무시하는 모듈(강제 종료 확인)
+  fs.mkdirSync(path.join(tmp, 'mods4', 'stubborn'));
+  fs.writeFileSync(path.join(tmp, 'mods4', 'stubborn', 'module.json'), JSON.stringify({ name: 'stubborn', contract: 1, grade: 0, version: '1', entry: 'index.mjs' }));
+  fs.writeFileSync(path.join(tmp, 'mods4', 'stubborn', 'index.mjs'), 'process.stdin.resume(); setInterval(() => {}, 1000);');
+
+  const host = new ModuleHost({ dir: path.join(tmp, 'mods4'), faceVersion: FACE, log: (m) => logs.push(m), onChange: () => changes++, onNotify: (n) => notes.push(n), restartDelayMs: 50, theme: () => ({ id: 'ember', mode: 'dark' }) });
+  host.scan(); host.startAll();
+  await sleep(1500);
+  const by = () => Object.fromEntries(host.list().map(m => [m.name, m]));
+  ok(by().hello.status === 'running' && typeof by().hello.pid === 'number', 'proc: hello 실행 중·pid 있음');
+  ok(/^http:\/\/127\.0\.0\.1:\d+\/\?t=[0-9a-f]{16}$/.test(by().hello.panel || ''), 'proc: hello 가 보낸 panel 주소(127.0.0.1+토큰) 반영');
+  ok(by().hello.badge === 0, 'proc: hello 가 hello 응답으로 보낸 badge 0');
+  ok(by().noisy.panel === null, 'proc: 127.0.0.1 이 아닌 panel 주소는 거부');
+  ok(by().noisy.badge === 0, 'proc: 음수 badge 는 0 으로');
+  ok(logs.some(l => /noisy.*dropped.*sessions\.list/.test(l)), 'proc: 모르는 말은 버리고 로그(dropped)');
+  ok(logs.some(l => /noisy.*queue.*ignored/.test(l)), 'proc: queue 는 받되 무시(로그 ignored)');
+  ok(logs.some(l => /noisy.*not json/.test(l)), 'proc: JSON 아닌 줄은 로그만');
+  ok(notes.length === 1 && notes[0].module === 'noisy' && notes[0].title === 'got 1 nosess' && notes[0].sub === path.join(tmp, 'mods4', 'noisy', 'state') && notes[0].target === 'x', 'proc: hello 에 contract·stateDir 있고 sessions 없음 → notify 콜백');
+  ok(fs.existsSync(path.join(tmp, 'mods4', 'noisy', 'state')), 'proc: stateDir 폴더를 코어가 만들어 둠');
+  ok(by().crash.status === 'failed' && /3/.test(by().crash.reason), 'proc: 즉시 죽는 모듈 = 재시작 3회 뒤 failed');
+  await host.stop('hello'); await sleep(100);
+  ok(by().hello.status === 'stopped' && by().hello.panel === null && by().hello.pid === null, 'proc: stop → shutdown 으로 끝남·panel/pid 비움');
+  const t0 = Date.now(); await host.stop('stubborn'); const dt = Date.now() - t0;
+  ok(by().stubborn.status === 'stopped' && dt >= 1900 && dt < 4000, `proc: shutdown 무시 → 2초 뒤 그 PID 만 kill (${dt}ms)`);
+  await host.stopAll();
+  ok(changes > 5, 'proc: onChange 가 전환마다 호출됨');
+}
+
 // ---- 끝 ----
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} PASS / ${fail} FAIL`);
