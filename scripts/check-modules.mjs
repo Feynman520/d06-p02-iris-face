@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { zipRead, zipWrite } from '../daemon/zip.mjs';
 import { buildManifest, signManifest, verifyManifest, generateKeyPair, OFFICIAL_PUBLIC_KEYS } from '../daemon/modsign.mjs';
+import { ModuleHost, validateInfo, semverGte, CONTRACT } from '../daemon/modules.mjs';
 
 let pass = 0, fail = 0;
 const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } else { fail++; console.log(`FAIL ${name}`); } };
@@ -41,6 +42,39 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   const other = generateKeyPair();
   ok(verifyManifest(text, sig, [{ id: 'o', pem: other.publicPem }]).ok === false, 'sign: 다른 열쇠로 실패');
   ok(Array.isArray(OFFICIAL_PUBLIC_KEYS) && OFFICIAL_PUBLIC_KEYS.length >= 1 && /BEGIN PUBLIC KEY/.test(OFFICIAL_PUBLIC_KEYS[0].pem), 'sign: 공식 공개 열쇠가 소스에 1개 이상');
+}
+
+// ---- 3) module.json 검증·탐색(프로세스 없음) ----
+{
+  const FACE = '2.43.0';
+  const mkmod = (name, patch = {}, entry = 'process.stdin.resume();') => {
+    const d = path.join(tmp, 'mods', name); fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'module.json'), JSON.stringify({ name, label: name, icon: '·', version: '0.1.0', contract: 1, grade: 0, minFace: '2.43.0', entry: 'index.mjs', ...patch }), 'utf8');
+    fs.writeFileSync(path.join(d, 'index.mjs'), entry, 'utf8');
+    return d;
+  };
+  ok(semverGte('2.43.0', '2.43.0') && semverGte('2.43.1', '2.43.0') && semverGte('3.0.0', '2.99.9') && !semverGte('2.42.9', '2.43.0'), 'semverGte');
+  ok(validateInfo({ name: 'good', contract: 1, grade: 0, minFace: '2.43.0', version: '1.0.0' }, FACE).ok, 'validateInfo: 정상');
+  ok(validateInfo({ name: 'Bad Name', contract: 1, grade: 0, version: '1' }, FACE).status === 'incompatible', 'validateInfo: 이름 규칙 위반 → incompatible');
+  ok(validateInfo({ name: 'c2', contract: 2, grade: 0, version: '1' }, FACE).status === 'incompatible', 'validateInfo: 계약 v2 → incompatible');
+  ok(validateInfo({ name: 'newer', contract: 1, grade: 0, minFace: '9.0.0', version: '1' }, FACE).status === 'incompatible', 'validateInfo: minFace 초과 → incompatible');
+  ok(validateInfo({ name: 'g1', contract: 1, grade: 1, version: '1' }, FACE).status === 'grade-unsupported', 'validateInfo: 등급 1 → grade-unsupported');
+  mkmod('good'); mkmod('c2', { contract: 2 }); mkmod('g1', { grade: 1 });
+  fs.mkdirSync(path.join(tmp, 'mods', 'noentry')); fs.writeFileSync(path.join(tmp, 'mods', 'noentry', 'module.json'), JSON.stringify({ name: 'noentry', contract: 1, grade: 0, version: '1' }));
+  fs.mkdirSync(path.join(tmp, 'mods', 'notjson')); fs.writeFileSync(path.join(tmp, 'mods', 'notjson', 'module.json'), '{oops');
+  fs.writeFileSync(path.join(tmp, 'mods', 'stray.txt'), 'x');
+  const host = new ModuleHost({ dir: path.join(tmp, 'mods'), faceVersion: FACE, log: () => {} });
+  host.scan();
+  const by = Object.fromEntries(host.list().map(m => [m.name, m]));
+  ok(Object.keys(by).sort().join(',') === 'c2,g1,good,noentry,notjson', 'scan: 폴더 5개 모두 목록에(파일은 무시)');
+  ok(by.good.status === 'stopped' && by.good.contract === CONTRACT && by.good.official === false, 'scan: 정상 모듈 = stopped·비공식(.official 없음)');
+  ok(by.c2.status === 'incompatible' && by.g1.status === 'grade-unsupported', 'scan: 계약·등급 상태');
+  ok(by.noentry.status === 'incompatible' && /entry/.test(by.noentry.reason), 'scan: entry 파일 없음 → incompatible(reason 에 entry)');
+  ok(by.notjson.status === 'incompatible' && /json/i.test(by.notjson.reason), 'scan: module.json 깨짐 → incompatible');
+  fs.writeFileSync(path.join(tmp, 'mods', 'good', '.official'), JSON.stringify({ keyId: '2026-09' }));
+  host.scan(); ok(host.list().find(m => m.name === 'good').official === true, 'scan: .official 표시 파일 → official true');
+  const none = new ModuleHost({ dir: path.join(tmp, 'no-such-dir'), faceVersion: FACE, log: () => {} }); none.scan();
+  ok(none.list().length === 0, 'scan: modules 폴더 없음 → 빈 목록(오류 없음)');
 }
 
 // ---- 끝 ----

@@ -1,0 +1,1 @@
+{ "name": "hello", "label": "Hello", "icon": "💬", "version": "0.1.0", "contract": 1, "grade": 0, "minFace": "2.43.0", "entry": "index.mjs" }
