@@ -27,6 +27,8 @@ window.SubPanel = (() => {
   const listOf = (id) => lists.get(id) || [];
   const find = () => cur ? listOf(cur.id).find(s => s.key === cur.key) || null : null;
   const running = (id) => listOf(id).filter(s => s.status === 'running').length;
+  /** 살아 있는 보조 = running + quiet(완료 신호 없이 조용한 것 — 완료라고 단정하지 않으므로 '끝남'으로 세지 않는다, v2.40.1) */
+  const alive = (id) => listOf(id).filter(s => s.status === 'running' || s.status === 'quiet').length;
 
   /** 데몬의 보조 목록 도착(세션 어느 것이든). 보고 있는 세션이면 칩 갱신, 서랍이 그 세션이면 탭·머리 갱신. */
   function setList(id, list) {
@@ -91,5 +93,5 @@ window.SubPanel = (() => {
       grip.onpointermove = move; grip.onpointerup = grip.onpointercancel = up;
     };
   }
-  return { init, setList, onSession, onTranscript, open, close, isOpen, running, list: listOf };
+  return { init, setList, onSession, onTranscript, open, close, isOpen, running, alive, list: listOf };
 })();

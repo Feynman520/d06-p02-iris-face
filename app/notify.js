@@ -66,8 +66,8 @@ window.Notify = (() => {
   function dropPending(id) { const p = pending.get(id); if (!p) return; if (p.timer) clearTimeout(p.timer); pending.delete(id); }
 
   /** 데몬 status 방송 → 알림 판단. m = { id, status, done }, s = 세션 레코드(상태 갱신 전·후 무관: 제목·폴더·조합만 쓴다).
-   *  subsRunning = 그 세션에서 지금 실행 중인 보조 수(있으면 알림 보류). */
-  function onStatus(m, s, subsRunning = 0) {
+   *  subsAlive = 그 세션에서 살아 있는 보조 수(running + quiet; 있으면 알림 보류 — 조용한 것도 끝난 게 아니다, v2.40.1). */
+  function onStatus(m, s, subsAlive = 0) {
     if (m.status === 'busy') {
       // 보류 중이던 세션이 다시 일한다(보조가 끝나 메인이 깨어남): 보류를 지우되 시작 시각은 이어 간다(보조 시간까지 걸린 시간에 포함)
       const p = pending.get(m.id); dropPending(m.id);
@@ -75,13 +75,13 @@ window.Notify = (() => {
     }
     if (!m.done) return;
     const started = busyAt.get(m.id); busyAt.delete(m.id);
-    if (subsRunning > 0) { dropPending(m.id); pending.set(m.id, { m, s, started, timer: null }); return; }
+    if (subsAlive > 0) { dropPending(m.id); pending.set(m.id, { m, s, started, timer: null }); return; }
     fire(m, s, started, 0);
   }
-  /** 보조 목록 변화(실행 중 수·전체 수). 보류가 있는 세션만 본다: 실행 중이 0이 되면 3초 뒤에도 메인이 조용하면 보류 알림을 띄운다. */
-  function onSubs(id, running, total, s) {
+  /** 보조 목록 변화(살아 있는 수·전체 수). 보류가 있는 세션만 본다: 살아 있는 보조가 0이 되면 3초 뒤에도 메인이 조용하면 보류 알림을 띄운다. */
+  function onSubs(id, alive, total, s) {
     const p = pending.get(id); if (!p) return;
-    if (running > 0) { if (p.timer) { clearTimeout(p.timer); p.timer = null; } return; }
+    if (alive > 0) { if (p.timer) { clearTimeout(p.timer); p.timer = null; } return; }
     if (p.timer) return;
     p.timer = setTimeout(() => { if (pending.get(id) !== p) return; pending.delete(id); fire(p.m, s || p.s, p.started, total); }, SUBS_GRACE_MS);
   }
