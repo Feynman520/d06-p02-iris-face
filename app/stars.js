@@ -23,13 +23,18 @@ function makeStarEngine() {
   // ---- 서명(2026-09-10 각인): 별들이 잠시 글자 모양으로 모였다가 제자리로. 별 개수·스타일은 손대지 않고 그리는 자리만 섞는다. ----
   const SIG = { in: 1.6, hold: 2.5, out: 1.2 }; // 초
   let sig = null, sigK = 0; const maskCache = new Map();
+  // 별 글자의 치수 한 곳: 글자 크기·가운데(x는 자간 뒤 여백만큼 보정해 눈에 보이는 가운데가 W/2)·세로 중심·글자 아랫선(문장을 그 아래에 놓을 때 씀)
+  function sigMetrics() {
+    const size = Math.max(24, Math.min(W * 0.115, H * 0.28)), cy = H / 2 - Math.min(56, H * 0.08);
+    return { size, cx: W / 2 + size * 0.09, cy, bottom: cy + size * 0.4 };
+  }
   function maskPoints(text) {
     const key = `${text}|${W}|${H}`; if (maskCache.has(key)) return maskCache.get(key);
     const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
-    const size = Math.max(24, Math.min(W * 0.115, H * 0.28));
+    const { size, cx, cy } = sigMetrics();
     g.font = `600 ${size}px "Segoe UI Variable Display","Segoe UI","Malgun Gothic",sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
     try { g.letterSpacing = `${Math.round(size * 0.18)}px`; } catch {}
-    g.fillStyle = '#fff'; g.fillText(text, W / 2 + size * 0.09, H / 2 - Math.min(56, H * 0.08));
+    g.fillStyle = '#fff'; g.fillText(text, cx, cy);
     const d = g.getImageData(0, 0, W, H).data, out = []; const step = Math.max(2, Math.round(size / 26));
     for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) if (d[(y * W + x) * 4 + 3] > 128) out.push([x, y]);
     maskCache.set(key, out); return out;
@@ -41,7 +46,7 @@ function makeStarEngine() {
     for (let i = m.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [m[i], m[j]] = [m[j], m[i]]; } // 섞어서 별↔글자점 짝을 고르게
     pts.forEach((p, i) => { const [x, y] = m[i % m.length]; p.tx = x + (Math.random() - 0.5) * 2.2; p.ty = y + (Math.random() - 0.5) * 2.2; });
     sig = { t: performance.now() }; kick();
-    return { in: SIG.in * 1000, hold: SIG.hold * 1000, out: SIG.out * 1000 };
+    return { in: SIG.in * 1000, hold: SIG.hold * 1000, out: SIG.out * 1000, bottom: sigMetrics().bottom }; // bottom = 별 글자 아랫선(px, 캔버스 기준)
   }
   const bl = (p, x, y) => (sigK && p.tx != null) ? [x + (p.tx - x) * sigK, y + (p.ty - y) * sigK] : [x, y]; // 서명 중 창 크기가 바뀌어 별이 새로 생기면(tx 없음) 그냥 제자리
 

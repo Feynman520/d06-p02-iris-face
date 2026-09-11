@@ -70,6 +70,11 @@ export class TranscriptTail {
     if (r.type === 'summary' || r.isCompactSummary) return [{ t, kind: 'compact', text: r.summary || '' }];
     if (r.type === 'ai-title') { if (typeof r.aiTitle === 'string' && r.aiTitle.trim()) this.aiTitle = r.aiTitle.trim(); return []; }
     if (r.isSidechain && !this.sub) { if (r.type === 'user' && r.parentUuid == null) this.sidechain.add(r.uuid); return r.type === 'user' && r.parentUuid == null ? [{ t, kind: 'subagent', n: this.sidechain.size }] : []; }
+    // 배경형 보조의 완료 알림이 부모가 작업 중(다른 도구 대기 중)에 도착하면 user 메시지가 아니라
+    // queue-operation(enqueue, reason absorbed_mid_turn)·attachment(queued_command) 레코드로만 남는다
+    // (클로드코드 2.1.268, 2026-09-11 실측: 11개 보조 전부 user 메시지 0건 → 영원히 quiet). 이 두 레코드에서도 완료 신호를 읽는다.
+    if (r.type === 'queue-operation') { if (r.operation === 'enqueue' && typeof r.content === 'string') this.noteTaskNotification(r.content, t); return []; }
+    if (r.type === 'attachment') { const p = r.attachment?.prompt; if (typeof p === 'string') this.noteTaskNotification(p, t); return []; }
     if (r.type !== 'user' && r.type !== 'assistant') return this.countUnknown(r.type, ['attachment', 'last-prompt', 'mode', 'permission-mode', 'atis-latch', 'ai-title', 'file-history-delta', 'file-history-snapshot', 'system', 'progress', 'queue-operation', 'atis', 'last-user-prompt', 'cost-state']);
     if (r.isMeta) return [];
     const m = r.message || {}; const c = m.content;
@@ -101,13 +106,16 @@ export class TranscriptTail {
     if (m.usage) this.lastUsage = { in: (m.usage.input_tokens || 0) + (m.usage.cache_read_input_tokens || 0) + (m.usage.cache_creation_input_tokens || 0), out: m.usage.output_tokens || 0 };
     return out;
   }
+  /** 배경형 보조 작업의 끝 = <task-notification>의 <tool-use-id>(부모 Agent 호출 id)와 <status>. user 본문·queue-operation·attachment 어디에 있든 같은 규칙. */
+  noteTaskNotification(s, t) {
+    const tn = s.match(/<task-notification>[\s\S]*?<tool-use-id>([^<]+)<\/tool-use-id>[\s\S]*?<status>([^<]+)<\/status>/);
+    if (tn && this.calls.has(tn[1].trim())) this.finished.set(tn[1].trim(), t);
+  }
   userText(t, s) {
     if (!s) return [];
     const cmd = s.match(/<command-name>([^<]+)<\/command-name>/);
     if (cmd) { const args = s.match(/<command-args>([^<]*)<\/command-args>/); return [{ t, kind: 'command', text: `${cmd[1]}${args && args[1] ? ' ' + args[1] : ''}` }]; }
-    // 배경형 보조 작업의 끝 = <task-notification>의 <tool-use-id>(부모 Agent 호출 id)와 <status>
-    const tn = s.match(/<task-notification>[\s\S]*?<tool-use-id>([^<]+)<\/tool-use-id>[\s\S]*?<status>([^<]+)<\/status>/);
-    if (tn && this.calls.has(tn[1].trim())) this.finished.set(tn[1].trim(), t);
+    this.noteTaskNotification(s, t);
     // 시스템이 만든 사용자 차례(서브에이전트 완료 알림·리마인더·로컬 명령 출력)는 요청이 아니므로 숨긴다
     if (/^\s*<(system-reminder|local-command-stdout|local-command-caveat|command-message|task-notification)/.test(s)) return [];
     // 본문 뒤에 붙는 system-reminder 는 잘라낸다

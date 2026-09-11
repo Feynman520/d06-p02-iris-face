@@ -402,12 +402,13 @@
   // ---------- 각인(2026-09-10): 첫 실행 1회 `by SEJUN HAM` + 워드마크 두 번 클릭(Ctrl+Alt+I) = 별이 SEJUN HAM 으로 모임 ----------
   const SIG_NAME = 'SEJUN HAM';
   let sigTimer = 0;
-  function sigShow({ name, motto, by, dur, delay, gap }) {
+  function sigShow({ name, motto, by, dur, delay, top }) {
     const el = $('#sig'); clearTimeout(sigTimer);
     el.classList.remove('run'); void el.offsetWidth; // 애니메이션 재시작
     $('#sig-name').textContent = name || ''; $('#sig-name').hidden = !name;
     $('#sig-motto').textContent = motto || '';
-    el.classList.toggle('sig-by', !!by); el.classList.toggle('gap', !!gap);
+    el.classList.toggle('sig-by', !!by);
+    el.classList.toggle('placed', top != null); el.style.top = top != null ? `${Math.round(top)}px` : ''; // placed = 별 글자 아래 정확한 자리(px), 아니면 세로 가운데
     el.style.setProperty('--sig-dur', dur + 'ms'); el.style.setProperty('--sig-delay', delay + 'ms');
     el.hidden = false; el.classList.add('run');
     sigTimer = setTimeout(() => { el.classList.remove('run'); el.hidden = true; }, dur + delay + 80);
@@ -416,7 +417,7 @@
     if (current) return; // 홈 화면(별이 보일 때)에서만
     const motto = Settings.health()?.about?.motto || '해결은 에이전트가, 정의는 우리가.';
     const r = IrisStars.signature(SIG_NAME);
-    if (r) sigShow({ motto, dur: r.in + r.hold + r.out - 1400, delay: 1400, gap: true }); // 별이 글자를 만들면 문장만 그 아래에(별 글자가 자리를 차지하므로 gap)
+    if (r) sigShow({ motto, dur: r.in + r.hold + r.out - 1400, delay: 1400, top: r.bottom + 44 }); // 별이 글자를 만들면 문장만 별 글자 아랫선에서 44px 아래, 가로 가운데(2026-09-11)
     else sigShow({ name: SIG_NAME, motto, dur: 4300, delay: 600 });                       // 끔·별자리·움직임 줄이기: 이름도 글자로
   }
   $('#wordmark').addEventListener('dblclick', (e) => { e.preventDefault(); signature(); });

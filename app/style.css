@@ -403,14 +403,16 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 .wordmark { user-select: none; cursor: default; }
 .maker-btn { padding: 2px 6px; margin: -2px -6px; border-radius: 6px; color: var(--ink-3); font-size: 11.5px; }
 .maker-btn:hover { color: var(--ink); background: var(--raised); }
-.sig { position: absolute; left: 0; right: 0; top: 50%; display: flex; flex-direction: column; align-items: center; gap: 10px; pointer-events: none; z-index: 2; transform: translateY(-50%); }
+/* 손글씨 글자체(2026-09-11): 나눔펜스크립트(OFL, app/fonts/ 동봉 — 오프라인·공개 저장소 모두 안전). 이스터에그 문장 전용. */
+@font-face { font-family: "Nanum Pen Script"; src: url("fonts/NanumPenScript-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: block; }
+.sig { position: absolute; left: 0; right: 0; top: 50%; display: flex; flex-direction: column; align-items: center; gap: 22px; pointer-events: none; z-index: 2; transform: translateY(-50%); }
+.sig.placed { transform: none; } /* main.js 가 별 글자 아랫선 기준 top(px)을 직접 준 경우 — 세로 가운데 대신 그 자리 */
 .sig-name { font: 600 clamp(28px, 6.5vw, 72px)/1 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: .22em; color: var(--ink); opacity: 0; }
-.sig-motto { font-size: 14.5px; letter-spacing: .06em; color: var(--ink-2); opacity: 0; }
-.sig-by .sig-motto { font-size: 12.5px; letter-spacing: .28em; color: var(--ink-3); }
+.sig-motto { width: 100%; text-align: center; font-family: "Nanum Pen Script", "Segoe Script", "Ink Free", cursive; font-size: clamp(22px, 2.4vw, 30px); line-height: 1.2; letter-spacing: 0; color: var(--ink-2); opacity: 0; } /* 자간 0 = 뒤끝 여백 없이 글자 그대로 정가운데 */
+.sig-by .sig-motto { font-family: inherit; font-size: 12.5px; letter-spacing: .28em; color: var(--ink-3); } /* 첫 실행 `by SEJUN HAM` 은 이전 그대로 */
 .sig.run .sig-name { animation: sigFade var(--sig-dur, 4.3s) ease-in-out forwards; }
 .sig.run .sig-motto { animation: sigFade var(--sig-dur, 4.3s) ease-in-out forwards; animation-delay: var(--sig-delay, 1.2s); }
 @keyframes sigFade { 0% { opacity: 0; transform: translateY(6px); } 18% { opacity: 1; transform: none; } 78% { opacity: 1; } 100% { opacity: 0; } }
-.sig.gap .sig-name { margin-top: clamp(64px, 16vh, 150px); }
 .dlg-box.wide { max-width: min(640px, calc(100vw - 48px)); }
 /* ---- 작업 완료 알림(오른쪽 아래, app/notify.js · 2026-09-11) — 대화상자(40)보다 아래, 서랍·설정(20·21)보다 위 ---- */
 .toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 30; pointer-events: none; }
