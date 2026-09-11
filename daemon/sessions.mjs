@@ -8,6 +8,7 @@ import { buildCommand, normalize, CODEX_HOME } from './agents.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
 import { generateTitle } from './titler.mjs';
+import { parseApproval } from './approval.mjs';
 
 const require = createRequire(import.meta.url);
 const pty = require('node-pty');
@@ -72,7 +73,7 @@ export class SessionManager {
     for (const r of arr) {
       const alive = pidAlive(r.pid);
       r.lost = !alive && LIVE_STATUSES.has(r.status) && !!r.sessionId; // 살아 있다고 저장돼 있었는데 PID가 없다 = 데몬과 함께 죽은 세션
-      r.status = alive ? 'orphan' : 'dead'; r.titlePending = false;
+      r.status = alive ? 'orphan' : 'dead'; r.titlePending = false; r.prompt = null; // 확인 카드는 살아 있는 화면에서만 뜬다
       this.sessions.set(r.id, r); this.seq = Math.max(this.seq, Number(r.id.replace(/\D/g, '')) || 0);
     }
   }
@@ -238,6 +239,8 @@ export class SessionManager {
       try { st.pty.write('2'); setTimeout(() => { try { st.pty.write('\r'); } catch {} }, 200); } catch {}
       return;
     }
+    // 확인 카드(v2.43): 노란불이면 화면 글자에서 질문·선택지를 뽑아 rec.prompt 에 두고 방송한다(같은 내용이면 조용). 꺼지면 setStatus 가 비운다.
+    if (status === 'attention') this.setPrompt(id, parseApproval(tail));
     // 진행 문구: 스피너 줄의 동사("Propagating…")를 우선 쓰고, 없으면 옛 형식(스피너와 안내가 한 줄)에서 뽑는다
     const actLine = status === 'busy' ? (lines.find(l => WORKING_RE.test(l)) || '') : '';
     // 스피너 문구만 남긴다: 상태줄(⏵⏵ bypass permissions…, ← for agents, shift+tab to cycle)과 스피너 글리프 제거
@@ -283,6 +286,15 @@ export class SessionManager {
     const st = this.live.get(id);
     const done = rec.status === 'busy' && status !== 'busy' && !!st?.worked;
     rec.status = status; this.hooks.onStatus?.(id, status, done ? { done: true } : undefined);
+    if (status !== 'attention') this.setPrompt(id, null);
+  }
+  /** 확인 카드 내용(질문·선택지) 갱신·방송. null = 카드 내림. 같은 내용이면 아무것도 하지 않는다(idleCheck 는 700ms 마다 돈다). */
+  setPrompt(id, prompt) {
+    const rec = this.sessions.get(id); if (!rec) return;
+    const next = prompt ? JSON.stringify(prompt) : '';
+    const prev = rec.prompt ? JSON.stringify(rec.prompt) : '';
+    if (next === prev) return;
+    rec.prompt = prompt || null; this.hooks.onPrompt?.(id, rec.prompt);
   }
   write(id, data) { const st = this.live.get(id); if (!st) throw new Error(`session not live: ${id}`); if (/[\r\n]/.test(data)) st.worked = true; st.pty.write(data); } // 터미널 보기에서 Enter를 친 것도 요청으로 본다
   resize(id, cols, rows) { const st = this.live.get(id); if (st && cols > 0 && rows > 0) { st.pty.resize(Math.floor(cols), Math.floor(rows)); st.screen.resize(Math.floor(cols), Math.floor(rows)); } }

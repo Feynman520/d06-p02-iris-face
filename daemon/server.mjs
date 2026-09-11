@@ -41,6 +41,7 @@ const sm = new SessionManager(STATE, {
   onOutput: (id, data) => { for (const c of clients) if (c.attached === id) send(c, { type: 'output', id, data }); },
   onStatus: (id, status, extra) => broadcast({ type: 'status', id, status, ...(extra || {}) }), // extra.done = 작업 완료 전환(화면 알림, 2026-09-11)
   onActivity: (id, text) => { for (const c of clients) if (c.attached === id) send(c, { type: 'activity', id, text }); },
+  onPrompt: (id, prompt) => broadcast({ type: 'prompt', id, prompt }), // 확인 카드(v2.43): 노란불의 질문·선택지, null = 카드 내림. 세션 목록(publicList)에도 rec.prompt 로 실린다.
   onList: () => broadcast({ type: 'sessions', list: publicList() }),
   onLog: (msg) => log(msg),
 

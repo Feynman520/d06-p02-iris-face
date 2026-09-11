@@ -97,6 +97,8 @@
         </aside>
       </div>
       <div id="term-wrap" hidden><div id="term"></div></div>
+      <!-- 확인 카드(v2.43, app/approval.js): 노란불일 때 터미널의 질문·선택지를 대화 아래에 띄우고, 누른 키를 터미널 보기와 같은 길(input)로 보낸다. -->
+      <div id="approval" class="approval" hidden></div>
       <div id="dead-bar" class="dead-bar" hidden>
         <span>이 세션의 프로세스가 없습니다.</span>
         <button id="btn-resume" class="text-btn" title="같은 카드에서 대화를 이어 다시 엽니다">↻ 여기서 재개</button>
@@ -162,6 +164,7 @@
 <script src="/app/settings.js"></script>
 <script src="/app/voice.js"></script>
 <script src="/app/notify.js"></script>
+<script src="/app/approval.js"></script>
 <script src="/app/main.js"></script>
 </body>
 </html>

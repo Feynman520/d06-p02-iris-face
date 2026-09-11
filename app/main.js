@@ -91,6 +91,7 @@
       else if (m.type === 'output') { if (m.id === current && term) term.write(m.data); }
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
       else if (m.type === 'activity') { if (m.id === current) { const s = cur(); if (s?.status === 'busy') Transcript.setBusy(true, m.text); } }
+      else if (m.type === 'prompt') { const s = sessions.find(x => x.id === m.id); if (s) { s.prompt = m.prompt; if (m.id === current) Approval.render(s); } } // 확인 카드(v2.43): 노란불의 질문·선택지
     };
   }
   const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -149,6 +150,7 @@
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
     $('#btn-close').title = dead ? '기록 지우기' : '이 세션 종료(PID 기준)';
+    Approval.render(s); // 노란불 + prompt 있을 때만 카드가 보인다(상태가 바뀌면 함께 내려감)
   }
   function renderComposer() {
     const s = cur(); const fb = $('#btn-folder'); const fn = $('#folder-name'); const ta = $('#composer-text');
@@ -159,7 +161,7 @@
 
   // ---------- 세션 선택 / 새 요청 모드 ----------
   function select(id) { current = id; setupMode = 'new'; ensureTerm(); render(); attach(id); SubPanel.onSession(id); if (mode === 'term') term.focus(); else $('#composer-text').focus(); }
-  function goHome() { current = null; setupMode = 'new'; send({ type: 'detach' }); SubPanel.onSession(null); Transcript.clear(); render(); $('#composer-text').focus(); }
+  function goHome() { current = null; setupMode = 'new'; send({ type: 'detach' }); SubPanel.onSession(null); Transcript.clear(); Approval.render(null); render(); $('#composer-text').focus(); }
   function attach(id) { send({ type: 'attach', id }); setTimeout(doFit, 50); loadTranscript(id); }
   async function loadTranscript(id) {
     Transcript.clear(); $('#vh-usage').textContent = ''; $('#activity').hidden = true;
@@ -361,6 +363,8 @@
     grip.ondblclick = () => { apply(RAIL_DEF); try { localStorage.setItem('iris.railW', String(RAIL_DEF)); } catch {} };
   })();
   document.addEventListener('keydown', (e) => {
+    // 확인 카드(v2.43): 대화 보기에서 카드가 떠 있고 입력창이 비어 있으면 숫자·y·n 한 글자 = 그 선택지(터미널과 같은 키)
+    if (mode === 'chat' && !Settings.isOpen() && !FolderPicker.isOpen() && Approval.handleKey(e)) return;
     if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); goHome(); FolderPicker.show(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#btn-folder').click(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); $('#btn-rail').click(); }
@@ -384,6 +388,8 @@
     if (!$('#cam').hidden) { camStop(); return; }
     if (FolderPicker.isOpen()) { FolderPicker.hide(); return; }
     if (setupMode === 'switch') { setupMode = 'new'; renderSetup(); return; }
+    // 확인 카드가 떠 있으면 Esc = 터미널과 같게 취소 키(ESC)를 그 세션에 보낸다(v2.43)
+    if (mode === 'chat' && Approval.isOpen() && Approval.choose('\x1b')) { ta.focus(); return; }
     // 대화 화면에서도 터미널처럼 Esc = 진행 중인 작업 중단(작업 중인 세션에만 ESC 키를 보낸다). 터미널 화면은 xterm이 직접 보낸다.
     if (mode === 'chat' && cur()?.status === 'busy') { interrupt(); ta.focus(); return; }
     ta.focus();
@@ -402,6 +408,7 @@
   Notify.init({ onPick: (id) => { if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------
   // v2.40: 실행 중인 보조 수가 바뀌면 겉보기 상태(보조 작업 중)도 바뀌고, 보류해 둔 완료 알림의 해소 여부를 Notify가 판단한다.
+  Approval.init({ send, current: () => current, onTerm: () => setMode('term') }); // 확인 카드(v2.43)
   SubPanel.init({ send, current: () => current, onChange: (id) => { render(); if (id) Notify.onSubs(id, SubPanel.alive(id), SubPanel.list(id).length, sessions.find(x => x.id === id)); } });
 
   // ---------- 각인(2026-09-10): 첫 실행 1회 `by SEJUN HAM` + 워드마크 두 번 클릭(Ctrl+Alt+I) = 별이 SEJUN HAM 으로 모임 ----------
