@@ -311,6 +311,10 @@ a { color: var(--iris); }
 .st-body h3 { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
 .st-line { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; color: var(--ink-2); }
 .st-line label { display: inline-flex; align-items: center; gap: 8px; }
+.st-line.indent { margin-left: 24px; margin-top: 2px; } /* 앞 항목에 딸린 옵션(알림 절 정리, 2026-09-11). `.sub`는 보조 서랍 클래스라 쓰지 않는다 */
+.st-line .st-sub { margin-left: 0; }
+.st-h-row { display: flex; align-items: center; justify-content: space-between; }
+.st-h-row .text-btn { font-weight: 400; }
 .st-input { flex: 1; font: 14px var(--sans); color: var(--ink); background: var(--base); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 10px; outline: none; }
 .st-input:focus { border-color: rgba(143,168,255,.5); }
 .st-hint { margin: 6px 0 4px; font-size: 12px; color: var(--ink-3); line-height: 1.5; }

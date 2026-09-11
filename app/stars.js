@@ -3,6 +3,9 @@
    - sphere: 별의 구(피보나치 구, 원근, 두 축 회전, 적도 띠)   - iris: 별의 홍채(차등 회전 고리, 동공 확장)
    - nebula: 성운(느린 흐름장)                                     - constellation: 별자리(가까운 별 잇기)
    - drift: 잔잔한 별밭(깜박임 + 아주 느린 흐름)                    - off: 끔
+   2026-09-11 추가 5종(사용자 요청 "창의적인 것"): galaxy 은하(기울어진 나선팔 회전) · warp 워프(정면에서 흘러나오는 별, 작업 중엔 줄무늬 초공간)
+   · aurora 오로라(물결치는 빛의 커튼) · helix 이중나선(두 가닥 + 가로대 회전) · fireflies 반딧불(배회 + 쿠라모토 동기화로 점점 함께 깜박임).
+   고른 한 종만 돌고 나머지는 코드 갈래일 뿐이라 종 수가 늘어도 성능 부담은 없다.
    공통: 처음 1.2초 모임 연출, 세션 작업 중 가속(energy), 대화 열리면 어두워짐(dim), 창 숨김 시 정지, 밀도 설정, reduced-motion 시 정지 화면. */
 // makeEngine(): 캔버스 하나를 맡는 독립 엔진. 무대용 1개 + 설정 패널 미리보기용 여러 개.
 function makeStarEngine() {
@@ -41,7 +44,7 @@ function makeStarEngine() {
   }
   /** 글자 서명 시작. 별이 글자를 만들 수 없는 경우(끔·별자리·움직임 줄이기·별 없음)는 false — 호출한 쪽이 글자만 보여 준다. */
   function signature(text) {
-    if (reduce || style === 'off' || style === 'constellation' || !pts.length || !W || !H) return false;
+    if (reduce || style === 'off' || style === 'constellation' || style === 'fireflies' || !pts.length || !W || !H) return false; // 별이 적은 종(별자리·반딧불)은 글자를 못 만든다
     const m = maskPoints(text); if (m.length < 40) return false;
     for (let i = m.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [m[i], m[j]] = [m[j], m[i]]; } // 섞어서 별↔글자점 짝을 고르게
     pts.forEach((p, i) => { const [x, y] = m[i % m.length]; p.tx = x + (Math.random() - 0.5) * 2.2; p.ty = y + (Math.random() - 0.5) * 2.2; });
@@ -69,6 +72,28 @@ function makeStarEngine() {
     }
     else if (style === 'constellation') for (let i = 0; i < Math.round(120 * density); i++) {
       pts.push({ x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.012, vy: (Math.random() - 0.5) * 0.012, size: 1 + Math.random() * 1.6, ph: Math.random() * 6.283, tw: 0.5 + Math.random(), hue: Math.random() });
+    }
+    else if (style === 'galaxy') for (let i = 0; i < n; i++) {
+      // 나선팔 3개: 반지름 r(중심 쪽이 빽빽) + 로그 나선 각 + 팔에서 벗어나는 흩어짐(바깥일수록 큼). 핵(r<0.14)은 팔 없이 둥글게.
+      const core = Math.random() < 0.18; const r = core ? Math.pow(Math.random(), 1.6) * 0.16 : 0.12 + Math.pow(Math.random(), 0.8) * 0.95;
+      const arm = (i % 3) * 2.0944, th = core ? Math.random() * 6.283 : arm + Math.log(1 + r * 6) * 2.4 + (Math.random() - 0.5) * (0.25 + r * 0.9);
+      pts.push({ x: Math.cos(th) * r, z: Math.sin(th) * r, y: (Math.random() - 0.5) * (core ? 0.12 : 0.05) * (1 - r * 0.5), r, core, size: core ? 0.6 + Math.random() * 1.2 : (Math.random() < 0.08 ? 1.5 + Math.random() : 0.45 + Math.random() * 0.9), ph: Math.random() * 6.283, tw: 0.4 + Math.random() * 1.3, hue: Math.random(), sx: (Math.random() - 0.5) * 2, sy: (Math.random() - 0.5) * 2 });
+    }
+    else if (style === 'warp') for (let i = 0; i < Math.round(n * 0.6); i++) {
+      pts.push({ x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2, z: 0.05 + Math.random() * 0.95, size: 0.5 + Math.random() * 1.2, hue: Math.random(), ph: Math.random() * 6.283, tw: 1 });
+    }
+    else if (style === 'aurora') for (let i = 0; i < n; i++) {
+      // 커튼 3장: u = 가로 위치, v = 커튼 안 세로 위치(0 위쪽 밝음 → 1 아래 흐림), c = 몇 번째 커튼
+      pts.push({ u: Math.random(), v: Math.pow(Math.random(), 0.7), c: i % 3, size: 0.4 + Math.random() * 1.1, ph: Math.random() * 6.283, tw: 0.3 + Math.random() * 1.2, hue: Math.random(), sp: 0.5 + Math.random() });
+    }
+    else if (style === 'helix') for (let i = 0; i < Math.round(n * 0.55); i++) {
+      // s = 축을 따라 0~1, kind 0·1 = 두 가닥, 2 = 가로대(f = 가닥 사이 위치)
+      const kind = Math.random() < 0.72 ? (i % 2) : 2;
+      pts.push({ s: Math.random(), kind, f: Math.random(), size: kind === 2 ? 0.4 + Math.random() * 0.7 : 0.7 + Math.random() * 1.2, ph: Math.random() * 6.283, tw: 0.4 + Math.random() * 1.2, hue: Math.random(), sx: (Math.random() - 0.5) * 2, sy: (Math.random() - 0.5) * 2 });
+    }
+    else if (style === 'fireflies') for (let i = 0; i < Math.round(160 * density); i++) {
+      // 저마다 고유 박자(w)로 깜박이다가 쿠라모토 결합(frame)으로 점점 함께 깜박인다. 배회는 느린 방향 잡음.
+      pts.push({ x: Math.random(), y: Math.random(), h: Math.random() * 6.283, phi: Math.random() * 6.283, w: 1.6 + Math.random() * 0.8, size: 1.2 + Math.random() * 1.3, hue: Math.random(), ph: Math.random() * 6.283, tw: 1 });
     }
   }
   function resize() {
@@ -145,6 +170,76 @@ function makeStarEngine() {
         if (d2 < link * link) { ctx.strokeStyle = `rgba(${colors.b},${(1 - Math.sqrt(d2) / link) * 0.35 * alphaMul})`; ctx.beginPath(); ctx.moveTo(pts[i].x * W, pts[i].y * H); ctx.lineTo(pts[j].x * W, pts[j].y * H); ctx.stroke(); }
       }
       for (const p of pts) { const tw = reduce ? 0.9 : 0.7 + 0.3 * Math.sin(t * p.tw + p.ph); ctx.fillStyle = col(p, 0.9 * tw * alphaMul * gather); ctx.beginPath(); ctx.arc(p.x * W, p.y * H, p.size, 0, 6.283); ctx.fill(); }
+    } else if (style === 'galaxy') {
+      // 은하: 원반을 y축으로 회전(작업 중 가속) → x축으로 기울임(마우스 세로로 살짝 조절) → 원근. 핵은 항상 밝고 팔은 바깥일수록 흐리다.
+      glow(cx, cy, R * 0.55, k * 1.3);
+      const speed = reduce ? 0 : 0.12 + energy * 0.28, ay = t * speed, ax = 1.05 + (mouse.y - 0.5) * 0.35, az = (mouse.x - 0.5) * 0.2;
+      const cy1 = Math.cos(ay), sy1 = Math.sin(ay), cx1 = Math.cos(ax), sx1 = Math.sin(ax), cz1 = Math.cos(az), sz1 = Math.sin(az), fov = 3.2, Rg = R * 1.35;
+      for (const p of pts) {
+        const x1 = p.x * cy1 - p.z * sy1, z1 = p.x * sy1 + p.z * cy1, y2 = p.y * cx1 - z1 * sx1, z2 = p.y * sx1 + z1 * cx1, x3 = x1 * cz1 - y2 * sz1, y3 = x1 * sz1 + y2 * cz1;
+        const depth = fov / (fov - z2), ix = cx + x3 * Rg * depth, iy = cy + y3 * Rg * depth;
+        const [x, y] = bl(p, gather === 1 ? ix : ix + p.sx * W * 0.5 * (1 - gather), gather === 1 ? iy : iy + p.sy * H * 0.5 * (1 - gather));
+        const tw = reduce ? 0.85 : 0.65 + 0.35 * Math.sin(t * p.tw + p.ph), base = p.core ? 0.9 : 0.75 - p.r * 0.45;
+        ctx.fillStyle = col(p, Math.max(base * tw, 0.8 * sigK) * alphaMul * (0.5 + 0.5 * gather));
+        ctx.beginPath(); ctx.arc(x, y, p.size * (0.6 + 0.6 * depth), 0, 6.283); ctx.fill();
+      }
+    } else if (style === 'warp') {
+      // 워프: z가 줄며 다가오는 별을 원근 투영. energy 가 오르면 속도가 붙고 별이 줄(이전 위치→지금 위치)이 되어 초공간처럼 쏟아진다.
+      glow(cx, cy, R * 0.8, k * 0.7);
+      const vx = (mouse.x - 0.5) * 0.25, vy = (mouse.y - 0.5) * 0.25, speed = reduce ? 0 : 0.0035 + energy * 0.022, streak = Math.max(0, energy - 0.12) / 0.88, F = Math.min(W, H) * 0.5;
+      ctx.lineCap = 'round';
+      for (const p of pts) {
+        const zPrev = p.z; if (!reduce) { p.z -= speed * (0.7 + 0.6 * ((p.ph / 6.283) % 1)); if (p.z <= 0.04) { p.z = 1; p.x = (Math.random() - 0.5) * 2; p.y = (Math.random() - 0.5) * 2; } }
+        const px = p.x - vx, py = p.y - vy, ix = cx + px / p.z * F, iy = cy + py / p.z * F;
+        if (ix < -20 || ix > W + 20 || iy < -20 || iy > H + 20) continue;
+        const near = 1 - p.z, tw = reduce ? 0.85 : 0.75 + 0.25 * Math.sin(t * 2 + p.ph);
+        const [x, y] = bl(p, ix, iy), a = Math.max((0.15 + 0.85 * near) * tw, 0.8 * sigK) * alphaMul * gather, sz = p.size * (0.4 + 1.6 * near);
+        if (streak > 0.02 && p.z < zPrev && !sigK) { // 줄: 이전 z 자리에서 지금까지, 길이는 속도·가까움에 비례
+          const zb = Math.min(1, p.z + (zPrev - p.z) * (1 + 18 * streak)), bx = cx + px / zb * F, by = cy + py / zb * F;
+          ctx.strokeStyle = col(p, a * 0.7); ctx.lineWidth = sz; ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(x, y); ctx.stroke();
+        }
+        ctx.fillStyle = col(p, a); ctx.beginPath(); ctx.arc(x, y, sz, 0, 6.283); ctx.fill();
+      }
+    } else if (style === 'aurora') {
+      // 오로라: 커튼 3장. 윗선은 느린 파도, 커튼 길이는 다른 파도로 숨쉬듯 늘고 줄며, 별은 커튼 안에서 위(밝음)→아래(흐림)로 결을 이룬다. 가로로 천천히 흐른다.
+      glow(cx, cy, R, k * 0.5);
+      const flow = reduce ? 0 : 0.004 + energy * 0.012, amp = 1 + energy * 0.8;
+      for (const p of pts) {
+        if (!reduce) p.u = (p.u + flow * p.sp * 0.016 * (p.c === 1 ? -1 : 1) + 1) % 1;
+        const u = p.u * 6.283, top = H * (0.22 + 0.16 * p.c) + Math.sin(u * 1.4 + t * 0.25 + p.c * 2.1) * H * 0.07 * amp + Math.sin(u * 3.1 - t * 0.4) * H * 0.02 * amp;
+        const len = H * 0.26 * (0.55 + 0.45 * Math.sin(u * 2.3 + t * 0.55 * amp + p.c * 1.7 + p.ph * 0.15));
+        const ix = p.u * W, iy = top + p.v * len;
+        const [x, y] = bl(p, ix, gather === 1 ? iy : iy + (1 - gather) * H * 0.6);
+        const tw = reduce ? 0.85 : 0.6 + 0.4 * Math.sin(t * p.tw + p.ph);
+        ctx.fillStyle = col(p, Math.max((0.28 + 0.7 * (1 - p.v)) * tw, 0.85 * sigK) * alphaMul * gather);
+        ctx.beginPath(); ctx.arc(x, y, p.size, 0, 6.283); ctx.fill();
+      }
+    } else if (style === 'helix') {
+      // 이중나선: 세로 축을 따라 두 가닥이 반 바퀴 어긋나 감기고, 가로대는 두 가닥 사이를 잇는다. 앞쪽(깊이 sin>0)이 크고 밝다. 마우스 가로로 살짝 기울임.
+      glow(cx, cy, R * 0.9, k * 0.8);
+      const speed = reduce ? 0 : 0.5 + energy * 1.4, turns = 2.2, A = Math.min(W, H) * 0.16, L = H * 0.82, tilt = (mouse.x - 0.5) * 0.25;
+      for (const p of pts) {
+        const ang = p.s * turns * 6.283 + t * speed, a2 = p.kind === 1 ? ang + Math.PI : ang, side = p.kind === 2 ? (p.f * 2 - 1) : 1;
+        const ox = Math.cos(a2) * A * side, dz = Math.sin(a2) * side, oy = (p.s - 0.5) * L;
+        const ix = cx + ox + oy * tilt, iy = cy + oy - ox * tilt * 0.3;
+        const [x, y] = bl(p, gather === 1 ? ix : ix + p.sx * W * 0.5 * (1 - gather), gather === 1 ? iy : iy + p.sy * H * 0.5 * (1 - gather));
+        const near = (dz + 1) / 2, tw = reduce ? 0.85 : 0.65 + 0.35 * Math.sin(t * p.tw + p.ph), base = p.kind === 2 ? 0.3 + 0.35 * near : 0.35 + 0.6 * near;
+        ctx.fillStyle = col(p, Math.max(base * tw, 0.8 * sigK) * alphaMul * (0.5 + 0.5 * gather));
+        ctx.beginPath(); ctx.arc(x, y, p.size * (0.6 + 0.7 * near), 0, 6.283); ctx.fill();
+      }
+    } else if (style === 'fireflies') {
+      // 반딧불: 느린 배회(방향 잡음) + 쿠라모토 동기화 — 이웃(가까울수록 강하게)의 위상에 끌려 점점 같은 박자로 깜박인다. energy 가 오르면 결합·속도가 커진다.
+      glow(cx, cy, R, k * 0.35);
+      const dt = reduce ? 0 : 0.016, K = (0.9 + energy * 2.2) * dt, wander = 0.012 + energy * 0.02, link2 = Math.pow(Math.min(W, H) * 0.32, 2);
+      if (dt) {
+        for (let i = 0; i < pts.length; i++) { const p = pts[i]; let pull = 0; for (let j = 0; j < pts.length; j++) { if (j === i) continue; const q = pts[j]; const dx = (q.x - p.x) * W, dy = (q.y - p.y) * H; const d2 = dx * dx + dy * dy; if (d2 < link2) pull += Math.sin(q.phi - p.phi) * (1 - d2 / link2); } p.dphi = p.w * dt + K * pull / Math.max(8, pts.length * 0.25); }
+        for (const p of pts) { p.phi = (p.phi + p.dphi) % 6.283; p.h += (Math.sin(t * 0.7 + p.ph) + Math.random() - 0.5) * 0.08; p.x = (p.x + Math.cos(p.h) * wander * 0.016 + 1) % 1; p.y = (p.y + Math.sin(p.h) * wander * 0.016 * (W / H) + 1) % 1; }
+      }
+      for (const p of pts) {
+        const pulse = Math.pow(Math.max(0, Math.cos(p.phi)), 6), x = p.x * W, y = p.y * H, a = (0.08 + 0.92 * pulse) * alphaMul * gather;
+        if (pulse > 0.05) { const g = ctx.createRadialGradient(x, y, 0, x, y, p.size * 7); g.addColorStop(0, col(p, 0.35 * pulse * alphaMul)); g.addColorStop(1, col(p, 0)); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, p.size * 7, 0, 6.283); ctx.fill(); }
+        ctx.fillStyle = col(p, a); ctx.beginPath(); ctx.arc(x, y, p.size * (0.7 + 0.6 * pulse), 0, 6.283); ctx.fill();
+      }
     }
     if (reduce || (pauseWhenDim && targetDim && dim > 0.98)) { raf = 0; return; }
     raf = requestAnimationFrame(frame);

@@ -94,6 +94,11 @@ window.Registry = (() => {
     { id: 'nebula', name: '성운', desc: '느리게 흐르는 별 구름' },
     { id: 'constellation', name: '별자리', desc: '별 120개와 가까운 별을 잇는 선' },
     { id: 'drift', name: '잔잔한 별밭', desc: '깜박이며 아주 천천히 흐르는 별' },
+    { id: 'galaxy', name: '은하', desc: '비스듬히 기운 나선 은하가 천천히 돈다' },
+    { id: 'warp', name: '워프', desc: '별이 정면에서 흘러나온다 · 작업 중엔 초공간' },
+    { id: 'aurora', name: '오로라', desc: '빛의 커튼이 하늘을 가로질러 물결친다' },
+    { id: 'helix', name: '이중나선', desc: '두 가닥이 꼬여 회전하는 별의 나선' },
+    { id: 'fireflies', name: '반딧불', desc: '배회하던 반딧불이 점점 함께 깜박인다' },
     { id: 'off', name: '없음', desc: '애니메이션 끔(성능 최소)' },
   ];
   return { MARKS, MARK_KEYFRAMES, FONTS, THEMES, STAGES };
