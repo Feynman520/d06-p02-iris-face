@@ -97,6 +97,13 @@ window.Notify = (() => {
     if (!focused && opts.osEnabled()) osNotify({ id: m.id, title, sub });
   }
 
+  /** 모듈(콘센트)이 부탁한 알림: 화면 알림 + 창이 뒤면 OS 알림. 내용은 모듈이 준 title·sub 뿐(코어는 아무것도 덧붙이지 않음). */
+  function external({ id, title, sub }) {
+    const el = push({ id, title, sub, status: 'idle' });
+    if (el && document.hidden && opts.osEnabled?.()) osNotify({ id, title, sub });
+    return el;
+  }
+
   /** 설정의 미리보기: 규칙을 무시하고 예시 알림 한 개(+OS 알림 켜져 있으면 그것도) */
   function preview() {
     const sample = { id: null, title: '예시 · 데이터 분석 보고서', sub: `${STATUS_KO.idle} · 2분 14초 걸림 · Claude Opus`, status: 'idle', force: true };
@@ -104,5 +111,5 @@ window.Notify = (() => {
     if (opts.osEnabled()) osNotify(sample);
   }
   function init(o) { opts = { ...opts, ...o }; box(); }
-  return { init, onStatus, onSubs, push, preview, requestOs };
+  return { init, onStatus, onSubs, push, preview, requestOs, external };
 })();

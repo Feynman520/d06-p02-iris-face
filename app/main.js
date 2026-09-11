@@ -86,7 +86,9 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); render(); }
+      else if (m.type === 'modules') setModules(m.list);                                                   // 모듈 콘센트: 상태·panel·배지
+      else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
       else if (m.type === 'subtranscript') SubPanel.onTranscript(m);          // 서랍이 보고 있는 보조의 기록
       else if (m.type === 'sessions') { sessions = m.list; render(); }
@@ -235,48 +237,65 @@
   Voice.init({ textarea: $('#composer-text'), button: $('#btn-mic'), strip: $('#voice-strip'), folderHint: () => shortPath(cur()?.cwd || folder?.path || ''), onBusy: (b) => { $('#btn-send').disabled = b; } });
   const withAttachments = (text) => attachments.length ? `${text}\n\n[첨부 파일]\n${attachments.map(a => a.path).join('\n')}` : text;
 
-  // ---------- TeamClaude 대시보드 서랍(선택 기능) ----------
-  // 대시보드는 TeamClaude 도구가 있는 PC에서만 켜진다. 데몬 /api/health.features.dashboard 가 false 면 한도 버튼·Ctrl+D·서랍을 통째로 숨긴다
-  // (옛 데몬처럼 features 가 없으면 있는 것으로 본다). 포트도 데몬이 알려 준다(features.dashPort, 기본 3457) — 2026-09-11 매듭 풀기.
+  // ---------- 오른쪽 서랍(대시보드·모듈 화면 공용) ----------
+  // 서랍은 하나, 안에 무엇을 보일지는 key 로 구분: 'dash' = TeamClaude 대시보드(선택 기능), 'mod:<이름>' = 모듈 화면(계약 v1 panel 주소).
+  // 대시보드는 도구가 있는 PC에서만(features.dashboard). 모듈 버튼은 데몬이 준 목록(features.modules / ws modules)에서만 생긴다.
   let DASH_URL = 'http://127.0.0.1:3457/';
   let dashEnabled = true;
+  let modules = [];                 // ModuleInfo[] — 데몬이 준 그대로
+  let drawerKey = null;             // 지금 서랍이 보여 주는 것
+  const fr = $('#dash-frame');
   fetch('/api/health').then(r => r.json()).then((h) => {
     const f = h?.features; if (!f) return;
     if (f.dashPort) DASH_URL = `http://127.0.0.1:${f.dashPort}/`;
-    if (f.dashboard === false) { dashEnabled = false; $('#limits').hidden = true; if (!$('#dash').hidden) toggleDash(false); }
+    if (f.dashboard === false) { dashEnabled = false; $('#limits').hidden = true; if (drawerKey === 'dash') closeDrawer(); }
+    if (Array.isArray(f.modules)) setModules(f.modules);
   }).catch(() => {});
-  // 서랍을 열 때마다 데몬에게 뷰어 서버를 보장시킨다 — 꺼져 있으면 데몬이 조용히 띄운다(브라우저 없음).
-  // 옛 데몬(엔드포인트 없음 → 404)이나 도구 미설치(503)면 그냥 지금 주소로 시도한다.
-  const fr = $('#dash-frame');
   async function ensureDash() {
     try { const r = await fetch('/api/dash/ensure', { method: 'POST' }); const d = await r.json().catch(() => ({})); return { alive: r.ok, started: !!d.started, port: d.port }; }
     catch { return { alive: null, started: false }; }
   }
   const dashUrl = (port) => port ? `http://127.0.0.1:${port}/` : DASH_URL;
-  // 다시 읽는 경우: 강제(↻) · 서버를 방금 띄웠음(이전 화면은 연결 오류였을 것) · 아직 한 번도 안 읽음
-  async function loadDash(force) {
-    const d = await ensureDash();
-    if (force || d.started || !fr.src) fr.src = dashUrl(d.port);
+  async function loadDash(force) { const d = await ensureDash(); if (force || d.started || !fr.src || drawerKey !== 'dash') fr.src = dashUrl(d.port); }
+  let drawerCloseTimer = 0;
+  function openDrawer(key, { title, url, ext = true }) {
+    const d = $('#dash'); clearTimeout(drawerCloseTimer);
+    if (drawerKey !== key) { fr.src = 'about:blank'; }
+    drawerKey = key; $('#dash-title').textContent = title; $('#dash-ext').hidden = !ext;
+    $('#limits').classList.toggle('active', key === 'dash');
+    for (const b of $('#mod-btns').querySelectorAll('.mod-btn')) b.classList.toggle('active', key === `mod:${b.dataset.mod}`);
+    d.hidden = false; requestAnimationFrame(() => requestAnimationFrame(() => d.classList.add('open')));
+    if (key === 'dash') loadDash(false); else if (url && fr.src !== url) fr.src = url;
   }
-  // 열림: hidden 해제 → 다음 프레임에 .open(슬라이드 인). 닫힘: .open 제거 → 전환이 끝난 뒤 hidden(display:none).
-  // hidden은 "열려 있는가"의 기준(Esc 처리 등)으로 그대로 쓴다. 닫히는 도중 다시 열면 타이머를 취소해 그 자리에서 되돌아온다.
-  let dashCloseTimer = 0;
+  function closeDrawer() {
+    const d = $('#dash'); if (d.hidden) return;
+    d.classList.remove('open'); $('#limits').classList.remove('active');
+    for (const b of $('#mod-btns').querySelectorAll('.mod-btn')) b.classList.remove('active');
+    drawerCloseTimer = setTimeout(() => { if (!d.classList.contains('open')) d.hidden = true; }, 360);
+    drawerKey = null; ta.focus();   // 서랍을 닫으면 초점은 반드시 입력창으로(iframe 초점 잔류 → "입력 불가" 재발 방지)
+  }
+  const drawerOpenFor = (key) => !$('#dash').hidden && drawerKey === key;
   function toggleDash(force) {
-    const d = $('#dash'); const open = force ?? !d.classList.contains('open');
+    const open = force ?? !drawerOpenFor('dash');
     if (open && !dashEnabled) return;   // 도구 없는 PC: Ctrl+D 도 조용히 무시
-    clearTimeout(dashCloseTimer);
-    $('#limits').classList.toggle('active', open);
-    if (open) {
-      d.hidden = false;
-      requestAnimationFrame(() => requestAnimationFrame(() => d.classList.add('open')));
-      loadDash(false);
-    } else {
-      d.classList.remove('open');
-      dashCloseTimer = setTimeout(() => { if (!d.classList.contains('open')) d.hidden = true; }, 360);
-    }
+    open ? openDrawer('dash', { title: 'TeamClaude 대시보드', url: DASH_URL }) : closeDrawer();
   }
-  $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => toggleDash(false);
-  $('#dash-reload').onclick = () => loadDash(true); $('#dash-ext').onclick = () => window.open(fr.src || DASH_URL, '_blank');
+  function openModule(name) {
+    const m = modules.find(x => x.name === name); if (!m || !m.panel) return false;
+    drawerOpenFor(`mod:${name}`) ? closeDrawer() : openDrawer(`mod:${name}`, { title: `${m.icon} ${m.label}`, url: m.panel, ext: false });
+    return true;
+  }
+  // 모듈 목록 → 헤더 버튼(아이콘 + 배지). 실행 중이 아니면 눌리지 않고 이유를 툴팁으로. 목록이 비면 버튼 자체가 없다.
+  function setModules(list) {
+    modules = Array.isArray(list) ? list : [];
+    const host = $('#mod-btns');
+    host.innerHTML = modules.map(m => `<button class="mod-btn${drawerOpenFor(`mod:${m.name}`) ? ' active' : ''}" data-mod="${esc(m.name)}" ${m.panel ? '' : 'disabled'} title="${esc(m.label)} v${esc(m.version)}${m.official ? ' · 공식' : ' · 비공식'}${m.panel ? '' : ` · ${esc(m.status)}${m.reason ? ': ' + esc(m.reason) : ''}`}">${esc(m.icon)}${m.badge > 0 ? `<span class="mod-badge">${m.badge > 99 ? '99+' : m.badge}</span>` : ''}</button>`).join('');
+    for (const b of host.querySelectorAll('.mod-btn')) b.onclick = () => openModule(b.dataset.mod);
+    if (drawerKey?.startsWith('mod:') && !modules.some(m => `mod:${m.name}` === drawerKey && m.panel)) closeDrawer(); // 보던 모듈이 죽으면 서랍도 닫힘
+  }
+  $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
+  $('#dash-reload').onclick = () => { if (drawerKey === 'dash') loadDash(true); else if (drawerKey) { const u = fr.src; fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = u; }); } };
+  $('#dash-ext').onclick = () => { if (drawerKey === 'dash') window.open(fr.src || DASH_URL, '_blank'); };
 
   // ---------- 보내기: 세션이 있으면 그 세션으로, 없으면 고른 폴더·조합으로 새 세션 ----------
   const ta = $('#composer-text');
@@ -374,8 +393,9 @@
     if (e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#btn-folder').click(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); $('#btn-rail').click(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleDash(); }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); const first = modules.find(x => x.panel); if (first) openModule(first.name); }
     if (e.ctrlKey && e.key === ',') { e.preventDefault(); Settings.isOpen() ? Settings.hide() : Settings.show(); }
-    if (e.ctrlKey && e.key.toLowerCase() === 'm' && mode !== 'term') { e.preventDefault(); Voice.toggle(); }
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm' && mode !== 'term') { e.preventDefault(); Voice.toggle(); }
     // Esc: 페이지 keydown(초점이 페이지 안일 때)과 Electron 메인의 before-input-event 중계(초점이 미리보기 iframe 안이라
     // keydown이 이 문서에 오지 않을 때) 두 길로 들어온다 → 한 함수(onEscape)로 처리, 같은 키를 두 번 처리하지 않게 300ms 가드.
     // e.code 도 보는 이유: 한글 IME가 키를 가로채면 e.key가 'Process'로 올 수 있다.
@@ -388,7 +408,7 @@
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
     if (Settings.isOpen()) { Settings.hide(); return; }
-    if (!$('#dash').hidden) { toggleDash(false); return; }
+    if (!$('#dash').hidden) { closeDrawer(); return; }
     if (SubPanel.isOpen()) { SubPanel.close(); ta.focus(); return; } // 보조 작업 서랍이 열려 있으면 Esc = 서랍만 닫힘(중단 아님)
     if (!$('#cam').hidden) { camStop(); return; }
     if (FolderPicker.isOpen()) { FolderPicker.hide(); return; }
@@ -410,7 +430,7 @@
   // ---------- 꾸미기 설정 + 사용량 배터리 (app/settings.js) ----------
   Settings.init();
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
-  Notify.init({ onPick: (id) => { if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
+  Notify.init({ onPick: (id) => { if (String(id).startsWith('mod:')) { openModule(String(id).split(':')[1]); return; } if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------
   // v2.40: 실행 중인 보조 수가 바뀌면 겉보기 상태(보조 작업 중)도 바뀌고, 보류해 둔 완료 알림의 해소 여부를 Notify가 판단한다.
   Approval.init({ send, current: () => current, onTerm: () => setMode('term') }); // 확인 카드(v2.43)
