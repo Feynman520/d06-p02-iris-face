@@ -18,6 +18,7 @@ import { findRoot, rootName, Settings } from './workspace.mjs';
 import { dashDir, dashPort } from './paths.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
+import { activeAgentsMap, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,6 +50,13 @@ const sm = new SessionManager(STATE, {
 const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
+// 잠든 에이전트 깨우기(installer Task 17): 영수증이 있고 잠든 에이전트가 있을 때만 15초마다 TeamClaude 설정을
+// 읽어 자동으로 깨운다. 영수증이 없는 PC(이 개발 PC 포함)에서는 sleepingAgents 가 항상 빈 배열이라 무동작.
+const sleepWatcher = new SleepWatcher({
+  log: (m) => log(`wake: ${m}`),
+  onWake: () => broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS) }),
+});
+sleepWatcher.start();
 
 // ---- TeamClaude 대시보드 뷰어 서버(3457) 보장 — 한도 서랍을 열 때 화면이 부른다(POST /api/dash/ensure) ----
 // 도구 폴더가 없는 PC(공개 배포본)면 alive:false 로 답하고 아무것도 띄우지 않는다. 브라우저는 열지 않는다.
@@ -167,9 +175,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features() });
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
     if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
-    if (req.method === 'GET' && p === '/api/agents') return json(res, 200, AGENTS);
+    if (req.method === 'GET' && p === '/api/agents') return json(res, 200, activeAgentsMap(AGENTS));
     if (req.method === 'GET' && p === '/api/limits') return json(res, 200, await readLimits());
     if (req.method === 'POST' && p === '/api/dash/ensure') { const d = await ensureDash(); log(`dash ensure: ${d.message}`); return json(res, d.alive ? 200 : 503, d); }
+    if (req.method === 'POST' && p === '/api/wake') {
+      // 잠든 에이전트 수동으로 깨우기(installer Task 17) — 대시보드에서 relay 로그인 뒤 다시 시도할 때도 쓸 수 있는 멱등 경로.
+      const b = await readBody(req);
+      const agent = String(b.agent || '');
+      if (!KNOWN_AGENTS.includes(agent)) return json(res, 400, { error: `알 수 없는 에이전트: ${agent}` });
+      const { active } = wake(agent, { log: (m) => log(`wake: ${m}`) });
+      broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS) });
+      return json(res, 200, { ok: true, active });
+    }
     if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, publicList());
     if (req.method === 'POST' && p === '/api/sessions') {
       const body = await readBody(req);
@@ -317,7 +334,7 @@ wss.on('connection', (ws) => {
 });
 
 // ---- single instance / pid / shutdown ----
-function shutdown() { try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200); }
+function shutdown() { try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200); }
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.

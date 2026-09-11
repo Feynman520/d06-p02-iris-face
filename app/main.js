@@ -33,6 +33,10 @@
   const fill = (el, list, val) => { el.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join(''); el.value = val ?? ''; };
   function renderSetup() {
     if (!AGENTS) return;
+    // 잠든 에이전트 깨우기(installer Task 17): AGENTS 는 영수증이 있으면 활성 에이전트만 담겨 온다.
+    // 그 목록에 없는 버튼은 숨기고, 지금 고른 에이전트가 잠들었으면 남아 있는 첫 에이전트로 넘어간다.
+    for (const b of document.querySelectorAll('.seg-agent .seg-btn')) b.hidden = !AGENTS[b.dataset.agent];
+    if (!AGENTS[sel.agent]) { sel.agent = Object.keys(AGENTS)[0]; saveSel(); }
     const a = AGENTS[sel.agent];
     const model = a.models.find(m => m.id === sel.model[sel.agent]) || a.models.find(m => m.id === a.default.model);
     const efforts = model.efforts || a.efforts;
@@ -92,6 +96,7 @@
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
       else if (m.type === 'activity') { if (m.id === current) { const s = cur(); if (s?.status === 'busy') Transcript.setBusy(true, m.text); } }
       else if (m.type === 'prompt') { const s = sessions.find(x => x.id === m.id); if (s) { s.prompt = m.prompt; if (m.id === current) Approval.render(s); } } // 확인 카드(v2.43): 노란불의 질문·선택지
+      else if (m.type === 'agents') { AGENTS = m.agents; renderSetup(); } // 잠든 에이전트 깨우기(installer Task 17): 활성 목록이 바뀜 → 조합 선택 다시 그림
     };
   }
   const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
