@@ -65,6 +65,9 @@ window.Notify = (() => {
 
   function dropPending(id) { const p = pending.get(id); if (!p) return; if (p.timer) clearTimeout(p.timer); pending.delete(id); }
 
+  /** 창이 숨어 있거나(hidden) 보이지 않거나(visibilityState) 초점이 없으면 true — fire()·external() 이 같은 기준으로 판단(F10). */
+  function winAway() { return document.hidden || document.visibilityState !== 'visible' || !document.hasFocus(); }
+
   /** 데몬 status 방송 → 알림 판단. m = { id, status, done }, s = 세션 레코드(상태 갱신 전·후 무관: 제목·폴더·조합만 쓴다).
    *  subsAlive = 그 세션에서 살아 있는 보조 수(running + quiet; 있으면 알림 보류 — 조용한 것도 끝난 게 아니다, v2.40.1). */
   function onStatus(m, s, subsAlive = 0) {
@@ -87,20 +90,20 @@ window.Notify = (() => {
   }
   function fire(m, s, started, subsTotal) {
     if (!opts.enabled()) return;
-    const focused = document.hasFocus() && document.visibilityState === 'visible';
-    if (m.id === opts.current() && focused) return; // 보고 있는 세션은 화면이 이미 말해 준다
+    const away = winAway();
+    if (m.id === opts.current() && !away) return; // 보고 있는 세션은 화면이 이미 말해 준다
     const title = (s?.title || shortPath(s?.cwd) || m.id).trim();
     const took = fmtDur(started ? Date.now() - started : 0);
     const combo = s ? `${AGENT_KO[s.agent] || s.agent || ''} ${s.modelLabel || s.model || ''}`.trim() : '';
     const sub = [STATUS_KO[m.status] || m.status, subsTotal > 0 && `보조 ${subsTotal}개 포함`, took && `${took} 걸림`, combo].filter(Boolean).join(' · ');
     push({ id: m.id, title, sub, status: m.status });
-    if (!focused && opts.osEnabled()) osNotify({ id: m.id, title, sub });
+    if (away && opts.osEnabled()) osNotify({ id: m.id, title, sub });
   }
 
   /** 모듈(콘센트)이 부탁한 알림: 화면 알림 + 창이 뒤면 OS 알림. 내용은 모듈이 준 title·sub 뿐(코어는 아무것도 덧붙이지 않음). */
   function external({ id, title, sub }) {
     const el = push({ id, title, sub, status: 'idle' });
-    if (el && document.hidden && opts.osEnabled?.()) osNotify({ id, title, sub });
+    if (el && winAway() && opts.osEnabled?.()) osNotify({ id, title, sub });
     return el;
   }
 

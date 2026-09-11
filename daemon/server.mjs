@@ -19,7 +19,7 @@ import { dashDir, dashPort } from './paths.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
 import { activeAgentsMap, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
-import { ModuleHost } from './modules.mjs';
+import { ModuleHost, NAME_RE } from './modules.mjs';
 import { inspectZip, installZip, removeModule } from './modinstall.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -66,6 +66,7 @@ const mods = new ModuleHost({
   onChange: () => broadcast({ type: 'modules', list: mods.list() }),
   onNotify: (n) => { log(`module notify ${n.module}: ${n.title}`); broadcast({ type: 'module-notify', ...n }); },
   theme: () => ({ id: settings.get()?.theme || 'indigo', mode: 'dark' }),
+  denyPorts: [PORT, dashPort()].filter(Boolean), // 모듈이 panel로 본체·대시보드 자기 포트를 내놓는 것 거부(F5)
 });
 
 // ---- TeamClaude 대시보드 뷰어 서버(3457) 보장 — 한도 서랍을 열 때 화면이 부른다(POST /api/dash/ensure) ----
@@ -173,6 +174,15 @@ const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'applic
 const readBody = (req) => new Promise((resolve, reject) => {
   const chunks = []; req.on('data', (c) => chunks.push(c)); req.on('end', () => { const s = Buffer.concat(chunks).toString('utf8'); if (!s) return resolve({}); try { resolve(JSON.parse(s)); } catch { reject(new Error('bad json')); } }); req.on('error', reject);
 });
+// 모듈 라우트 전용 출처 검사(F2) — Origin이 없으면(curl 등 로컬 도구) 통과, 있으면 이 데몬 주소만 허용. Sec-Fetch-Site도 같은 기준으로 본다.
+const sameOrigin = (req) => {
+  const o = req.headers.origin;
+  if (o && o !== `http://127.0.0.1:${PORT}` && o !== `http://localhost:${PORT}`) return false;
+  const s = req.headers['sec-fetch-site'];
+  if (s && s !== 'same-origin' && s !== 'none') return false;
+  return true;
+};
+const MODULE_ACTION_RE = new RegExp(`^/api/modules/(${NAME_RE.source.slice(1, -1)})/(remove|restart)$`);
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -200,6 +210,7 @@ const server = http.createServer(async (req, res) => {
     // ---- 모듈(계약 v1): 목록 · zip 설치 · 제거 · 재시작. 본체는 모듈 이름을 모른다 — 전부 module.json 에서 온다. ----
     if (req.method === 'GET' && p === '/api/modules') return json(res, 200, { list: mods.list(), dir: MODULES_DIR });
     if (req.method === 'POST' && p === '/api/modules/install') {
+      if (!sameOrigin(req) || !req.headers['x-file-name']) { log(`403 module install: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       const chunks = []; let size = 0;
       const allow = url.searchParams.get('allowUnofficial') === '1';
       let name = null, wasRunning = false;
@@ -207,9 +218,9 @@ const server = http.createServer(async (req, res) => {
         await new Promise((resolve, reject) => { req.on('data', (c) => { size += c.length; if (size > 50 * 1024 * 1024) { req.pause(); const e = new Error('too large (50MB)'); e.code = 'TOO_LARGE'; reject(e); } else chunks.push(c); }); req.on('end', resolve); req.on('error', reject); });
         const buf = Buffer.concat(chunks);
         const pre = inspectZip(buf, { faceVersion: VERSION });
-        name = pre.name && /^[a-z][a-z0-9-]{1,31}$/.test(pre.name) ? pre.name : null;
+        name = pre.name && NAME_RE.test(pre.name) ? pre.name : null;
         wasRunning = !!(name && mods.list().find(m => m.name === name && m.status === 'running'));
-        if (name) await mods.stop(name);
+        if (name && pre.errors.length === 0) await mods.stop(name); // 거부될 zip이면 실행 중인 모듈을 건드리지 않는다(F6)
         const r = installZip(buf, { modulesDir: MODULES_DIR, faceVersion: VERSION, allowUnofficial: allow });
         log(`module install ${r.name} v${String(r.version).slice(0, 40)} official=${r.official} unofficialAllowed=${allow} ${size}B`);
         mods.scan(); mods.start(r.name);
@@ -220,8 +231,9 @@ const server = http.createServer(async (req, res) => {
         log(`400 module install: ${String(e.message).slice(0, 200)}`); if (wasRunning) { mods.scan(); mods.start(name); } return json(res, 400, { error: e.message });
       }
     }
-    const mm = p.match(/^\/api\/modules\/([a-z][a-z0-9-]{1,31})\/(remove|restart)$/);
+    const mm = p.match(MODULE_ACTION_RE);
     if (mm && req.method === 'POST') {
+      if (!sameOrigin(req)) { log(`403 module ${mm[2]}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       const [, name, act] = mm;
       await mods.stop(name);
       if (act === 'remove') { removeModule(MODULES_DIR, name); log(`module remove ${name}`); mods.scan(); }
@@ -389,4 +401,4 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });
-process.on('SIGINT', () => { try { fs.unlinkSync(PID_FILE); } catch {} log('daemon interrupted (sessions left as-is)'); process.exit(0); });
+process.on('SIGINT', () => { Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => { try { fs.unlinkSync(PID_FILE); } catch {} log('daemon interrupted (sessions left as-is)'); process.exit(0); }); });

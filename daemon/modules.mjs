@@ -36,8 +36,8 @@ export function readModuleJson(dir) {
 }
 
 export class ModuleHost {
-  constructor({ dir, faceVersion, log = () => {}, onChange = () => {}, onNotify = () => {}, theme = () => ({ id: 'indigo', mode: 'dark' }), lang = 'ko', restartMax = 3, restartDelayMs = 1000, healthyMs = 60000 }) {
-    Object.assign(this, { dir, faceVersion, log, onChange, onNotify, theme, lang, restartMax, restartDelayMs, healthyMs });
+  constructor({ dir, faceVersion, log = () => {}, onChange = () => {}, onNotify = () => {}, theme = () => ({ id: 'indigo', mode: 'dark' }), lang = 'ko', restartMax = 3, restartDelayMs = 1000, healthyMs = 60000, denyPorts = [] }) {
+    Object.assign(this, { dir, faceVersion, log, onChange, onNotify, theme, lang, restartMax, restartDelayMs, healthyMs, denyPorts: new Set(denyPorts.map(Number)) });
     this.mods = new Map(); // name → { name, dir, info, status, reason, panel, badge, official, proc, pid, restarts, stopping, restartTimer, startedAt }
   }
   scan() {
@@ -86,7 +86,7 @@ export class ModuleHost {
     this.log(`module start ${name} pid=${proc.pid}`);
     readline.createInterface({ input: proc.stdout }).on('line', (line) => this._line(m, line));
     readline.createInterface({ input: proc.stderr }).on('line', (line) => this.log(`module ${name} stderr: ${line.slice(0, 300)}`));
-    proc.on('error', (e) => this.log(`module ${name} spawn error: ${e.message}`));
+    proc.on('error', (e) => { this.log(`module ${name} spawn error: ${e.message}`); if (!proc.pid) { m.proc = null; m.pid = null; m.status = 'failed'; m.reason = `spawn error: ${e.message}`; this.onChange(); } });
     proc.stdin.on('error', (e) => this.log(`module ${name} stdin error: ${e.code || e.message}`));
     proc.on('exit', (code, sig) => {
       const wasStopping = m.stopping; m.proc = null; m.pid = null; m.panel = null; m.badge = 0;
@@ -116,7 +116,12 @@ export class ModuleHost {
   _line(m, line) {
     let msg; try { msg = JSON.parse(line); } catch { this.log(`module ${m.name} not json: ${line.slice(0, 120)}`); return; }
     const t = msg?.t;
-    if (t === 'panel') { const url = String(msg.url || ''); if (/^http:\/\/127\.0\.0\.1:\d+\//.test(url) && url.length <= 300) { m.panel = url; this.onChange(); } else this.log(`module ${m.name} panel rejected: ${url.slice(0, 120)}`); }
+    if (t === 'panel') {
+      const url = String(msg.url || ''); const pm = /^http:\/\/127\.0\.0\.1:(\d+)\//.exec(url);
+      if (pm && url.length <= 300 && this.denyPorts.has(Number(pm[1]))) this.log(`module ${m.name} panel rejected (own port): ${url.slice(0, 120)}`);
+      else if (pm && url.length <= 300) { m.panel = url; this.onChange(); }
+      else this.log(`module ${m.name} panel rejected: ${url.slice(0, 120)}`);
+    }
     else if (t === 'badge') { m.badge = Math.max(0, Math.min(999, Math.floor(Number(msg.count) || 0))); this.onChange(); }
     else if (t === 'notify') { const s = (v, n) => String(v ?? '').slice(0, n); this.onNotify({ module: m.name, title: s(msg.title, 80) || m.info?.label || m.name, sub: s(msg.sub, 120), target: s(msg.target, 120) }); }
     else if (t === 'queue') this.log(`module ${m.name} queue ignored (contract v1)`);

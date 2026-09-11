@@ -4,19 +4,27 @@ import zlib from 'node:zlib';
 
 const SIG_LOCAL = 0x04034b50, SIG_CENTRAL = 0x02014b50, SIG_EOCD = 0x06054b50;
 
+// 폭탄 방어 기본 상한(설계 조각 F1) — 호출자가 zipRead(buf, opts)로 덮어쓸 수 있다.
+export const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+export const MAX_ENTRIES = 10000;
+
 function findEocd(buf) {
   // Finds the last EOCD signature; does not validate comment-length field (minimal parser limitation).
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (buf.readUInt32LE(i) === SIG_EOCD) return i;
   throw new Error('not a zip (no end-of-central-directory)');
 }
 
-/** zip 버퍼 → [{ name, data }] (폴더 항목 제외). 이름은 zip 안 표기 그대로(슬래시). */
-export function zipRead(buf) {
+/** zip 버퍼 → [{ name, data }] (폴더 항목 제외). 이름은 zip 안 표기 그대로(슬래시).
+ *  opts: { maxEntryBytes, maxTotalBytes, maxEntries } — 압축해제 폭탄 방어(선언된 usize·실제 해제 결과 양쪽 다 상한 검사). */
+export function zipRead(buf, opts = {}) {
+  const maxEntryBytes = opts.maxEntryBytes ?? MAX_ENTRY_BYTES, maxTotalBytes = opts.maxTotalBytes ?? MAX_TOTAL_BYTES, maxEntries = opts.maxEntries ?? MAX_ENTRIES;
   if (!Buffer.isBuffer(buf) || buf.length < 22) throw new Error('not a zip (too short)');
   const eocd = findEocd(buf);
   const count = buf.readUInt16LE(eocd + 10);
+  if (count > maxEntries) throw new Error('too many entries');
   let off = buf.readUInt32LE(eocd + 16);
-  const out = [];
+  const out = []; let total = 0;
   for (let i = 0; i < count; i++) {
     if (off + 46 > buf.length || buf.readUInt32LE(off) !== SIG_CENTRAL) throw new Error('bad central directory');
     const method = buf.readUInt16LE(off + 10);
@@ -25,13 +33,15 @@ export function zipRead(buf) {
     const lho = buf.readUInt32LE(off + 42);
     if (off + 46 + nlen > buf.length) throw new Error('bad central directory (name length)');
     const name = buf.subarray(off + 46, off + 46 + nlen).toString('utf8');
+    if (usize > maxEntryBytes) throw new Error(`entry too large: ${name} (${usize} bytes)`);
+    total += usize; if (total > maxTotalBytes) throw new Error('zip too large (total)');
     if (lho + 30 > buf.length || buf.readUInt32LE(lho) !== SIG_LOCAL) throw new Error(`bad local header: ${name}`);
     const start = lho + 30 + buf.readUInt16LE(lho + 26) + buf.readUInt16LE(lho + 28);
     if (start + csize > buf.length) throw new Error(`truncated entry: ${name}`);
     const raw = buf.subarray(start, start + csize);
     let data;
     if (method === 0) data = Buffer.from(raw);
-    else if (method === 8) data = zlib.inflateRawSync(raw);
+    else if (method === 8) { try { data = zlib.inflateRawSync(raw, { maxOutputLength: usize }); } catch (e) { if (e instanceof RangeError || e.code === 'ERR_BUFFER_TOO_LARGE') throw new Error(`inflate exceeded declared size: ${name}`); throw e; } }
     else throw new Error(`unsupported compression method ${method}: ${name}`);
     if (data.length !== usize) throw new Error(`size mismatch: ${name}`);
     if (!name.endsWith('/')) out.push({ name, data });

@@ -35,6 +35,19 @@ function outbound() {
 const o1 = outbound(); await sleep(2000); const o2 = outbound();
 ok(o1.length === 0 && o2.length === 0, `daemon pid ${pid} outbound connections = 0 (2 samples)${o1.length || o2.length ? ' → ' + [...o1, ...o2].join(', ') : ''}`);
 
+// 모듈 라우트 같은 출처 검사(F2) — restart/install 은 다른 Origin 을 403 으로 거부, install 은 x-file-name 없어도 403, Origin 없는 로컬 호출(curl 등)은 통과.
+{
+  const foreign = { Origin: 'http://evil.example.com' };
+  const r1 = await api('/api/modules/testmod/restart', { method: 'POST', headers: foreign });
+  ok(r1.status === 403, `origin: 다른 출처의 restart 거부(403) (got ${r1.status})`);
+  const r2 = await api('/api/modules/install', { method: 'POST', headers: { ...foreign, 'x-file-name': 'x.zip' } });
+  ok(r2.status === 403, `origin: 다른 출처의 install 거부(403) (got ${r2.status})`);
+  const r3 = await api('/api/modules/install', { method: 'POST', headers: {} });
+  ok(r3.status === 403, `origin: x-file-name 없는 install 거부(403) (got ${r3.status})`);
+  const r4 = await api('/api/modules/testmod/restart', { method: 'POST' });
+  ok(r4.status === 200, `origin: Origin 없는 로컬 restart 허용(200) (got ${r4.status})`);
+}
+
 // 정리: 데몬이 스스로 끝나게(shutdown). 3초 안에 안 끝나면 이 PID 만.
 try { await api('/api/shutdown', { method: 'POST' }); } catch {}
 let alive = true; for (let i = 0; i < 12 && alive; i++) { await sleep(250); try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; } }

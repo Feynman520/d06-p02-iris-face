@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { zipRead, zipWrite } from '../daemon/zip.mjs';
+import { zipRead, zipWrite, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, MAX_ENTRIES } from '../daemon/zip.mjs';
 import { buildManifest, signManifest, verifyManifest, generateKeyPair, OFFICIAL_PUBLIC_KEYS } from '../daemon/modsign.mjs';
 import { ModuleHost, validateInfo, semverGte, CONTRACT, readModuleJson } from '../daemon/modules.mjs';
 import { inspectZip, installZip, removeModule } from '../daemon/modinstall.mjs';
@@ -29,6 +29,16 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   const folderBuf = zipWrite(folderEntries);
   const folderBack = zipRead(folderBuf);
   ok(folderBack.length === 1 && folderBack[0].name === 'dir/f.txt', 'zip: 폴더 항목(이름이 /로 끝남)은 목록에서 제외');
+  ok(MAX_ENTRY_BYTES === 64 * 1024 * 1024 && MAX_TOTAL_BYTES === 256 * 1024 * 1024 && MAX_ENTRIES === 10000, 'zip: 상한 상수 export');
+  const bombRaw = Buffer.from(zipWrite([{ name: 'small.txt', data: Buffer.from('x') }]));
+  let bombThrew = false; try { zipRead(bombRaw, { maxEntryBytes: 0 }); } catch (e) { bombThrew = /entry too large/.test(e.message); }
+  ok(bombThrew, 'zip: 폭탄 방어 — 항목 크기 상한');
+  // 위조 usize: 실제 해제 결과(5000B)보다 선언된 usize(10)가 작은 zip — inflate 가 선언 크기를 넘으면 거부
+  const forged = zipWrite([{ name: 'bomb.txt', data: Buffer.from('a'.repeat(5000)), deflate: true }]);
+  const centralOff = forged.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  forged.writeUInt32LE(10, 22); forged.writeUInt32LE(10, centralOff + 24); // local·central usize 필드 둘 다 위조
+  let forgedThrew = false; try { zipRead(forged); } catch (e) { forgedThrew = /inflate exceeded declared size/.test(e.message); }
+  ok(forgedThrew, 'zip: 위조 usize 거부');
 }
 
 // ---- 2) 매니페스트·서명 ----
@@ -162,6 +172,20 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ok(sby.slowcrash.status !== 'failed' && slogs.filter(l => /module start slowcrash/.test(l)).length >= 4, 'proc: healthyMs 이상 살면 restarts 초기화(영구 failed 없음)');
     await shost.stop('slowcrash');
   }
+
+  // 자기 포트(코어 자신의 HTTP 포트)로 panel 을 보내면 denyPorts 가 거부(F5)
+  {
+    const plogs = [];
+    const pd = path.join(tmp, 'mods4d', 'selfport'); fs.mkdirSync(pd, { recursive: true });
+    fs.writeFileSync(path.join(pd, 'module.json'), JSON.stringify({ name: 'selfport', contract: 1, grade: 0, version: '1', entry: 'index.mjs' }));
+    fs.writeFileSync(path.join(pd, 'index.mjs'), `process.stdout.write(JSON.stringify({ t: 'panel', url: 'http://127.0.0.1:9458/x' }) + '\\n'); process.stdin.resume();`);
+    const phost = new ModuleHost({ dir: path.join(tmp, 'mods4d'), faceVersion: FACE, log: (m) => plogs.push(m), denyPorts: [9458] });
+    phost.scan(); phost.start('selfport');
+    await sleep(400);
+    const pby = Object.fromEntries(phost.list().map(m => [m.name, m]));
+    ok(pby.selfport.panel === null && plogs.some(l => /selfport.*panel rejected \(own port\)/.test(l)), 'proc: 자기 포트 panel 거부');
+    await phost.stop('selfport');
+  }
 }
 
 // ---- 5) 설치: 경로·지문·서명·계약 ----
@@ -189,6 +213,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(inspectZip(pack([...base, { name: '.OFFICIAL', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)) && inspectZip(pack([...base, { name: 'State/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: 대소문자 다른 .OFFICIAL·State/ 거부');
   ok(inspectZip(pack([...base, { name: 'state.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.length === 0, 'install: state.txt 같은 이름은 허용');
   ok(inspectZip(pack([...base, { name: '.official.', data: Buffer.from('{}') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)) && inspectZip(pack([...base, { name: 'state /x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)), 'install: 끝에 점·공백이 붙은 세그먼트(.official. / state ./x) 거부');
+  ok(
+    inspectZip(pack([...base, { name: 'evil.txt:hidden', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)) &&
+    inspectZip(pack([...base, { name: 'con.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)) &&
+    inspectZip(pack([...base, { name: 'sub/COM1', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)),
+    'install: 콜론(ADS)·장치명 세그먼트 거부'
+  );
+  ok(inspectZip(pack([...base, { name: 'DUP.txt', data: Buffer.from('a') }, { name: 'dup.txt', data: Buffer.from('b') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /duplicate entry/.test(e)), 'install: 중복 항목 이름 거부(대소문자 무시)');
   let code = null; try { installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS }); } catch (e) { code = e.code; }
   ok(code === 'UNOFFICIAL' && !fs.existsSync(path.join(mdir, 'inst')), 'install: 비공식은 allowUnofficial 없이 설치 안 됨');
   let failed = false; try { installZip(pack([...base, { name: '.official', data: Buffer.from('{}') }], false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS, allowUnofficial: true }); } catch { failed = true; }

@@ -6,14 +6,17 @@ import { zipRead } from './zip.mjs';
 import { buildManifest, verifyManifest, OFFICIAL_PUBLIC_KEYS } from './modsign.mjs';
 import { validateInfo, NAME_RE } from './modules.mjs';
 
-const unsafe = (name) => /^([A-Za-z]:|[\\/])/.test(name) || name.split(/[\\/]/).some(s => s === '..' || s === '.' || s === '' || /[. ]$/.test(s)) || name.includes('\0');
+const DEVICE_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+const unsafe = (name) => /^([A-Za-z]:|[\\/])/.test(name) || name.split(/[\\/]/).some(s => s === '..' || s === '.' || s === '' || /[. ]$/.test(s) || s.includes(':') || DEVICE_RE.test(s)) || name.includes('\0');
 
 export function inspectZip(buf, { faceVersion, keys = OFFICIAL_PUBLIC_KEYS } = {}) {
   const errors = [];
   let files; try { files = zipRead(buf); } catch (e) { return { name: null, info: null, files: [], errors: [e.message], manifestOk: false, official: false, keyId: null, revoked: false }; }
+  const seenNames = new Set();
   for (const f of files) {
     if (unsafe(f.name)) errors.push(`unsafe path: ${f.name}`);
     const seg0 = f.name.split(/[\\/]/)[0].toLowerCase(); if (seg0 === '.official' || seg0 === 'state') errors.push(`reserved path: ${f.name}`);
+    const lower = f.name.toLowerCase(); if (seenNames.has(lower)) errors.push(`duplicate entry: ${f.name}`); else seenNames.add(lower);
   }
   const mj = files.find(f => f.name === 'module.json'); let info = null;
   if (!mj) errors.push('module.json missing');
@@ -41,7 +44,8 @@ export function installZip(buf, { modulesDir, faceVersion, allowUnofficial = fal
   if (r.errors.length) throw new Error(r.errors.join('; '));
   if (!r.official && !allowUnofficial) { const e = new Error('unofficial module (no valid signature)'); e.code = 'UNOFFICIAL'; e.inspect = { name: r.name, version: r.info?.version, revoked: r.revoked }; throw e; }
   const dest = path.join(modulesDir, r.name), tmp = dest + '.installing';
-  fs.rmSync(tmp, { recursive: true, force: true }); fs.mkdirSync(tmp, { recursive: true });
+  const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }; // Windows EBUSY(파일 핸들 아직 닫히는 중) 관용(F9)
+  fs.rmSync(tmp, RM); fs.mkdirSync(tmp, { recursive: true });
   try {
     const root = path.resolve(tmp) + path.sep;
     for (const f of r.files) {
@@ -51,12 +55,12 @@ export function installZip(buf, { modulesDir, faceVersion, allowUnofficial = fal
     fs.rmSync(path.join(tmp, '.official'), { force: true });
     if (r.official) fs.writeFileSync(path.join(tmp, '.official'), JSON.stringify({ keyId: r.keyId, at: new Date().toISOString() }), 'utf8');
     const oldState = path.join(dest, 'state'); if (fs.existsSync(oldState)) fs.renameSync(oldState, path.join(tmp, 'state'));
-    const old = dest + '.old'; fs.rmSync(old, { recursive: true, force: true }); if (fs.existsSync(dest)) fs.renameSync(dest, old); try { fs.renameSync(tmp, dest); } catch (e) { if (fs.existsSync(old)) fs.renameSync(old, dest); throw e; } fs.rmSync(old, { recursive: true, force: true });
-  } catch (e) { fs.rmSync(tmp, { recursive: true, force: true }); throw e; }
+    const old = dest + '.old'; fs.rmSync(old, RM); if (fs.existsSync(dest)) fs.renameSync(dest, old); try { fs.renameSync(tmp, dest); } catch (e) { if (fs.existsSync(old)) fs.renameSync(old, dest); throw e; } fs.rmSync(old, RM);
+  } catch (e) { fs.rmSync(tmp, RM); throw e; }
   return { name: r.name, version: String(r.info?.version || '?'), official: r.official };
 }
 
 export function removeModule(modulesDir, name) {
   if (!NAME_RE.test(String(name))) throw new Error(`bad module name: ${name}`);
-  fs.rmSync(path.join(modulesDir, name), { recursive: true, force: true });
+  fs.rmSync(path.join(modulesDir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
