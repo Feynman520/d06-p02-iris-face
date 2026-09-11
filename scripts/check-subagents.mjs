@@ -7,6 +7,7 @@
 //   5) 무접촉: 검사 전후 파일 mtime·크기 동일
 // 기록이 없는 PC(공개 배포본)에서는 해당 검사를 SKIP 으로 표시한다.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { TranscriptTail } from '../daemon/transcript.mjs';
 import { SubagentWatcher } from '../daemon/subagents.mjs';
@@ -94,6 +95,30 @@ claudeCase('a47b7be8-fe5e-4e6f-b6be-a501206bdaab', '클로드 동기형', { coun
   const fake = { toolUseId: 'nope', lastAt: new Date(Date.now() - 120000).toISOString(), tail: { turnOpen: null } };
   ok('quiet: 부모 대기 + 조용 120초', w.judge(fake, { finished: new Map() }, false, Date.now()) === 'quiet');
   ok('running: 부모 작업 중이면 조용해도 running', w.judge(fake, { finished: new Map() }, true, Date.now()) === 'running');
+}
+// 5) 재개 판정(v2.40.2) — 배경 보조가 멈췄다(알림 1) 다시 일하면: 옛 알림으로는 완료가 아니고, 재개 뒤에 온 알림으로만 완료. 기록 파일이 자라면 poll()이 running으로 되돌린다.
+{
+  const w = new SubagentWatcher({ agent: 'claude', recordPath: 'x\\y.jsonl', sessionId: 'z' });
+  const t0 = Date.now() - 30000, t1 = Date.now() - 10000;
+  const fin = new Map([['tu1', new Date(t0).toISOString()]]);
+  const sub = { key: 'k', toolUseId: 'tu1', lastAt: new Date().toISOString(), tail: { turnOpen: null } };
+  ok('재개 전: 알림 있으면 done', w.judge(sub, { finished: fin }, false, Date.now()) === 'done');
+  w.resume(sub, t1);
+  ok('재개 뒤: 옛 알림(재개 전)으로는 done 아님', w.judge(sub, { finished: fin }, true, Date.now()) === 'running' && sub.status === 'running' && sub.endedAt === null && sub.resumes === 1);
+  fin.set('tu1', new Date().toISOString());
+  ok('재개 뒤: 새 알림(재개 후)으로 done', w.judge(sub, { finished: fin }, false, Date.now()) === 'done');
+  // poll()의 재개 감지: 완료·소진 상태에서 파일이 자라면 running으로
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-sub-'));
+  const f = path.join(dir, 'agent-r.jsonl'); fs.writeFileSync(f, '');
+  const w2 = new SubagentWatcher({ agent: 'claude', recordPath: 'x\\y.jsonl', sessionId: 'z' });
+  const s2 = { key: 'r', file: f, toolUseId: null, status: 'done', drained: true, doneSize: 0, endedAt: 'x', lastAt: null, tools: 0, items: 0, tail: { poll: () => [], items: [], tools: 0, lastT: null, firstT: null, turnOpen: null } };
+  w2.subs.set('r', s2);
+  w2.poll({ finished: new Map() }, true);
+  ok('poll: 완료·소진 상태에서 파일이 그대로면 그대로 done', s2.status === 'done');
+  fs.appendFileSync(f, '{"type":"assistant"}\n');
+  w2.poll({ finished: new Map() }, true);
+  ok('poll: 파일이 자라면 running으로 재개', s2.status === 'running' && s2.resumes === 1 && s2.drained === false);
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 console.log(`\n${fail ? 'FAIL' : 'OK'} — pass ${pass} · fail ${fail} · skip ${skip}`);
 process.exit(fail ? 1 : 0);

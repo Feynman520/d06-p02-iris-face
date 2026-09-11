@@ -88,21 +88,34 @@ export class SubagentWatcher {
   poll(parentTail, parentBusy) {
     const updates = []; let changed = false; const now = Date.now();
     for (const s of this.subs.values()) {
-      if (s.status === 'done' && s.drained) continue; // 끝났고 파일도 다 읽었다
+      if (s.status === 'done' && s.drained) {
+        // 끝났고 파일도 다 읽었다 — 그래도 기록 파일이 다시 자라면 '재개'다(배경 보조는 잠깐 멈췄다 이어 일하고, 그때마다 부모에 알림이 찍힌다 — 2026-09-11 실측, v2.40.2).
+        let size = -1; try { size = fs.statSync(s.file).size; } catch {}
+        if (size <= (s.doneSize ?? size)) continue;
+        this.resume(s, now); changed = true;
+      }
       let items = []; try { items = s.tail.poll(); } catch (e) { this.log(`sub ${s.key} poll: ${e.message}`); }
       if (items.length) { updates.push({ key: s.key, items }); s.items = s.tail.items.length; s.tools = s.tail.tools; s.lastAt = s.tail.lastT || s.lastAt; if (!s.startedAt || (s.tail.firstT && s.tail.firstT < s.startedAt)) s.startedAt = s.tail.firstT || s.startedAt; changed = true; }
       if (!s.model && s.tail.model) { s.model = shortModel(s.tail.model); changed = true; } // 클로드 meta.json에 model이 없는 보조(Explore 등)는 기록의 모델 id에서(2026-09-11 실측)
       if (this.agent === 'codex' && !s.detail && s.tail.firstUser) { s.detail = s.tail.firstUser.split('\n')[0].slice(0, 120); changed = true; }
       const next = this.judge(s, parentTail, parentBusy, now);
       if (next !== s.status) { s.status = next; if (next === 'done' && !s.endedAt) s.endedAt = this.endedAt(s, parentTail) || s.lastAt || new Date().toISOString(); if (next === 'running') s.endedAt = null; changed = true; }
-      if (s.status === 'done' && !items.length) s.drained = true; // 완료 판정 뒤 한 번 더 읽어 비었으면 그만 읽는다
+      if (s.status === 'done' && !items.length && !s.drained) { s.drained = true; try { s.doneSize = fs.statSync(s.file).size; } catch { s.doneSize = null; } } // 완료 판정 뒤 한 번 더 읽어 비었으면 그만 읽는다(크기는 재개 감지용)
     }
     if (changed) this.version++;
     return { changed, updates };
   }
+  /** 완료로 봤던 보조의 기록이 다시 자람 → running으로 되돌리고 읽기를 재개한다. 이 뒤의 완료 판정은 재개 시각보다 나중에 온 알림만 인정한다. */
+  resume(s, now = Date.now()) {
+    s.status = 'running'; s.endedAt = null; s.drained = false; s.doneSize = null;
+    s.resumedAt = new Date(now).toISOString(); s.resumes = (s.resumes || 0) + 1;
+    this.log(`sub ${s.key}: resumed (#${s.resumes})`);
+  }
   judge(s, parentTail, parentBusy, now) {
     if (this.agent === 'claude') {
-      if (s.toolUseId && parentTail?.finished.has(s.toolUseId)) return 'done';
+      // 완료 신호 = 부모 기록의 tool_result/<task-notification>(같은 id면 최신 시각으로 갱신됨). 재개된 보조는 재개 시각보다 나중 신호만 완료로 본다.
+      const fin = s.toolUseId ? parentTail?.finished.get(s.toolUseId) : null;
+      if (fin && (!s.resumedAt || Date.parse(fin) > Date.parse(s.resumedAt))) return 'done';
     } else {
       if (s.tail.turnOpen === false) return 'done';
     }
