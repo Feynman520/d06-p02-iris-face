@@ -24,8 +24,10 @@ export class TranscriptTail {
     // 보조 작업(서브에이전트) 추적 재료(2026-09-11, subagents.mjs가 읽는다):
     //   calls    = 부모가 부른 Agent/Task 도구호출 id → 설명(클로드) · spawn_agent call_id(코덱스)
     //   finished = 그 호출이 끝난 시각: 동기형은 tool_result, 배경형은 <task-notification>의 <tool-use-id>
+    //   finishedByTask = <task-notification>의 <task-id>(= 보조 agent id, 기록파일 agent-<id>) → 시각. SendMessage 로 재개된 보조의 두 번째 알림은
+    //                    tool-use-id 가 SendMessage 호출 id 라 finished 로는 못 잡는다(2026-09-11 사건, v2.47.1) — task-id 로 잡는다.
     //   tools    = 이 기록 안의 도구 호출 수 · firstT/lastT = 첫·마지막 항목 시각 · turnOpen = 코덱스 task_started~task_complete 사이면 true
-    this.calls = new Map(); this.finished = new Map(); this.tools = 0; this.firstT = null; this.lastT = null; this.turnOpen = null; this.turnDoneAt = null;
+    this.calls = new Map(); this.finished = new Map(); this.finishedByTask = new Map(); this.tools = 0; this.firstT = null; this.lastT = null; this.turnOpen = null; this.turnDoneAt = null;
   }
   /** 컨텍스트 창 크기: 코덱스는 기록에 있음, 클로드는 모델로 추정(Claude 5 계열 1M, Haiku 200k) */
   contextWindow() {
@@ -106,10 +108,13 @@ export class TranscriptTail {
     if (m.usage) this.lastUsage = { in: (m.usage.input_tokens || 0) + (m.usage.cache_read_input_tokens || 0) + (m.usage.cache_creation_input_tokens || 0), out: m.usage.output_tokens || 0 };
     return out;
   }
-  /** 배경형 보조 작업의 끝 = <task-notification>의 <tool-use-id>(부모 Agent 호출 id)와 <status>. user 본문·queue-operation·attachment 어디에 있든 같은 규칙. */
+  /** 배경형 보조 작업의 끝 = <task-notification>의 <tool-use-id>(부모 Agent 호출 id)와 <status>. user 본문·queue-operation·attachment 어디에 있든 같은 규칙.
+   *  같은 알림의 <task-id>(보조 agent id)도 finishedByTask 에 적는다 — SendMessage 로 재개된 보조는 tool-use-id 가 달라져도 task-id 는 같다(v2.47.1). */
   noteTaskNotification(s, t) {
     const tn = s.match(/<task-notification>[\s\S]*?<tool-use-id>([^<]+)<\/tool-use-id>[\s\S]*?<status>([^<]+)<\/status>/);
     if (tn && this.calls.has(tn[1].trim())) this.finished.set(tn[1].trim(), t);
+    const tk = s.match(/<task-notification>[\s\S]*?<task-id>([^<]+)<\/task-id>[\s\S]*?<status>([^<]+)<\/status>/);
+    if (tk) this.finishedByTask.set(tk[1].trim(), t);
   }
   userText(t, s) {
     if (!s) return [];

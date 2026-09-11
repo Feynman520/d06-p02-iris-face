@@ -114,7 +114,8 @@ export class SubagentWatcher {
   judge(s, parentTail, parentBusy, now) {
     if (this.agent === 'claude') {
       // 완료 신호 = 부모 기록의 tool_result/<task-notification>(같은 id면 최신 시각으로 갱신됨). 재개된 보조는 재개 시각보다 나중 신호만 완료로 본다.
-      const fin = s.toolUseId ? parentTail?.finished.get(s.toolUseId) : null;
+      // 신호는 두 갈래 중 늦은 것: Agent 호출 id(finished) · 알림의 task-id = 보조 key(finishedByTask, SendMessage 재개 뒤의 알림은 이쪽에만 잡힌다 — v2.47.1).
+      const fin = this.finishedAt(s, parentTail);
       if (fin && (!s.resumedAt || Date.parse(fin) > Date.parse(s.resumedAt))) return 'done';
     } else {
       if (s.tail.turnOpen === false) return 'done';
@@ -124,8 +125,15 @@ export class SubagentWatcher {
     if (!parentBusy && now - last > QUIET_MS) return 'quiet';
     return 'running';
   }
+  /** 클로드 보조의 가장 늦은 완료 신호 시각(finished[toolUseId] 와 finishedByTask[key] 중 늦은 것). 없으면 null. */
+  finishedAt(s, parentTail) {
+    const a = s.toolUseId ? parentTail?.finished?.get(s.toolUseId) : null;
+    const b = s.key ? parentTail?.finishedByTask?.get(s.key) : null;
+    if (a && b) return Date.parse(b) > Date.parse(a) ? b : a;
+    return a || b || null;
+  }
   endedAt(s, parentTail) {
-    if (this.agent === 'claude') return (s.toolUseId && parentTail?.finished.get(s.toolUseId)) || null;
+    if (this.agent === 'claude') return this.finishedAt(s, parentTail);
     return s.tail.turnDoneAt || null;
   }
   /** 화면에 보내는 목록(기록 본문 제외) */

@@ -120,5 +120,31 @@ claudeCase('a47b7be8-fe5e-4e6f-b6be-a501206bdaab', '클로드 동기형', { coun
   ok('poll: 파일이 자라면 running으로 재개', s2.status === 'running' && s2.resumes === 1 && s2.drained === false);
   fs.rmSync(dir, { recursive: true, force: true });
 }
+// 6) SendMessage 로 재개된 보조(2026-09-11 사건, v2.47.1): 두 번째 완료 알림의 <tool-use-id>는 SendMessage 호출 id 라 처음 Agent 호출 id 와 다르다.
+//    → 알림의 <task-id>(= 보조 agent id = 기록파일 이름 agent-<id>)로도 완료를 인정한다. task-id 없는 옛 형식은 tool-use-id 로 그대로.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-sub6-'));
+  const T = (ms) => new Date(Date.now() - ms).toISOString();
+  const agentCall = { type: 'assistant', timestamp: T(60000), message: { content: [{ type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: 'x', prompt: 'y' } }] } };
+  const launched = { type: 'user', timestamp: T(59000), message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_A', content: 'Async agent launched successfully. agentId: aK' }] } };
+  const notif = (toolUse, when, withTask = true) => ({ type: 'user', timestamp: when, message: { content: `<task-notification>\n${withTask ? '<task-id>aK</task-id>\n' : ''}<tool-use-id>${toolUse}</tool-use-id>\n<status>completed</status>\n</task-notification>` } });
+  const pf = path.join(dir, 'parent.jsonl');
+  fs.writeFileSync(pf, [agentCall, launched, notif('toolu_A', T(50000))].map(o => JSON.stringify(o)).join('\n') + '\n');
+  const parent = new TranscriptTail(pf, 'claude'); parent.poll();
+  ok('task-id: 첫 알림 → finished(tool-use-id)와 finishedByTask(task-id) 둘 다 기록', !!parent.finished.get('toolu_A') && !!parent.finishedByTask.get('aK'));
+  const w = new SubagentWatcher({ agent: 'claude', recordPath: 'x\\y.jsonl', sessionId: 'z' });
+  const sub = { key: 'aK', toolUseId: 'toolu_A', lastAt: new Date().toISOString(), tail: { turnOpen: null } };
+  ok('task-id: 첫 알림으로 done', w.judge(sub, parent, false, Date.now()) === 'done');
+  w.resume(sub, Date.now() - 20000);
+  ok('task-id: 재개 뒤 옛 알림으로는 done 아님', w.judge(sub, parent, true, Date.now()) === 'running');
+  fs.appendFileSync(pf, JSON.stringify(notif('toolu_SENDMSG', T(1000))) + '\n'); parent.poll();
+  ok('task-id: 재개 뒤 SendMessage id 알림(같은 task-id)으로 done', w.judge(sub, parent, false, Date.now()) === 'done' && !!w.endedAt(sub, parent));
+  const pf2 = path.join(dir, 'parent2.jsonl');
+  fs.writeFileSync(pf2, [agentCall, launched, notif('toolu_A', T(1000), false)].map(o => JSON.stringify(o)).join('\n') + '\n');
+  const parent2 = new TranscriptTail(pf2, 'claude'); parent2.poll();
+  ok('task-id 없는 옛 형식 알림도 tool-use-id 로 done', w.judge({ key: 'aK', toolUseId: 'toolu_A', lastAt: new Date().toISOString(), tail: { turnOpen: null } }, parent2, false, Date.now()) === 'done');
+  ok('task-id: 모르는 task-id 알림은 다른 보조를 완료시키지 않음', w.judge({ key: 'other', toolUseId: 'toolu_none', lastAt: new Date().toISOString(), tail: { turnOpen: null } }, parent, true, Date.now()) === 'running');
+  fs.rmSync(dir, { recursive: true, force: true });
+}
 console.log(`\n${fail ? 'FAIL' : 'OK'} — pass ${pass} · fail ${fail} · skip ${skip}`);
 process.exit(fail ? 1 : 0);
