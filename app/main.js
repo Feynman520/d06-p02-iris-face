@@ -4,7 +4,11 @@
 (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const STATUS_KO = { busy: '작업 중', idle: '대기', attention: '확인 필요', exited: '종료됨', dead: '재개 가능', orphan: '외부 소유' };
+  const STATUS_KO = { busy: '작업 중', idle: '대기', attention: '확인 필요', exited: '종료됨', dead: '재개 가능', orphan: '외부 소유', delegated: '보조 작업 중' };
+  /** 겉보기 상태(v2.40, 2026-09-11): 데몬 상태가 '대기'인데 실행 중인 보조(서브에이전트)가 있으면 '보조 작업 중'(delegated).
+   *  데몬 상태(rec.status)는 터미널 화면 판정·Esc 중단에 묶여 있어 손대지 않고, 점·글자만 이 값으로 그린다. quiet(60초 조용, 완료 미확정)는 세지 않는다. */
+  const viewStatus = (s) => (s.status === 'idle' && SubPanel.running(s.id) ? 'delegated' : s.status);
+  const statusText = (s) => { const v = viewStatus(s); return v === 'delegated' ? `${STATUS_KO.delegated} ⁺${SubPanel.running(s.id)}` : (STATUS_KO[v] || v); };
   const AGENT_KO = { claude: 'Claude', codex: 'Codex' };
   let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null;
   let folder = null;                 // 새 요청 모드에서 고른 폴더
@@ -81,7 +85,7 @@
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
       else if (m.type === 'subtranscript') SubPanel.onTranscript(m);          // 서랍이 보고 있는 보조의 기록
       else if (m.type === 'sessions') { sessions = m.list; render(); }
-      else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s); } }
+      else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s, SubPanel.running(m.id)); } }
       else if (m.type === 'replay') { if (m.id === current && term) { term.reset(); term.write(m.data); } }
       else if (m.type === 'output') { if (m.id === current && term) term.write(m.data); }
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
@@ -115,9 +119,9 @@
     const list = $('#session-list'); list.innerHTML = '';
     sessions.forEach((s, i) => {
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
-      li.innerHTML = `<span class="dot ${s.status}" title="${STATUS_KO[s.status] || s.status}"></span>
+      li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
         <span class="sname" title="${esc(s.title || '')}">${esc(s.title || shortPath(s.cwd))}${SubPanel.running(s.id) ? `<span class="subn" title="작업 중인 보조 작업 ${SubPanel.running(s.id)}개">⁺${SubPanel.running(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
-        <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${STATUS_KO[s.status] || s.status}</span>`;
+        <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
       li.onclick = () => select(s.id);
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
       li.ondragstart = (e) => { dragId = s.id; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', s.id); e.dataTransfer.effectAllowed = 'move'; } catch {} };
@@ -131,15 +135,15 @@
     if (current && current !== 'preview' && !cur()) current = null;
     $('#view').hidden = !current;
     IrisStars.setDim(!!current);
-    IrisStars.setEnergy(sessions.some(s => s.status === 'busy') ? 0.7 : 0);
+    IrisStars.setEnergy(sessions.some(s => s.status === 'busy' || viewStatus(s) === 'delegated') ? 0.7 : 0);
     renderComposer(); renderSetup();
     if (current && current !== 'preview') renderHead();
   }
   function renderHead() {
     const s = cur(); if (!s) return;
-    $('#vh-dot').className = 'dot ' + s.status;
+    $('#vh-dot').className = 'dot ' + viewStatus(s);
     $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = s.title ? `${s.title}\n${s.cwd}` : s.cwd;
-    $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${STATUS_KO[s.status] || s.status}`; $('#vh-combo').title = `${s.cwd}\n${s.cmdline || ''}`;
+    $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = `${s.cwd}\n${s.cmdline || ''}`;
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
@@ -391,7 +395,8 @@
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
   Notify.init({ onPick: (id) => { if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------
-  SubPanel.init({ send, current: () => current, onChange: () => render() });
+  // v2.40: 실행 중인 보조 수가 바뀌면 겉보기 상태(보조 작업 중)도 바뀌고, 보류해 둔 완료 알림의 해소 여부를 Notify가 판단한다.
+  SubPanel.init({ send, current: () => current, onChange: (id) => { render(); if (id) Notify.onSubs(id, SubPanel.running(id), SubPanel.list(id).length, sessions.find(x => x.id === id)); } });
 
   // ---------- 각인(2026-09-10): 첫 실행 1회 `by SEJUN HAM` + 워드마크 두 번 클릭(Ctrl+Alt+I) = 별이 SEJUN HAM 으로 모임 ----------
   const SIG_NAME = 'SEJUN HAM';

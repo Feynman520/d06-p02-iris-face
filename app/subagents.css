@@ -18,8 +18,8 @@
 @keyframes sc-blink { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sub-chip.running .sc-dot { animation: none; } }
 
-/* ---- 작업목록의 ⁺N: 지금 작업 중인 보조 수(0이면 없음) ---- */
-.srow .subn { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 10.5px; line-height: 15px; color: var(--ok); border: 1px solid rgba(111,211,154,.4); background: rgba(111,211,154,.08); vertical-align: 1px; font-variant-numeric: tabular-nums; }
+/* ---- 작업목록의 ⁺N: 지금 작업 중인 보조 수(0이면 없음). v2.40: 작업 중과 같은 보라빛(대기 초록과 구별) ---- */
+.srow .subn { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 10.5px; line-height: 15px; color: var(--iris); border: 1px solid rgba(143,168,255,.45); background: rgba(143,168,255,.10); vertical-align: 1px; font-variant-numeric: tabular-nums; }
 
 /* ---- 오른쪽 서랍: 대화 영역(#chat-wrap) 안 오른쪽, 기본 너비 = 대화 폭의 절반. 열리면 대화가 그만큼 좁아진다(겹치지 않음). ---- */
 #chat-wrap { --sub-w: 50%; }

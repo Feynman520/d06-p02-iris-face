@@ -110,8 +110,13 @@ a { color: var(--iris); }
 .dot.idle { background: var(--ok); }
 .dot.attention { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
 .dot.orphan { background: var(--warn); }
+/* 보조 작업 중(v2.40): 메인은 대기인데 보조(서브에이전트)가 실행 중 — 속 빈 고리 위를 호가 한 바퀴 도는 회전(정지된 초록·주황 점과 한눈에 구별). CSS만, 그림 없음. */
+.dot.delegated { width: 10px; height: 10px; margin: -1px; background: conic-gradient(var(--iris) 0 62%, rgba(143,168,255,.22) 62% 100%); box-shadow: 0 0 8px var(--iris-soft);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.6px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 2.6px), #000 calc(100% - 2px));
+  animation: spin 1.1s linear infinite; }
 @keyframes breathe { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } .dot.delegated { animation: none; } }
 
 /* ---- 무대 ---- */
 #stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
