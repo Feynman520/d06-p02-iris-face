@@ -6,12 +6,62 @@
    2026-09-11 추가 5종(사용자 요청 "창의적인 것"): galaxy 은하(기울어진 나선팔 회전) · warp 워프(정면에서 흘러나오는 별, 작업 중엔 줄무늬 초공간)
    · aurora 오로라(물결치는 빛의 커튼) · helix 이중나선(두 가닥 + 가로대 회전) · fireflies 반딧불(배회 + 쿠라모토 동기화로 점점 함께 깜박임).
    고른 한 종만 돌고 나머지는 코드 갈래일 뿐이라 종 수가 늘어도 성능 부담은 없다.
-   공통: 처음 1.2초 모임 연출, 세션 작업 중 가속(energy), 대화 열리면 어두워짐(dim), 창 숨김 시 정지, 밀도 설정, reduced-motion 시 정지 화면. */
+   공통: 처음 1.2초 모임 연출, 세션 작업 중 가속(energy), 대화 열리면 어두워짐(dim), 창 숨김 시 정지, 밀도 설정, reduced-motion 시 정지 화면.
+   자동 조절(2026-09-12, 발열 사건 후): 별 수가 곧 비용이다(밀도 160% = 비용 2배, 무대 종류는 무관 — headless 실측). 그래서
+   - 컴퓨터별 상한 밀도(cap): 매 프레임 그리기에 걸린 시간을 재서 예산(60fps 기준 4ms)을 넘으면 0.1씩 내리고, 20초 넉넉하면 0.1씩 올린다. 실제 별 수 = min(사용자 밀도, cap).
+     별 배열은 사용자 밀도로 만들어 섞어 두고 앞에서 live개만 그린다 → cap이 바뀌어도 별 자리가 통째로 다시 뽑히지 않는다. cap은 localStorage에 기억(컴퓨터마다 다름).
+   - 프레임 상한(fpsCap): 창이 포커스를 잃으면 10fps, 배터리로 돌면 30fps, 평소 60fps. 상한 아래 프레임은 그리지 않고 건너뛴다.
+   - 안 보이면 쉬기: 창 숨김(기존) + 대화 화면이 열려 어두워진 뒤(pauseWhenDim, 기본 켬) 정지. 미리보기 엔진(interactive=false)은 조절하지 않는다. */
 // makeEngine(): 캔버스 하나를 맡는 독립 엔진. 무대용 1개 + 설정 패널 미리보기용 여러 개.
 function makeStarEngine() {
-  let canvas, ctx, W, H, dpr = 1, raf = 0, pts = [], t0 = 0, mouse = { x: 0.5, y: 0.5 }, energy = 0, targetEnergy = 0, dim = 0, targetDim = 0, ro = null, interactive = true, onMove = null, onVis = null;
+  let canvas, ctx, W, H, dpr = 1, raf = 0, pts = [], all = [], t0 = 0, mouse = { x: 0.5, y: 0.5 }, energy = 0, targetEnergy = 0, dim = 0, targetDim = 0, ro = null, interactive = true, onMove = null, onVis = null, onFocus = null, onBlur = null, battery = null, onCharge = null;
   let style = 'sphere', density = 1, pauseWhenDim = false, colors = { a: '232,236,255', b: '160,178,255', c: '206,190,255', glow: '122,140,255' };
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // ---- 자동 조절 상태 ----
+  const CAP_KEY = 'iris.stage.cap', CAP_MIN = 0.3, CAP_MAX = 1.6;
+  let gov = { budgetMs: 4, windowMs: 2000, upAfterMs: 20000, dropRatio: 0.15 }, govern = false, cap = CAP_MAX, slow = false, fpsCap = 60, focused = true, onBattery = false;
+  let acc = { t: 0, n: 0, drops: 0, at: 0 }, lastNow = 0, lastDraw = 0, goodSince = 0, lastCost = 0, lastFps = 0;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const SLOW_AT = 0.5; // 별을 이만큼까지 줄여도 무거우면 그다음 수단은 30fps(slow), 그래도 무거우면 별을 더 줄인다(CAP_MIN까지). 올라갈 땐 반대 순서.
+  function loadCap() { try { const s = JSON.parse(localStorage.getItem(CAP_KEY) || 'null'); if (s && s.cap >= CAP_MIN && s.cap <= CAP_MAX) { cap = s.cap; slow = !!s.slow; } } catch {} }
+  function saveCap() { try { localStorage.setItem(CAP_KEY, JSON.stringify({ cap, slow, at: new Date().toISOString() })); } catch {} }
+  const liveCount = () => govern ? Math.round(all.length * Math.min(1, cap / density)) : all.length;
+  function applyLive() { const n = liveCount(); if (pts.length !== n || pts[0] !== all[0]) pts = all.slice(0, n); }
+  function status() { return { cap, slow, density, live: pts.length, total: all.length, fpsCap, focused, onBattery, lastCost: r1(lastCost), lastFps: Math.round(lastFps), govern }; }
+  function emit() { if (govern) try { document.dispatchEvent(new CustomEvent('iris:stage', { detail: status() })); } catch {} }
+  function updateFps() { const v = !focused ? 10 : (onBattery || slow) ? 30 : 60; if (v !== fpsCap) { fpsCap = v; acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; emit(); } }
+  // 한 단계 내림: cap을 0.1씩(사용자 밀도 아래부터) → SLOW_AT에 닿으면 30fps → 그다음 CAP_MIN까지. 바뀐 게 있으면 true.
+  function stepDown() {
+    const eff = Math.min(cap, density);
+    if (eff > SLOW_AT || slow) { const next = Math.max(CAP_MIN, r1(eff - 0.1)); if (next === cap) return false; cap = next; }
+    else slow = true;
+    saveCap(); applyLive(); updateFps(); return true;
+  }
+  // 한 단계 올림(내림의 역순): CAP_MIN~SLOW_AT 사이면 cap 먼저 → SLOW_AT에서 slow 해제 → 사용자 밀도까지 cap. 바뀐 게 있으면 true.
+  function stepUp() {
+    if (cap >= density && !slow) return false;
+    if (slow && cap >= SLOW_AT) slow = false;
+    else cap = Math.min(CAP_MAX, r1(cap + 0.1));
+    saveCap(); applyLive(); updateFps(); return true;
+  }
+  // 한 프레임의 비용(ms)과 시각을 받아 2초 창마다 판정. fpsCap<30(포커스 잃음)일 때는 표본이 대표성이 없어 재지 않는다.
+  function govSample(cost, now) {
+    lastCost = cost;
+    if (!govern || fpsCap < 30 || reduce) return;
+    if (!acc.at) acc.at = now;
+    acc.t += cost; acc.n++;
+    if (lastNow && now - lastNow > 2.5 * (1000 / fpsCap)) acc.drops++;
+    lastNow = now;
+    if (now - acc.at < gov.windowMs || acc.n < 10) return; // 창이 차고 표본이 10개는 돼야 판정(아주 느린 컴퓨터는 창이 길어질 뿐 판정은 한다)
+    const avg = acc.t / acc.n, drops = acc.drops / acc.n, budget = gov.budgetMs * 60 / fpsCap; lastFps = acc.n / ((now - acc.at) / 1000);
+    acc = { t: 0, n: 0, drops: 0, at: now };
+    if (avg > budget || drops > gov.dropRatio) { stepDown(); goodSince = 0; emit(); } // 무겁다: 한 단계 내림
+    else if (avg < budget * 0.6 && drops < 0.03) { // 넉넉하다: 20초 이어지면 한 단계 올림
+      if (!goodSince) goodSince = now;
+      else if (now - goodSince >= gov.upAfterMs) { goodSince = now; stepUp(); }
+      emit();
+    } else { goodSince = 0; emit(); }
+  }
   const ease = (x) => 1 - Math.pow(1 - x, 3);
   // 색 문자열은 캐시에서 꺼낸다(알파 1/100 단위 양자화, 색 3종 × 101 = 최대 303개). 매 프레임 별마다 새 `rgba(...)` 문자열을 만들면
   // 크로미엄이 fillStyle에 넣은 문자열을 외부 문자열로 등록해 표가 수만 개로 불고, 주요 GC마다 그 표를 비우느라 30~45ms씩 멈춘다(2026-09-10 실측 — 끊김의 원인).
@@ -95,6 +145,9 @@ function makeStarEngine() {
       // 저마다 고유 박자(w)로 깜박이다가 쿠라모토 결합(frame)으로 점점 함께 깜박인다. 배회는 느린 방향 잡음.
       pts.push({ x: Math.random(), y: Math.random(), h: Math.random() * 6.283, phi: Math.random() * 6.283, w: 1.6 + Math.random() * 0.8, size: 1.2 + Math.random() * 1.3, hue: Math.random(), ph: Math.random() * 6.283, tw: 1 });
     }
+    // 섞어 두면 앞에서 live개만 그려도 고른 부분집합이 된다(구는 i 순서가 위→아래라 섞지 않으면 윗부분만 남는다). 종별 배정(i%3 등)은 생성 때 끝났다.
+    all = pts; for (let i = all.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [all[i], all[j]] = [all[j], all[i]]; }
+    pts = []; applyLive();
   }
   function resize() {
     dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -109,6 +162,8 @@ function makeStarEngine() {
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   }
   function frame(now) {
+    if (fpsCap < 60 && now - lastDraw < 1000 / fpsCap - 2) { raf = requestAnimationFrame(frame); return; } // 프레임 상한: 아직 차례가 아니면 건너뜀(그리기 0)
+    lastDraw = now; const t1 = performance.now();
     if (!t0) t0 = now;
     const t = (now - t0) / 1000;
     const gather = reduce ? 1 : ease(Math.min(1, t / 1.2));
@@ -232,7 +287,14 @@ function makeStarEngine() {
       glow(cx, cy, R, k * 0.35);
       const dt = reduce ? 0 : 0.016, K = (0.9 + energy * 2.2) * dt, wander = 0.012 + energy * 0.02, link2 = Math.pow(Math.min(W, H) * 0.32, 2);
       if (dt) {
-        for (let i = 0; i < pts.length; i++) { const p = pts[i]; let pull = 0; for (let j = 0; j < pts.length; j++) { if (j === i) continue; const q = pts[j]; const dx = (q.x - p.x) * W, dy = (q.y - p.y) * H; const d2 = dx * dx + dy * dy; if (d2 < link2) pull += Math.sin(q.phi - p.phi) * (1 - d2 / link2); } p.dphi = p.w * dt + K * pull / Math.max(8, pts.length * 0.25); }
+        // 이웃 찾기를 격자로: 결합 반경 크기의 칸에 별을 넣고 자기 칸+주변 8칸만 본다(전체 쌍 n² → 대략 n×이웃 수). 결과는 전체 쌍 계산과 같다.
+        const cell = Math.sqrt(link2), cols = Math.max(1, Math.ceil(W / cell)), grid = new Map();
+        for (const p of pts) { const key = ((p.y * H / cell) | 0) * cols + ((p.x * W / cell) | 0); let b = grid.get(key); if (!b) grid.set(key, b = []); b.push(p); }
+        for (const p of pts) {
+          let pull = 0; const gx = (p.x * W / cell) | 0, gy = (p.y * H / cell) | 0;
+          for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) { const b = grid.get((gy + oy) * cols + gx + ox); if (!b) continue; for (const q of b) { if (q === p) continue; const dx = (q.x - p.x) * W, dy = (q.y - p.y) * H; const d2 = dx * dx + dy * dy; if (d2 < link2) pull += Math.sin(q.phi - p.phi) * (1 - d2 / link2); } }
+          p.dphi = p.w * dt + K * pull / Math.max(8, pts.length * 0.25);
+        }
         for (const p of pts) { p.phi = (p.phi + p.dphi) % 6.283; p.h += (Math.sin(t * 0.7 + p.ph) + Math.random() - 0.5) * 0.08; p.x = (p.x + Math.cos(p.h) * wander * 0.016 + 1) % 1; p.y = (p.y + Math.sin(p.h) * wander * 0.016 * (W / H) + 1) % 1; }
       }
       for (const p of pts) {
@@ -241,26 +303,44 @@ function makeStarEngine() {
         ctx.fillStyle = col(p, a); ctx.beginPath(); ctx.arc(x, y, p.size * (0.7 + 0.6 * pulse), 0, 6.283); ctx.fill();
       }
     }
+    govSample(performance.now() - t1, now);
     if (reduce || (pauseWhenDim && targetDim && dim > 0.98)) { raf = 0; return; }
     raf = requestAnimationFrame(frame);
   }
   const kick = () => { if (!raf && !document.hidden) raf = requestAnimationFrame(frame); };
   function mount(el, opts = {}) {
-    canvas = el; ctx = canvas.getContext('2d', { alpha: true }); interactive = opts.interactive !== false;
+    canvas = el; ctx = canvas.getContext('2d', { alpha: true }); interactive = opts.interactive !== false; govern = opts.govern ?? interactive;
+    if (govern) loadCap();
     resize(); ro = new ResizeObserver(() => { resize(); kick(); }); ro.observe(canvas);
     if (interactive) { onMove = (e) => { const b = canvas.getBoundingClientRect(); mouse.x = Math.max(0, Math.min(1, (e.clientX - b.left) / b.width)); mouse.y = Math.max(0, Math.min(1, (e.clientY - b.top) / b.height)); }; window.addEventListener('pointermove', onMove); }
     onVis = () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else kick(); }; document.addEventListener('visibilitychange', onVis);
+    if (govern) { // 창 포커스(잃으면 10fps)·배터리(30fps) 신호
+      focused = document.hasFocus ? document.hasFocus() : true;
+      onFocus = () => { focused = true; updateFps(); kick(); }; onBlur = () => { focused = false; updateFps(); }; window.addEventListener('focus', onFocus); window.addEventListener('blur', onBlur);
+      try { navigator.getBattery?.().then((b) => { battery = b; onCharge = () => { onBattery = !b.charging; updateFps(); }; b.addEventListener('chargingchange', onCharge); onCharge(); }).catch(() => {}); } catch {}
+      updateFps();
+    }
     kick();
   }
-  function destroy() { cancelAnimationFrame(raf); raf = 0; ro?.disconnect(); if (onMove) window.removeEventListener('pointermove', onMove); if (onVis) document.removeEventListener('visibilitychange', onVis); pts = []; }
+  function destroy() {
+    cancelAnimationFrame(raf); raf = 0; ro?.disconnect(); if (onMove) window.removeEventListener('pointermove', onMove); if (onVis) document.removeEventListener('visibilitychange', onVis);
+    if (onFocus) window.removeEventListener('focus', onFocus); if (onBlur) window.removeEventListener('blur', onBlur); if (battery && onCharge) battery.removeEventListener('chargingchange', onCharge);
+    pts = []; all = [];
+  }
   function configure(o = {}) {
     if (o.style && o.style !== style) { style = o.style; make(); t0 = 0; }
     if (o.density && o.density !== density) { density = o.density; make(); }
     if (typeof o.pauseWhenDim === 'boolean') pauseWhenDim = o.pauseWhenDim;
     if (o.colors) { colors = { ...colors, ...o.colors }; colCache.clear(); }
+    if (o.gov) gov = { ...gov, ...o.gov }; // 검사용 조절 상수 덮어쓰기(창 길이·상승 대기 등)
+    if (o.style || o.density) { acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; emit(); }
     kick();
   }
-  return { mount, destroy, configure, signature, setEnergy: (v) => { targetEnergy = Math.max(0, Math.min(1, v)); kick(); }, setDim: (v) => { targetDim = v ? 1 : 0; kick(); } };
+  /** 상한을 지우고 처음부터 다시 잰다(설정 「다시 측정」). */
+  function remeasure() { cap = CAP_MAX; slow = false; try { localStorage.removeItem(CAP_KEY); } catch {} acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; applyLive(); updateFps(); emit(); kick(); }
+  /** 검사·시뮬레이션용: 포커스·배터리 신호를 직접 넣는다. */
+  function simulate(o = {}) { if (typeof o.focused === 'boolean') focused = o.focused; if (typeof o.onBattery === 'boolean') onBattery = o.onBattery; updateFps(); kick(); }
+  return { mount, destroy, configure, signature, status, remeasure, simulate, setEnergy: (v) => { targetEnergy = Math.max(0, Math.min(1, v)); kick(); }, setDim: (v) => { targetDim = v ? 1 : 0; kick(); } };
 }
 window.IrisStars = (() => {
   const main = makeStarEngine();
@@ -268,6 +348,8 @@ window.IrisStars = (() => {
     mount: (el) => main.mount(el), configure: (o) => main.configure(o), setEnergy: (v) => main.setEnergy(v), setDim: (v) => main.setDim(v),
     /** 서명 이스터에그: 별들이 text 모양으로 모였다가 흩어진다. 못 하면 false(호출한 쪽이 글자로 대신). */
     signature: (text) => main.signature(text),
+    /** 자동 조절 상태(상한 밀도·지금 별 수·프레임 상한·마지막 프레임 비용). 바뀔 때마다 document 'iris:stage' 이벤트로도 알린다. */
+    status: () => main.status(), remeasure: () => main.remeasure(), simulate: (o) => main.simulate(o),
     /** 설정 패널 미리보기: 작은 캔버스에 스타일 하나를 가볍게(별 적게) 돌린다. 닫을 때 destroy() */
     preview(el, opts) { const e = makeStarEngine(); e.mount(el, { interactive: false }); e.configure({ density: 0.2, ...opts }); return e; },
   };

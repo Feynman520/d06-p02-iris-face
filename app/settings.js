@@ -5,7 +5,7 @@ window.Settings = (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const R = window.Registry;
-  const DEF = { name: '', mark: 'cube', font: 'bodoni', theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: false, markSpeed: 1, permission: '', approval: '', sandbox: '', notifyDone: true, notifyOs: true };
+  const DEF = { name: '', mark: 'cube', font: 'bodoni', theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: true, markSpeed: 1, permission: '', approval: '', sandbox: '', notifyDone: true, notifyOs: true }; // pauseWhenDim 기본 켬(2026-09-12 발열 사건): 저장된 설정이 있으면 그 값이 우선
   let cfg = { ...DEF }, health = null, open = false, themeKeys = new Set(), agents = null, previews = [];
   const destroyPreviews = () => { for (const p of previews) { try { p.destroy(); } catch {} } previews = []; };
 
@@ -35,6 +35,15 @@ window.Settings = (() => {
   function applyFont() { const f = R.FONTS.find(x => x.id === cfg.font) || R.FONTS[0]; $('#wordmark').style.cssText = f.css; }
   function applyName() { const n = (cfg.name || health?.rootName || 'IRIS').trim(); $('#wordmark').textContent = n; document.title = n; }
   function applyStage() { IrisStars.configure({ style: cfg.stage, density: cfg.density, pauseWhenDim: cfg.pauseWhenDim }); }
+  // 자동 조절 표시(2026-09-12): 이 컴퓨터의 상한 밀도·지금 그리는 별 수·프레임 상한. 엔진이 'iris:stage' 이벤트로 바뀔 때마다 알린다.
+  function renderCap(s) {
+    const el = $('#st-cap'); if (!el || !s) return;
+    const fps = s.fpsCap === 10 ? '창이 뒤에 있어 10fps' : s.slow ? '느린 컴퓨터라 30fps' : s.fpsCap === 30 ? '배터리라 30fps' : '60fps';
+    el.textContent = s.cap < s.density
+      ? `이 컴퓨터 상한 ${Math.round(s.cap * 100)}% · 지금 별 ${s.live}개 · ${fps}`
+      : `이 컴퓨터는 고른 양을 다 그릴 수 있어요 · 별 ${s.live}개 · ${fps}`;
+  }
+  document.addEventListener('iris:stage', (e) => { if (open) renderCap(e.detail); });
   function applyAll() { applyTheme(); applyMark(); applyFont(); applyName(); applyStage(); }
 
   // ---- 배터리 = 현재 우선(왕관) 계정의 **남은 주간 잔량**(100 − 사용률) ----
@@ -69,6 +78,7 @@ window.Settings = (() => {
     for (const c of $('#st-stages').querySelectorAll('canvas.stage-pv')) previews.push(IrisStars.preview(c, { style: c.dataset.pv, colors }));
     $('#st-name').value = cfg.name || ''; $('#st-name').placeholder = health?.rootName || 'IRIS';
     $('#st-density').value = cfg.density; $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%';
+    renderCap(IrisStars.status());
     $('#st-pause').checked = !!cfg.pauseWhenDim;
     $('#st-speed').value = cfg.markSpeed; $('#st-speed-v').textContent = cfg.markSpeed + '×';
     $('#st-root').textContent = health?.root || '';
@@ -160,6 +170,7 @@ window.Settings = (() => {
     $('#st-name-reset').onclick = () => pick({ name: '' });
     $('#st-density').addEventListener('input', (e) => { cfg.density = Number(e.target.value); $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%'; applyStage(); });
     $('#st-density').addEventListener('change', save);
+    $('#st-remeasure').addEventListener('click', () => { IrisStars.remeasure(); renderCap(IrisStars.status()); });
     $('#st-pause').addEventListener('change', (e) => pick({ pauseWhenDim: e.target.checked }));
     $('#st-speed').addEventListener('input', (e) => { cfg.markSpeed = Number(e.target.value); $('#st-speed-v').textContent = cfg.markSpeed + '×'; applyMark(); });
     $('#st-speed').addEventListener('change', save);
