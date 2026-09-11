@@ -130,6 +130,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const t0 = Date.now(); await host.stop('stubborn'); const dt = Date.now() - t0;
   ok(by().stubborn.status === 'stopped' && dt >= 1900 && dt < 4000, `proc: shutdown 무시 → 2초 뒤 그 PID 만 kill (${dt}ms)`);
   await host.stopAll();
+  ok(by().crash.status === 'failed', 'proc: stopAll() 은 failed/incompatible 상태를 덮어쓰지 않음');
   ok(changes > 5, 'proc: onChange 가 전환마다 호출됨');
 
   // 재시작 대기 중 stop → 타이머 취소(고정 리뷰 1)

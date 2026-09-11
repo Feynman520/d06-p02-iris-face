@@ -102,7 +102,7 @@ export class ModuleHost {
   stop(name) {
     const m = this.mods.get(name); if (!m) return Promise.resolve();
     clearTimeout(m.restartTimer); m.restartTimer = null; // 재시작 대기 중이었으면 여기서 취소 — 안 그러면 stop 뒤에도 새 프로세스가 뜬다
-    if (!m.proc) { m.status = 'stopped'; return Promise.resolve(); }
+    if (!m.proc) return Promise.resolve(); // 이미 stopped·incompatible·grade-unsupported·failed 등 — 상태를 건드리지 않는다
     m.stopping = true; const proc = m.proc; this._send(m, { t: 'shutdown' });
     return new Promise((resolve) => {
       const timer = setTimeout(() => { if (m.proc === proc) { this.log(`module ${name} ignored shutdown → kill pid=${proc.pid}`); try { proc.kill(); } catch {} } }, 2000);
