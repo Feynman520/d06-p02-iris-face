@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { zipRead, zipWrite } from '../daemon/zip.mjs';
+import { buildManifest, signManifest, verifyManifest, generateKeyPair, OFFICIAL_PUBLIC_KEYS } from '../daemon/modsign.mjs';
 
 let pass = 0, fail = 0;
 const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } else { fail++; console.log(`FAIL ${name}`); } };
@@ -26,6 +27,20 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   const folderBuf = zipWrite(folderEntries);
   const folderBack = zipRead(folderBuf);
   ok(folderBack.length === 1 && folderBack[0].name === 'dir/f.txt', 'zip: 폴더 항목(이름이 /로 끝남)은 목록에서 제외');
+}
+
+// ---- 2) 매니페스트·서명 ----
+{
+  const files = [{ name: 'module.json', data: Buffer.from('{}') }, { name: 'index.mjs', data: Buffer.from('x') }, { name: 'manifest.json', data: Buffer.from('ignored') }, { name: 'manifest.sig', data: Buffer.from('ignored') }];
+  const man = buildManifest(files, { source: 'abc123' });
+  ok(Object.keys(man.files).join(',') === 'index.mjs,module.json' && man.version === 1 && man.source === 'abc123', 'sign: 매니페스트는 manifest.* 제외·이름순·extra 포함');
+  const kp = generateKeyPair(); const text = JSON.stringify(man);
+  const sig = signManifest(text, kp.privatePem);
+  ok(verifyManifest(text, sig, [{ id: 't', pem: kp.publicPem }]).ok === true, 'sign: 같은 열쇠로 검증 통과');
+  ok(verifyManifest(text + ' ', sig, [{ id: 't', pem: kp.publicPem }]).ok === false, 'sign: 본문 1자 바뀌면 실패');
+  const other = generateKeyPair();
+  ok(verifyManifest(text, sig, [{ id: 'o', pem: other.publicPem }]).ok === false, 'sign: 다른 열쇠로 실패');
+  ok(Array.isArray(OFFICIAL_PUBLIC_KEYS) && OFFICIAL_PUBLIC_KEYS.length >= 1 && /BEGIN PUBLIC KEY/.test(OFFICIAL_PUBLIC_KEYS[0].pem), 'sign: 공식 공개 열쇠가 소스에 1개 이상');
 }
 
 // ---- 끝 ----
