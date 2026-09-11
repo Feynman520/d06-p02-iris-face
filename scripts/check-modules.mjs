@@ -6,6 +6,7 @@ import path from 'node:path';
 import { zipRead, zipWrite } from '../daemon/zip.mjs';
 import { buildManifest, signManifest, verifyManifest, generateKeyPair, OFFICIAL_PUBLIC_KEYS } from '../daemon/modsign.mjs';
 import { ModuleHost, validateInfo, semverGte, CONTRACT, readModuleJson } from '../daemon/modules.mjs';
+import { inspectZip, installZip, removeModule } from '../daemon/modinstall.mjs';
 
 let pass = 0, fail = 0;
 const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } else { fail++; console.log(`FAIL ${name}`); } };
@@ -161,6 +162,37 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     ok(sby.slowcrash.status !== 'failed' && slogs.filter(l => /module start slowcrash/.test(l)).length >= 4, 'proc: healthyMs 이상 살면 restarts 초기화(영구 failed 없음)');
     await shost.stop('slowcrash');
   }
+}
+
+// ---- 5) 설치: 경로·지문·서명·계약 ----
+{
+  const kp = generateKeyPair(); const KEYS = [{ id: 'test', pem: kp.publicPem }];
+  const base = [{ name: 'module.json', data: Buffer.from(JSON.stringify({ name: 'inst', label: 'Inst', version: '1.2.3', contract: 1, grade: 0, minFace: '2.43.0', entry: 'index.mjs' })) }, { name: 'index.mjs', data: Buffer.from('process.stdin.resume();') }, { name: 'sub/a.txt', data: Buffer.from('a') }];
+  const pack = (files, sign) => { const man = buildManifest(files); const text = JSON.stringify(man); const all = [...files, { name: 'manifest.json', data: Buffer.from(text) }]; if (sign) all.push({ name: 'manifest.sig', data: Buffer.from(signManifest(text, kp.privatePem)) }); return zipWrite(all); };
+  const mdir = path.join(tmp, 'mods5');
+  const good = pack(base, true);
+  const FACE = '2.43.0';
+  const r = inspectZip(good, { faceVersion: FACE, keys: KEYS });
+  ok(r.errors.length === 0 && r.name === 'inst' && r.manifestOk && r.official && r.keyId === 'test', 'install: 서명된 zip 검사 통과');
+  ok(inspectZip(pack(base, false), { faceVersion: FACE, keys: KEYS }).official === false, 'install: 서명 없음 → 비공식');
+  const tampered = pack(base, true); const idx = tampered.indexOf(Buffer.from('process.stdin')); tampered.write('PROCESS', idx);
+  ok(inspectZip(tampered, { faceVersion: FACE, keys: KEYS }).errors.some(e => /manifest mismatch/.test(e)), 'install: 파일 변조 → manifest mismatch');
+  ok(inspectZip(pack([...base, { name: '../../daemon/server.mjs', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)), 'install: zip slip(../) 거부');
+  ok(inspectZip(pack([...base, { name: 'C:\\\\evil.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)), 'install: 절대경로 항목 거부');
+  ok(inspectZip(pack(base.filter(f => f.name !== 'index.mjs'), true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /entry/.test(e)), 'install: entry 없음 거부');
+  ok(inspectZip(pack([{ ...base[0], data: Buffer.from(JSON.stringify({ name: 'inst', contract: 2, grade: 0, version: '1' })) }, base[1]], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /contract/.test(e)), 'install: 계약 v2 거부');
+  ok(inspectZip(zipWrite(base), { faceVersion: FACE, keys: KEYS }).errors.some(e => /manifest\.json missing/.test(e)), 'install: manifest 없음 거부');
+  let code = null; try { installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS }); } catch (e) { code = e.code; }
+  ok(code === 'UNOFFICIAL' && !fs.existsSync(path.join(mdir, 'inst')), 'install: 비공식은 allowUnofficial 없이 설치 안 됨');
+  const res = installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS, allowUnofficial: true });
+  ok(res.name === 'inst' && res.official === false && fs.existsSync(path.join(mdir, 'inst', 'sub', 'a.txt')) && !fs.existsSync(path.join(mdir, 'inst', '.official')), 'install: 동의하면 비공식 설치·.official 없음');
+  fs.mkdirSync(path.join(mdir, 'inst', 'state'), { recursive: true }); fs.writeFileSync(path.join(mdir, 'inst', 'state', 'keep.txt'), 'keep');
+  const res2 = installZip(good, { modulesDir: mdir, faceVersion: FACE, keys: KEYS });
+  ok(res2.official === true && fs.existsSync(path.join(mdir, 'inst', '.official')) && fs.readFileSync(path.join(mdir, 'inst', 'state', 'keep.txt'), 'utf8') === 'keep', 'install: 공식으로 덮어쓰기 = .official 생성·state\\ 보존');
+  removeModule(mdir, 'inst');
+  ok(!fs.existsSync(path.join(mdir, 'inst')), 'install: removeModule 로 폴더 삭제');
+  let bad = false; try { removeModule(mdir, '../daemon'); } catch { bad = true; }
+  ok(bad, 'install: removeModule 이름 규칙 위반 거부');
 }
 
 // ---- 끝 ----

@@ -22,7 +22,8 @@
     "verify:resume": "node scripts/check-resume.mjs",
     "verify:approval": "node scripts/check-approval.mjs",
     "verify:first-session": "node scripts/check-first-session.mjs",
-    "verify:wake": "node scripts/check-wake.mjs"
+    "verify:wake": "node scripts/check-wake.mjs",
+    "verify:modules": "node scripts/check-modules.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
