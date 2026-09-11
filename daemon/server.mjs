@@ -253,7 +253,7 @@ const server = http.createServer(async (req, res) => {
       const tr = w?.transcript(decodeURIComponent(ms[2])); if (!tr) return json(res, 404, { error: 'no subagent' });
       return json(res, 200, tr);
     }
-    const m = p.match(/^\/api\/sessions\/([a-z0-9]+)(?:\/(input|resize|buffer|forget|transcript|send|switch))?$/);
+    const m = p.match(/^\/api\/sessions\/([a-z0-9]+)(?:\/(input|resize|buffer|forget|transcript|send|switch|resume))?$/);
     if (m) {
       const [, id, action] = m;
       if (!sm.get(id)) return json(res, 404, { error: 'no session' });
@@ -281,6 +281,8 @@ const server = http.createServer(async (req, res) => {
         broadcast({ type: 'sessions', list: publicList() });
         return json(res, 200, { ...rec });
       }
+      // 죽은 카드 그 자리에서 재개(화면 "여기서 재개" 버튼, 2026-09-11 v2.42). 살아 있는 세션이면 400.
+      if (req.method === 'POST' && action === 'resume') { const b = await readBody(req); const rec = sm.resume(id, { prompt: String(b.text || '') }); log(`resume ${id} pid=${rec.pid} [${rec.cmdline}]`); broadcast({ type: 'sessions', list: publicList() }); return json(res, 200, { ...rec }); }
       if (req.method === 'POST' && action === 'forget') { sm.forget(id); log(`forget ${id}`); return json(res, 200, { ok: true }); }
       if (req.method === 'DELETE' && !action) { const rec = sm.close(id); log(`close ${id} pid=${rec.pid}`); return json(res, 200, { ok: true }); }
     }
@@ -316,7 +318,9 @@ wss.on('connection', (ws) => {
 // ---- single instance / pid / shutdown ----
 function shutdown() { try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200); }
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
-server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep(); try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); } });
+server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
+  // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
+  try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); } });
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });

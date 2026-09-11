@@ -335,6 +335,11 @@
     try { if (alive) await api('DELETE', `/api/sessions/${s.id}`); else await api('POST', `/api/sessions/${s.id}/forget`); goHome(); } catch (e) { Dialog.alert(e.message); }
   };
   $('#btn-forget').onclick = () => $('#btn-close').click();
+  // 죽은 카드 그 자리에서 재개(v2.42): 데몬이 같은 세션 id로 --resume / codex resume 을 띄운다. 세션 id를 모르는 카드(첫 메시지 전)는 데몬이 400으로 거절.
+  $('#btn-resume').onclick = async () => {
+    const s = cur(); if (!s) return; const btn = $('#btn-resume'); btn.disabled = true;
+    try { await api('POST', `/api/sessions/${s.id}/resume`, {}); } catch (e) { Dialog.alert(e.message); } finally { btn.disabled = false; }
+  };
   $('#btn-copy-resume').onclick = () => { const t = cur()?.resumeCmd; if (t) navigator.clipboard?.writeText(t); };
   $('#btn-home').onclick = goHome;
   $('#btn-shutdown').onclick = async () => { if (!(await Dialog.confirm(`데몬과 세션 ${sessions.length}개를 전부 종료할까요? (각 세션 PID 기준)`, { okLabel: '전부 종료', danger: true }))) return; await api('POST', '/api/shutdown').catch(() => {}); };

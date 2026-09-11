@@ -36,6 +36,14 @@ const CODEX_UPDATE_PROMPT_RE = /Update available[\s\S]*2\. Skip/;
 // 입력 프롬프트: 클로드 ❯(~2.1.265) 또는 >(2.1.266부터) / 코덱스 ›(빈 입력창)·»(글이 든 입력창) — 헤드리스 화면의 아래쪽 줄에서만 찾는다
 const PROMPT_RE = /(^|\n)\s*(❯|›|»|>)(\s|$)/;
 
+// 데몬 재시작 뒤 잃어버린 세션 자동 재개(2026-09-11 16:31 사고 — 데몬 PID 종료 = ConPTY 자식인 세션 전부 동반 종료):
+//   저장 상태가 살아 있던 것(busy·idle·attention)인데 PID가 없으면 "예기치 않게 잃은 세션(lost)"으로 보고 시작 뒤 같은 카드에서 --resume 한다.
+//   CLI가 스스로 끝난 세션(exited)·이미 dead 였던 카드·세션 id를 모르는 카드(첫 메시지 전)는 되살리지 않는다. 끄기: IRIS_FACE_AUTO_RESUME=0
+const AUTO_RESUME = process.env.IRIS_FACE_AUTO_RESUME !== '0';
+const AUTO_RESUME_GAP_MS = Number(process.env.IRIS_FACE_AUTO_RESUME_GAP_MS ?? 2500); // 프록시·CPU 부하를 나누기 위한 세션 간 간격
+const LIVE_STATUSES = new Set(['busy', 'idle', 'attention']);
+export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시작되어 이 세션이 끊겼다가 같은 카드에서 자동으로 다시 열렸습니다. 파일은 그대로입니다. 직전에 하던 작업과 어디까지 끝났는지를 3줄 이내로 알리고 새 지시를 기다리세요(스스로 이어서 실행하지 마세요).';
+
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const normCwd = (p) => String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 
@@ -61,7 +69,33 @@ export class SessionManager {
     fs.mkdirSync(this.stateDir, { recursive: true });
     if (!fs.existsSync(this.file)) return;
     let arr = []; try { arr = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { arr = []; }
-    for (const r of arr) { r.status = pidAlive(r.pid) ? 'orphan' : 'dead'; r.titlePending = false; this.sessions.set(r.id, r); this.seq = Math.max(this.seq, Number(r.id.replace(/\D/g, '')) || 0); }
+    for (const r of arr) {
+      const alive = pidAlive(r.pid);
+      r.lost = !alive && LIVE_STATUSES.has(r.status) && !!r.sessionId; // 살아 있다고 저장돼 있었는데 PID가 없다 = 데몬과 함께 죽은 세션
+      r.status = alive ? 'orphan' : 'dead'; r.titlePending = false;
+      this.sessions.set(r.id, r); this.seq = Math.max(this.seq, Number(r.id.replace(/\D/g, '')) || 0);
+    }
+  }
+  /** 잃은 세션(lost) 목록 */
+  lost() { return this.list().filter(r => r.lost && r.status === 'dead'); }
+  /** 시작 직후: 잃은 세션을 하나씩 간격을 두고 자동 재개한다. 돌려주는 값 = 재개 대상 id 목록(비동기로 진행). */
+  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE } = {}) {
+    const ids = this.lost().map(r => r.id);
+    if (!AUTO_RESUME || !ids.length) return [];
+    ids.forEach((id, i) => setTimeout(() => {
+      const rec = this.sessions.get(id); if (!rec || rec.status !== 'dead') return; // 그 사이 사용자가 지웠거나 손으로 재개함
+      try { this.resume(id, { prompt: note }); this.hooks.onLog?.(`${id} auto-resume ok pid=${rec.pid} [${rec.cmdline}]`); }
+      catch (e) { this.hooks.onLog?.(`${id} auto-resume failed: ${e?.message || e}`); }
+    }, i * gapMs));
+    return ids;
+  }
+  /** 죽은 카드 그 자리에서 재개(--resume / codex resume). 살아 있는 세션에는 쓰지 않는다(그건 switchTo). */
+  resume(id, { prompt = '' } = {}) {
+    const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
+    if (this.live.has(id)) throw new Error('session is live; nothing to resume');
+    const out = this.switchTo(id, { prompt });
+    rec.lost = false; rec.resumedAt = new Date().toISOString(); this.save();
+    return out;
   }
   save() { const tmp = this.file + '.tmp'; fs.writeFileSync(tmp, JSON.stringify([...this.sessions.values()], null, 2), 'utf8'); fs.renameSync(tmp, this.file); }
   list() { return [...this.sessions.values()]; }
