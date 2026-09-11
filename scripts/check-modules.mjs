@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { zipRead, zipWrite } from '../daemon/zip.mjs';
 import { buildManifest, signManifest, verifyManifest, generateKeyPair, OFFICIAL_PUBLIC_KEYS } from '../daemon/modsign.mjs';
-import { ModuleHost, validateInfo, semverGte, CONTRACT } from '../daemon/modules.mjs';
+import { ModuleHost, validateInfo, semverGte, CONTRACT, readModuleJson } from '../daemon/modules.mjs';
 
 let pass = 0, fail = 0;
 const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } else { fail++; console.log(`FAIL ${name}`); } };
@@ -73,6 +73,13 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   ok(by.notjson.status === 'incompatible' && /json/i.test(by.notjson.reason), 'scan: module.json 깨짐 → incompatible');
   fs.writeFileSync(path.join(tmp, 'mods', 'good', '.official'), JSON.stringify({ keyId: '2026-09' }));
   host.scan(); ok(host.list().find(m => m.name === 'good').official === true, 'scan: .official 표시 파일 → official true');
+  fs.mkdirSync(path.join(tmp, 'mods', 'weird')); fs.mkdirSync(path.join(tmp, 'mods', 'weird', 'module.json'));
+  host.scan();
+  const by2 = Object.fromEntries(host.list().map(m => [m.name, m]));
+  ok(by2.weird && by2.weird.status === 'incompatible' && /unreadable|scan error/.test(by2.weird.reason), 'scan: 항목 하나의 읽기 오류가 다른 모듈을 경고하기');
+  ok(by2.good && by2.good.status === 'stopped', 'scan: 항목 하나의 읽기 오류가 다른 모듈 목록을 지우지 않음');
+  ok(/invalid JSON/.test(readModuleJson(path.join(tmp, 'mods', 'notjson')).error), 'readModuleJson: 읽기 오류와 JSON 오류 구분(JSON)');
+  ok(/unreadable/.test(readModuleJson(path.join(tmp, 'mods', 'weird')).error), 'readModuleJson: 읽기 오류와 JSON 오류 구분(읽기)');
   const none = new ModuleHost({ dir: path.join(tmp, 'no-such-dir'), faceVersion: FACE, log: () => {} }); none.scan();
   ok(none.list().length === 0, 'scan: modules 폴더 없음 → 빈 목록(오류 없음)');
 }

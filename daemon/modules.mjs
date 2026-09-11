@@ -31,7 +31,8 @@ export function validateInfo(info, faceVersion) {
 export function readModuleJson(dir) {
   const file = path.join(dir, 'module.json');
   if (!fs.existsSync(file)) return { error: 'module.json missing' };
-  try { return { info: JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch (e) { return { error: `module.json invalid JSON: ${e.message}` }; }
+  let content; try { content = fs.readFileSync(file, 'utf8'); } catch (e) { return { error: `module.json unreadable: ${e.message}` }; }
+  try { return { info: JSON.parse(content) }; } catch (e) { return { error: `module.json invalid JSON: ${e.message}` }; }
 }
 
 export class ModuleHost {
@@ -42,22 +43,30 @@ export class ModuleHost {
   scan() {
     const seen = new Set();
     if (fs.existsSync(this.dir)) for (const f of fs.readdirSync(this.dir).sort()) {
-      const d = path.join(this.dir, f); if (!fs.statSync(d).isDirectory() || f.endsWith('.installing')) continue;
-      seen.add(f);
-      const prev = this.mods.get(f);
-      const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false };
-      m.dir = d; m.official = fs.existsSync(path.join(d, '.official'));
-      const r = readModuleJson(d);
-      if (r.error) { m.info = null; m.status = 'incompatible'; m.reason = r.error; }
-      else {
-        m.info = r.info; const v = validateInfo(r.info, this.faceVersion);
-        const entry = path.join(d, String(r.info.entry || 'index.mjs'));
-        if (v.ok && r.info.name !== f) { m.status = 'incompatible'; m.reason = `folder "${f}" ≠ module.json name "${r.info.name}"`; }
-        else if (v.ok && !fs.existsSync(entry)) { m.status = 'incompatible'; m.reason = `entry missing: ${r.info.entry || 'index.mjs'}`; }
-        else if (!v.ok) { m.status = v.status; m.reason = v.reason; }
-        else if (!m.proc) { m.status = 'stopped'; m.reason = ''; }
+      try {
+        const d = path.join(this.dir, f); if (!fs.statSync(d).isDirectory() || f.endsWith('.installing')) continue;
+        seen.add(f);
+        const prev = this.mods.get(f);
+        const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false };
+        m.dir = d; m.official = fs.existsSync(path.join(d, '.official'));
+        const r = readModuleJson(d);
+        if (r.error) { m.info = null; m.status = 'incompatible'; m.reason = r.error; }
+        else {
+          m.info = r.info; const v = validateInfo(r.info, this.faceVersion);
+          const entry = path.join(d, String(r.info.entry || 'index.mjs'));
+          if (v.ok && r.info.name !== f) { m.status = 'incompatible'; m.reason = `folder "${f}" ≠ module.json name "${r.info.name}"`; }
+          else if (v.ok && !fs.existsSync(entry)) { m.status = 'incompatible'; m.reason = `entry missing: ${r.info.entry || 'index.mjs'}`; }
+          else if (!v.ok) { m.status = v.status; m.reason = v.reason; }
+          else if (!m.proc) { m.status = 'stopped'; m.reason = ''; }
+        }
+        this.mods.set(f, m);
+      } catch (e) {
+        seen.add(f);
+        const prev = this.mods.get(f);
+        const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false };
+        m.status = 'incompatible'; m.reason = `scan error: ${e.message}`;
+        this.mods.set(f, m);
       }
-      this.mods.set(f, m);
     }
     for (const name of [...this.mods.keys()]) if (!seen.has(name) && !this.mods.get(name).proc) this.mods.delete(name);
     this.onChange();
