@@ -1,0 +1,166 @@
+<!doctype html>
+<!-- IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IRIS</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/app/style.css">
+<link rel="stylesheet" href="/app/subagents.css">
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <div class="brand">
+      <span id="mark-slot" class="mark-slot" aria-hidden="true"></span>
+      <span id="wordmark" class="wordmark" title="두 번 클릭 = 만든 사람의 서명 (Ctrl+Alt+I)">IRIS</span>
+    </div>
+    <div class="top-right">
+      <button id="limits" class="limits" title="TeamClaude 대시보드 열기/닫기 (Ctrl+D)"></button>
+      <span id="link-dot" class="link-dot" title="데몬 연결 상태"></span>
+      <button id="btn-settings" class="icon-btn" title="설정 (Ctrl+,)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10.3 3h3.4l.5 2.3a7.4 7.4 0 0 1 1.9 1.1l2.2-.8 1.7 3-1.8 1.5a7.6 7.6 0 0 1 0 2.2l1.8 1.5-1.7 3-2.2-.8a7.4 7.4 0 0 1-1.9 1.1L13.7 21h-3.4l-.5-2.3a7.4 7.4 0 0 1-1.9-1.1l-2.2.8-1.7-3 1.8-1.5a7.6 7.6 0 0 1 0-2.2L4 10.6l1.7-3 2.2.8a7.4 7.4 0 0 1 1.9-1.1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+  </header>
+  <aside id="dash" class="dash" hidden>
+    <div class="dash-head"><span>TeamClaude 대시보드</span><span class="dash-actions"><button id="dash-reload" class="icon-btn" title="새로고침">↻</button><button id="dash-ext" class="icon-btn" title="브라우저에서 열기">⧉</button><button id="dash-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>
+    <iframe id="dash-frame" title="TeamClaude 대시보드" loading="lazy"></iframe>
+  </aside>
+  <aside id="settings" class="settings" hidden>
+    <div class="dash-head"><span>설정</span><span class="dash-actions"><button id="st-reset" class="text-btn" title="꾸미기를 기본값으로">기본값</button><button id="st-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>
+    <div class="st-body">
+      <section><h3>헤더 이름</h3><div class="st-line"><input id="st-name" class="st-input" placeholder="IRIS" spellcheck="false"><button id="st-name-reset" class="text-btn" title="영혼 폴더 이름으로">폴더 이름</button></div><p class="st-hint">비우면 영혼 폴더 이름을 씁니다.</p></section>
+      <section><h3>헤더 마크</h3><div id="st-marks" class="st-grid"></div><div class="st-line"><label>속도 <input id="st-speed" type="range" min="0.5" max="2" step="0.1"> <span id="st-speed-v"></span></label></div></section>
+      <section><h3>글자체</h3><div id="st-fonts" class="st-grid fonts"></div></section>
+      <section><h3>테마</h3><div id="st-themes" class="st-grid themes"></div></section>
+      <section><h3>중앙 애니메이션</h3><div id="st-stages" class="st-list"></div>
+        <div class="st-line"><label>별의 양 <input id="st-density" type="range" min="0.3" max="1.6" step="0.1"> <span id="st-density-v"></span></label></div>
+        <div class="st-line"><label class="ro"><input id="st-pause" type="checkbox"> 대화를 보는 동안 멈춤</label></div></section>
+      <section><h3>권한 기본값 <span class="st-sub">새로 여는 세션에 적용 · "설정 파일대로" = 터미널과 동일</span></h3>
+        <div class="perm-grid">
+          <span class="chip claude">Claude</span>
+          <label class="perm-field"><select id="st-perm" class="pick"></select><span>권한 모드</span></label>
+          <span class="chip codex">Codex</span>
+          <div class="perm-pair">
+            <label class="perm-field"><select id="st-approval" class="pick"></select><span>승인</span></label>
+            <label class="perm-field"><select id="st-sandbox" class="pick"></select><span>샌드박스</span></label>
+          </div>
+        </div></section>
+      <section><h3>알림 <span class="st-sub">작업목록의 세션이 작업을 끝내면(대기·확인 필요·종료) 오른쪽 아래에 작은 알림</span></h3>
+        <div class="st-line"><label class="ro"><input id="st-notify" type="checkbox"> 작업이 끝나면 알림</label><button id="st-notify-test" class="text-btn" title="예시 알림을 띄워 봅니다">미리보기</button></div>
+        <div class="st-line"><label class="ro"><input id="st-notify-os" type="checkbox"> 창이 뒤에 있거나 숨어 있으면 윈도 알림도</label></div>
+        <p class="st-hint">지금 보고 있는 세션은 화면에서 바로 보이므로 알리지 않습니다. 알림을 누르면 그 세션으로 갑니다.</p></section>
+    </div>
+    <div class="st-foot">
+      <button id="btn-shutdown" class="power-btn" title="데몬과 모든 세션을 각 PID 기준으로 끝내고 창도 닫습니다"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 3v8M6.3 6.6a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>전부 종료</button>
+      <span class="st-about"><button id="maker" class="maker-btn" title="정보 — 만든 사람·명함·버전">v— · 함세준</button><code id="st-root"></code></span>
+    </div>
+  </aside>
+
+  <aside id="rail">
+    <div class="rail-head">
+      <button id="btn-rail" class="icon-btn" title="작업목록 접기/펴기 (Ctrl+B)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      <span class="rail-title">작업목록</span><span id="rail-count" class="rail-count"></span>
+      <button id="btn-home" class="icon-btn" title="새 세션 (Ctrl+N)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+    </div>
+    <ul id="session-list" class="sessions"></ul>
+    <div id="rail-resize" class="rail-resize" title="끌어서 너비 조절 · 두 번 클릭 = 기본 너비"></div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="iris"></canvas>
+    <!-- 각인(2026-09-10): 첫 실행 1회 서명 + 워드마크 두 번 클릭 이스터에그의 글자. 별이 못 모이는 스타일(끔·별자리·움직임 줄이기)에선 이름도 글자로. -->
+    <div id="sig" class="sig" aria-hidden="true" hidden><span id="sig-name" class="sig-name" hidden></span><span id="sig-motto" class="sig-motto"></span></div>
+
+    <section id="view" hidden>
+      <div id="view-head">
+        <span id="vh-dot" class="dot"></span>
+        <span id="vh-title" class="vh-title"></span>
+        <span id="vh-combo" class="vh-combo"></span>
+        <span id="vh-usage" class="vh-usage"></span>
+        <span class="seg">
+          <button id="btn-mode-chat" class="seg-btn active">대화</button>
+          <button id="btn-mode-term" class="seg-btn" title="Ctrl+T">터미널</button>
+        </span>
+        <button id="btn-copy-resume" class="icon-btn" title="다른 터미널에서 이어가는 명령 복사">⧉</button>
+        <button id="btn-close" class="icon-btn danger" title="이 세션 종료(PID 기준)">✕</button>
+      </div>
+      <div id="chat-wrap">
+        <div id="chat"></div>
+        <div id="activity" class="activity" hidden><span class="activity-dots"><i></i><i></i><i></i></span><span id="activity-text"></span></div>
+        <!-- 보조 작업(서브에이전트) 서랍(2026-09-11, app/subagents.js): 대화 안 칩을 누르면 오른쪽에서 열리고 그 보조의 대화를 메인과 같은 모양으로 실시간 보여 준다. 읽기 전용. -->
+        <aside id="sub" class="sub" hidden>
+          <div id="sub-resize" class="sub-resize" title="끌어서 너비 조절 · 두 번 클릭 = 기본 너비"></div>
+          <div class="sub-head"><div id="sub-tabs" class="sub-tabs" role="tablist"></div><span class="dash-actions"><button id="sub-copy" class="icon-btn" title="이 보조의 기록파일 경로 복사">⧉</button><button id="sub-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>
+          <div id="sub-meta" class="sub-meta"></div>
+          <div id="sub-chat" class="sub-chat"></div>
+        </aside>
+      </div>
+      <div id="term-wrap" hidden><div id="term"></div></div>
+      <div id="dead-bar" class="dead-bar" hidden>
+        <span>이 세션의 프로세스가 없습니다. 다른 터미널에서 이을 수 있습니다:</span>
+        <code id="dead-resume"></code>
+        <button id="btn-forget" class="text-btn">기록 지우기</button>
+      </div>
+    </section>
+
+    <footer id="dock">
+      <div id="setup" class="setup">
+        <button id="btn-folder" class="folder-btn" title="폴더 고르기 (Ctrl+O)">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2a1.5 1.5 0 0 1 1.06.44L11 6.7h8.5A1.5 1.5 0 0 1 21 8.2v9.3a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <span id="folder-name" class="folder-name">폴더</span>
+        </button>
+        <span class="seg seg-agent" role="radiogroup" aria-label="에이전트">
+          <button id="ag-claude" class="seg-btn" data-agent="claude">Claude</button>
+          <button id="ag-codex" class="seg-btn" data-agent="codex">Codex</button>
+        </span>
+        <select id="sel-model" class="pick" title="모델"></select>
+        <select id="sel-effort" class="pick" title="사고깊이"></select>
+        <span class="setup-spacer"></span>
+        <button id="setup-apply" class="text-btn accent" hidden>이 조합으로 이어가기</button>
+        <button id="setup-cancel" class="text-btn" hidden>취소</button>
+      </div>
+      <div id="voice-strip" class="voice-strip" hidden><span class="vs-dot"></span><span class="vs-time">00:00</span><span class="vs-meter"><i></i></span><span class="vs-msg"></span><button class="text-btn accent vs-retry" hidden>다시 시도</button><button class="vs-close" title="닫기/취소">✕</button></div>
+      <div id="composer" class="composer">
+        <textarea id="composer-text" rows="1" placeholder="폴더를 고르고 요청을 적어 주세요"></textarea>
+        <div class="composer-right">
+          <span class="attach-btns">
+            <button id="btn-tune" class="mini-btn" hidden title="조합 바꾸기 — 에이전트·모델·사고깊이를 바꿔 이 대화를 이어갑니다"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M4 12h13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="15" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="19" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></button>
+            <button id="btn-mic" class="mini-btn" title="음성 입력 — 클릭·Ctrl+M: 녹음 시작/정지 · Esc: 취소"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+            <button id="btn-cam" class="mini-btn" title="카메라로 찍어 첨부"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7H8l1.2-2h5.6L16 7h2.5A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></button>
+            <button id="btn-photo" class="mini-btn" title="사진 첨부"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m5 17 4.5-5 3.5 4 2.5-3L19 17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="15.5" cy="9.5" r="1.3" fill="currentColor"/></svg></button>
+            <button id="btn-file" class="mini-btn" title="파일 첨부"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="m16.5 7.5-7.8 7.8a2.2 2.2 0 0 0 3.1 3.1l8-8a4 4 0 0 0-5.7-5.7l-8.3 8.3a5.8 5.8 0 0 0 8.2 8.2l6.3-6.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <input id="file-in" type="file" accept="image/*" multiple hidden>
+            <input id="file-any" type="file" multiple hidden>
+          </span>
+          <button id="btn-send" class="send-btn" title="보내기 (Enter) · 줄바꿈 Ctrl+Enter"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5m0 0-6 6m6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </div>
+      </div>
+      <div id="attach-list" class="attach-list"></div>
+      <div id="cam" class="cam" hidden>
+        <video id="cam-video" autoplay playsinline muted></video>
+        <div class="cam-actions"><button id="cam-shot" class="text-btn accent">찍기</button><button id="cam-cancel" class="text-btn">취소</button></div>
+      </div>
+      <div id="fp" class="fp" hidden>
+        <div class="fp-head"><input id="fp-search" placeholder="폴더 이름 · 코드(R07 D06 P02) · 낱말" spellcheck="false" autocomplete="off"><span id="fp-fresh" class="fp-fresh"></span></div>
+        <div id="fp-recent" class="fp-recent" hidden></div>
+        <div id="fp-list" class="fp-list"></div>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/app/dialog.js"></script>
+<script src="/app/registry.js"></script>
+<script src="/app/stars.js"></script>
+<script src="/app/transcript.js"></script>
+<script src="/app/subagents.js"></script>
+<script src="/app/folders.js"></script>
+<script src="/app/settings.js"></script>
+<script src="/app/voice.js"></script>
+<script src="/app/notify.js"></script>
+<script src="/app/main.js"></script>
+</body>
+</html>

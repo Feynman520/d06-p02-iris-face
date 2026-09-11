@@ -1,0 +1,33 @@
+{
+  "name": "iris-face",
+  "version": "2.39.0",
+  "private": true,
+  "description": "IRIS-Face: multi-session desk for Claude Code / Codex (beta)",
+  "author": "Sejun Ham (함세준)",
+  "homepage": "https://feynman520.github.io/card/#home",
+  "license": "MIT",
+  "iris": {
+    "since": "2026-09-08",
+    "motto": "해결은 에이전트가, 정의는 우리가."
+  },
+  "type": "module",
+  "main": "app/electron/main.cjs",
+  "scripts": {
+    "start": "node launch.mjs",
+    "daemon": "node daemon/server.mjs",
+    "app": "electron app/electron/main.cjs",
+    "verify:untouched": "node scripts/hash-config.mjs",
+    "verify:facenote": "node scripts/check-facenote.mjs",
+    "verify:subagents": "node scripts/check-subagents.mjs"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/headless": "^6.0.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0"
+  }
+}
