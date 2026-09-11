@@ -120,7 +120,7 @@
     sessions.forEach((s, i) => {
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
       li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
-        <span class="sname" title="${esc(s.title || '')}">${esc(s.title || shortPath(s.cwd))}${SubPanel.running(s.id) ? `<span class="subn" title="작업 중인 보조 작업 ${SubPanel.running(s.id)}개">⁺${SubPanel.running(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
+        <span class="sname" title="${esc(s.title || '')}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${SubPanel.running(s.id) ? `<span class="subn" title="작업 중인 보조 작업 ${SubPanel.running(s.id)}개">⁺${SubPanel.running(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
         <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
       li.onclick = () => select(s.id);
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
