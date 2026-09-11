@@ -244,6 +244,7 @@
   let dashEnabled = true;
   let modules = [];                 // ModuleInfo[] — 데몬이 준 그대로
   let drawerKey = null;             // 지금 서랍이 보여 주는 것
+  const PANEL_RE = /^http:\/\/127\.0\.0\.1:\d+\//;  // 모듈이 준 panel 주소는 로컬 127.0.0.1 뿐이어야 신뢰(콘센트가 신뢰 못 할 값을 줄 수 있음)
   const fr = $('#dash-frame');
   fetch('/api/health').then(r => r.json()).then((h) => {
     const f = h?.features; if (!f) return;
@@ -256,16 +257,17 @@
     catch { return { alive: null, started: false }; }
   }
   const dashUrl = (port) => port ? `http://127.0.0.1:${port}/` : DASH_URL;
-  async function loadDash(force) { const d = await ensureDash(); if (force || d.started || !fr.src || drawerKey !== 'dash') fr.src = dashUrl(d.port); }
+  async function loadDash(force) { const d = await ensureDash(); if (force || d.started || !fr.src || fr.src === 'about:blank') fr.src = dashUrl(d.port); }
   let drawerCloseTimer = 0;
   function openDrawer(key, { title, url, ext = true }) {
     const d = $('#dash'); clearTimeout(drawerCloseTimer);
-    if (drawerKey !== key) { fr.src = 'about:blank'; }
+    const switched = drawerKey !== key;
+    if (switched) { fr.src = 'about:blank'; }
     drawerKey = key; $('#dash-title').textContent = title; $('#dash-ext').hidden = !ext;
     $('#limits').classList.toggle('active', key === 'dash');
     for (const b of $('#mod-btns').querySelectorAll('.mod-btn')) b.classList.toggle('active', key === `mod:${b.dataset.mod}`);
     d.hidden = false; requestAnimationFrame(() => requestAnimationFrame(() => d.classList.add('open')));
-    if (key === 'dash') loadDash(false); else if (url && fr.src !== url) fr.src = url;
+    if (key === 'dash') loadDash(switched); else if (url && (switched || fr.src !== url)) fr.src = url;
   }
   function closeDrawer() {
     const d = $('#dash'); if (d.hidden) return;
@@ -281,17 +283,22 @@
     open ? openDrawer('dash', { title: 'TeamClaude 대시보드', url: DASH_URL }) : closeDrawer();
   }
   function openModule(name) {
-    const m = modules.find(x => x.name === name); if (!m || !m.panel) return false;
+    const m = modules.find(x => x.name === name); if (!m || !m.panel || !PANEL_RE.test(m.panel)) return false;
     drawerOpenFor(`mod:${name}`) ? closeDrawer() : openDrawer(`mod:${name}`, { title: `${m.icon} ${m.label}`, url: m.panel, ext: false });
     return true;
   }
-  // 모듈 목록 → 헤더 버튼(아이콘 + 배지). 실행 중이 아니면 눌리지 않고 이유를 툴팁으로. 목록이 비면 버튼 자체가 없다.
+  // 모듈 목록 → 헤더 버튼(아이콘 + 배지). 실행 중이 아니면(또는 panel 주소가 127.0.0.1 이 아니면) 눌리지 않고 이유를 툴팁으로. 목록이 비면 버튼 자체가 없다.
   function setModules(list) {
     modules = Array.isArray(list) ? list : [];
     const host = $('#mod-btns');
-    host.innerHTML = modules.map(m => `<button class="mod-btn${drawerOpenFor(`mod:${m.name}`) ? ' active' : ''}" data-mod="${esc(m.name)}" ${m.panel ? '' : 'disabled'} title="${esc(m.label)} v${esc(m.version)}${m.official ? ' · 공식' : ' · 비공식'}${m.panel ? '' : ` · ${esc(m.status)}${m.reason ? ': ' + esc(m.reason) : ''}`}">${esc(m.icon)}${m.badge > 0 ? `<span class="mod-badge">${m.badge > 99 ? '99+' : m.badge}</span>` : ''}</button>`).join('');
+    host.innerHTML = modules.map(m => {
+      const rejected = !!m.panel && !PANEL_RE.test(m.panel);
+      const panelOk = !!m.panel && !rejected;
+      const n = Number(m.badge) || 0;
+      return `<button class="mod-btn${drawerOpenFor(`mod:${m.name}`) ? ' active' : ''}" data-mod="${esc(m.name)}" ${panelOk ? '' : 'disabled'} title="${esc(m.label)} v${esc(m.version)}${m.official ? ' · 공식' : ' · 비공식'}${panelOk ? '' : ` · ${rejected ? 'panel address rejected' : `${esc(m.status)}${m.reason ? ': ' + esc(m.reason) : ''}`}`}">${esc(m.icon)}${n > 0 ? `<span class="mod-badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
+    }).join('');
     for (const b of host.querySelectorAll('.mod-btn')) b.onclick = () => openModule(b.dataset.mod);
-    if (drawerKey?.startsWith('mod:') && !modules.some(m => `mod:${m.name}` === drawerKey && m.panel)) closeDrawer(); // 보던 모듈이 죽으면 서랍도 닫힘
+    if (drawerKey?.startsWith('mod:') && !modules.some(m => `mod:${m.name}` === drawerKey && m.panel && PANEL_RE.test(m.panel))) closeDrawer(); // 보던 모듈이 죽거나 panel 이 거부되면 서랍도 닫힘
   }
   $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
   $('#dash-reload').onclick = () => { if (drawerKey === 'dash') loadDash(true); else if (drawerKey) { const u = fr.src; fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = u; }); } };
