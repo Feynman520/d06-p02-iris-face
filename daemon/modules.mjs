@@ -36,9 +36,9 @@ export function readModuleJson(dir) {
 }
 
 export class ModuleHost {
-  constructor({ dir, faceVersion, log = () => {}, onChange = () => {}, onNotify = () => {}, theme = () => ({ id: 'indigo', mode: 'dark' }), lang = 'ko', restartMax = 3, restartDelayMs = 1000 }) {
-    Object.assign(this, { dir, faceVersion, log, onChange, onNotify, theme, lang, restartMax, restartDelayMs });
-    this.mods = new Map(); // name → { name, dir, info, status, reason, panel, badge, official, proc, pid, restarts, stopping }
+  constructor({ dir, faceVersion, log = () => {}, onChange = () => {}, onNotify = () => {}, theme = () => ({ id: 'indigo', mode: 'dark' }), lang = 'ko', restartMax = 3, restartDelayMs = 1000, healthyMs = 60000 }) {
+    Object.assign(this, { dir, faceVersion, log, onChange, onNotify, theme, lang, restartMax, restartDelayMs, healthyMs });
+    this.mods = new Map(); // name → { name, dir, info, status, reason, panel, badge, official, proc, pid, restarts, stopping, restartTimer, startedAt }
   }
   scan() {
     const seen = new Set();
@@ -47,7 +47,7 @@ export class ModuleHost {
         const d = path.join(this.dir, f); if (!fs.statSync(d).isDirectory() || f.endsWith('.installing')) continue;
         seen.add(f);
         const prev = this.mods.get(f);
-        const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false };
+        const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false, restartTimer: null };
         m.dir = d; m.official = fs.existsSync(path.join(d, '.official'));
         const r = readModuleJson(d);
         if (r.error) { m.info = null; m.status = 'incompatible'; m.reason = r.error; }
@@ -63,12 +63,12 @@ export class ModuleHost {
       } catch (e) {
         seen.add(f);
         const prev = this.mods.get(f);
-        const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false };
+        const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false, restartTimer: null };
         m.status = 'incompatible'; m.reason = `scan error: ${e.message}`;
         this.mods.set(f, m);
       }
     }
-    for (const name of [...this.mods.keys()]) if (!seen.has(name) && !this.mods.get(name).proc) this.mods.delete(name);
+    for (const name of [...this.mods.keys()]) if (!seen.has(name) && !this.mods.get(name).proc) { clearTimeout(this.mods.get(name).restartTimer); this.mods.delete(name); }
     this.onChange();
     return this.list();
   }
@@ -78,18 +78,21 @@ export class ModuleHost {
   // ---- 프로세스: node <entry> 를 자식으로. stdin/stdout = 계약 전선, stderr = 로그. PID 는 메모리 + 로그. ----
   start(name) {
     const m = this.mods.get(name); if (!m || m.proc || m.status !== 'stopped') return;
+    clearTimeout(m.restartTimer); m.restartTimer = null; // 방어: 대기 중이던 재시작 타이머가 있었다면 새 기동이 그걸 대체
     const stateDir = path.join(m.dir, 'state'); fs.mkdirSync(stateDir, { recursive: true });
     const entry = path.join(m.dir, String(m.info.entry || 'index.mjs'));
     const proc = spawn(process.execPath, [entry], { cwd: m.dir, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, IRIS_MODULE_NAME: name, IRIS_MODULE_STATE: stateDir } });
-    m.proc = proc; m.pid = proc.pid; m.status = 'running'; m.reason = ''; m.stopping = false; m.panel = null; m.badge = 0;
+    m.proc = proc; m.pid = proc.pid; m.status = 'running'; m.reason = ''; m.stopping = false; m.panel = null; m.badge = 0; m.startedAt = Date.now();
     this.log(`module start ${name} pid=${proc.pid}`);
     readline.createInterface({ input: proc.stdout }).on('line', (line) => this._line(m, line));
     readline.createInterface({ input: proc.stderr }).on('line', (line) => this.log(`module ${name} stderr: ${line.slice(0, 300)}`));
     proc.on('error', (e) => this.log(`module ${name} spawn error: ${e.message}`));
+    proc.stdin.on('error', (e) => this.log(`module ${name} stdin error: ${e.code || e.message}`));
     proc.on('exit', (code, sig) => {
       const wasStopping = m.stopping; m.proc = null; m.pid = null; m.panel = null; m.badge = 0;
+      if (!wasStopping && Date.now() - m.startedAt >= this.healthyMs) m.restarts = 0;
       if (wasStopping) { m.status = 'stopped'; m.reason = ''; this.log(`module exit ${name} (requested)`); }
-      else if (m.restarts < this.restartMax) { m.restarts++; m.status = 'stopped'; this.log(`module exit ${name} code=${code} sig=${sig} → restart ${m.restarts}/${this.restartMax}`); setTimeout(() => { if (!m.proc && m.status === 'stopped') this.start(name); }, this.restartDelayMs); }
+      else if (m.restarts < this.restartMax) { m.restarts++; m.status = 'stopped'; this.log(`module exit ${name} code=${code} sig=${sig} → restart ${m.restarts}/${this.restartMax}`); m.restartTimer = setTimeout(() => { m.restartTimer = null; if (!m.proc && m.status === 'stopped') this.start(name); }, this.restartDelayMs); }
       else { m.status = 'failed'; m.reason = `crashed ${this.restartMax} times (last code=${code})`; this.log(`module exit ${name} → failed`); }
       this.onChange();
     });
@@ -97,7 +100,9 @@ export class ModuleHost {
     this.onChange();
   }
   stop(name) {
-    const m = this.mods.get(name); if (!m || !m.proc) return Promise.resolve();
+    const m = this.mods.get(name); if (!m) return Promise.resolve();
+    clearTimeout(m.restartTimer); m.restartTimer = null; // 재시작 대기 중이었으면 여기서 취소 — 안 그러면 stop 뒤에도 새 프로세스가 뜬다
+    if (!m.proc) { m.status = 'stopped'; return Promise.resolve(); }
     m.stopping = true; const proc = m.proc; this._send(m, { t: 'shutdown' });
     return new Promise((resolve) => {
       const timer = setTimeout(() => { if (m.proc === proc) { this.log(`module ${name} ignored shutdown → kill pid=${proc.pid}`); try { proc.kill(); } catch {} } }, 2000);

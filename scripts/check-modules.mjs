@@ -124,12 +124,42 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(notes.length === 1 && notes[0].module === 'noisy' && notes[0].title === 'got 1 nosess' && notes[0].sub === path.join(tmp, 'mods4', 'noisy', 'state') && notes[0].target === 'x', 'proc: hello 에 contract·stateDir 있고 sessions 없음 → notify 콜백');
   ok(fs.existsSync(path.join(tmp, 'mods4', 'noisy', 'state')), 'proc: stateDir 폴더를 코어가 만들어 둠');
   ok(by().crash.status === 'failed' && /3/.test(by().crash.reason), 'proc: 즉시 죽는 모듈 = 재시작 3회 뒤 failed');
+  ok(host.mods.get('hello').proc.stdin.listenerCount('error') >= 1, 'proc: stdin error 리스너 등록');
   await host.stop('hello'); await sleep(100);
   ok(by().hello.status === 'stopped' && by().hello.panel === null && by().hello.pid === null, 'proc: stop → shutdown 으로 끝남·panel/pid 비움');
   const t0 = Date.now(); await host.stop('stubborn'); const dt = Date.now() - t0;
   ok(by().stubborn.status === 'stopped' && dt >= 1900 && dt < 4000, `proc: shutdown 무시 → 2초 뒤 그 PID 만 kill (${dt}ms)`);
   await host.stopAll();
   ok(changes > 5, 'proc: onChange 가 전환마다 호출됨');
+
+  // 재시작 대기 중 stop → 타이머 취소(고정 리뷰 1)
+  {
+    const flogs = [];
+    const fd = path.join(tmp, 'mods4b', 'flappy'); fs.mkdirSync(fd, { recursive: true });
+    fs.writeFileSync(path.join(fd, 'module.json'), JSON.stringify({ name: 'flappy', contract: 1, grade: 0, version: '1', entry: 'index.mjs' }));
+    fs.writeFileSync(path.join(fd, 'index.mjs'), 'process.exit(1);');
+    const fhost = new ModuleHost({ dir: path.join(tmp, 'mods4b'), faceVersion: FACE, log: (m) => flogs.push(m), restartDelayMs: 300 });
+    fhost.scan(); fhost.start('flappy');
+    await sleep(80);
+    await fhost.stop('flappy');
+    await sleep(500);
+    const fby = Object.fromEntries(fhost.list().map(m => [m.name, m]));
+    ok(fby.flappy.status === 'stopped' && fby.flappy.pid === null && flogs.filter(l => /module start flappy/.test(l)).length === 1, 'proc: 재시작 대기 중 stop → 타이머 취소, 새 프로세스 없음');
+  }
+
+  // healthyMs 이상 살면 restarts 초기화(고정 리뷰 1)
+  {
+    const slogs = [];
+    const sd = path.join(tmp, 'mods4c', 'slowcrash'); fs.mkdirSync(sd, { recursive: true });
+    fs.writeFileSync(path.join(sd, 'module.json'), JSON.stringify({ name: 'slowcrash', contract: 1, grade: 0, version: '1', entry: 'index.mjs' }));
+    fs.writeFileSync(path.join(sd, 'index.mjs'), 'setTimeout(() => process.exit(1), 250);');
+    const shost = new ModuleHost({ dir: path.join(tmp, 'mods4c'), faceVersion: FACE, log: (m) => slogs.push(m), restartDelayMs: 50, healthyMs: 100, restartMax: 3 });
+    shost.scan(); shost.start('slowcrash');
+    await sleep(1800);
+    const sby = Object.fromEntries(shost.list().map(m => [m.name, m]));
+    ok(sby.slowcrash.status !== 'failed' && slogs.filter(l => /module start slowcrash/.test(l)).length >= 4, 'proc: healthyMs 이상 살면 restarts 초기화(영구 failed 없음)');
+    await shost.stop('slowcrash');
+  }
 }
 
 // ---- 끝 ----
