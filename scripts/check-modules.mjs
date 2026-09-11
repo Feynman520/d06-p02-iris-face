@@ -188,6 +188,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(inspectZip(pack([...base, { name: '.official/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: 중첩 .official/x 항목 거부');
   ok(inspectZip(pack([...base, { name: '.OFFICIAL', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)) && inspectZip(pack([...base, { name: 'State/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: 대소문자 다른 .OFFICIAL·State/ 거부');
   ok(inspectZip(pack([...base, { name: 'state.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.length === 0, 'install: state.txt 같은 이름은 허용');
+  ok(inspectZip(pack([...base, { name: '.official.', data: Buffer.from('{}') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)) && inspectZip(pack([...base, { name: 'state /x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)), 'install: 끝에 점·공백이 붙은 세그먼트(.official. / state ./x) 거부');
   let code = null; try { installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS }); } catch (e) { code = e.code; }
   ok(code === 'UNOFFICIAL' && !fs.existsSync(path.join(mdir, 'inst')), 'install: 비공식은 allowUnofficial 없이 설치 안 됨');
   let failed = false; try { installZip(pack([...base, { name: '.official', data: Buffer.from('{}') }], false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS, allowUnofficial: true }); } catch { failed = true; }
@@ -198,6 +199,9 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const res2 = installZip(good, { modulesDir: mdir, faceVersion: FACE, keys: KEYS });
   ok(res2.official === true && fs.existsSync(path.join(mdir, 'inst', '.official')) && fs.readFileSync(path.join(mdir, 'inst', 'state', 'keep.txt'), 'utf8') === 'keep', 'install: 공식으로 덮어쓰기 = .official 생성·state\\ 보존');
   ok(!fs.existsSync(path.join(mdir, 'inst.old')), 'install: 교체 뒤 .old 폴더 없음');
+  const mdir2 = path.join(tmp, 'mods5b'); installZip(pack(base, false), { modulesDir: mdir2, faceVersion: FACE, keys: KEYS, allowUnofficial: true });
+  const before = !fs.existsSync(path.join(mdir2, 'inst', '.official')); installZip(good, { modulesDir: mdir2, faceVersion: FACE, keys: KEYS });
+  ok(before && fs.existsSync(path.join(mdir2, 'inst', '.official')), 'install: 추출 뒤 .official 은 서명 검증 분기에서만 생성');
   removeModule(mdir, 'inst');
   ok(!fs.existsSync(path.join(mdir, 'inst')), 'install: removeModule 로 폴더 삭제');
   let bad = false; try { removeModule(mdir, '../daemon'); } catch { bad = true; }

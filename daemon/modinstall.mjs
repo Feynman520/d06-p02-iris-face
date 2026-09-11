@@ -6,7 +6,7 @@ import { zipRead } from './zip.mjs';
 import { buildManifest, verifyManifest, OFFICIAL_PUBLIC_KEYS } from './modsign.mjs';
 import { validateInfo, NAME_RE } from './modules.mjs';
 
-const unsafe = (name) => /^([A-Za-z]:|[\\/])/.test(name) || name.split(/[\\/]/).some(s => s === '..' || s === '.' || s === '') || name.includes('\0');
+const unsafe = (name) => /^([A-Za-z]:|[\\/])/.test(name) || name.split(/[\\/]/).some(s => s === '..' || s === '.' || s === '' || /[. ]$/.test(s)) || name.includes('\0');
 
 export function inspectZip(buf, { faceVersion, keys = OFFICIAL_PUBLIC_KEYS } = {}) {
   const errors = [];
@@ -48,6 +48,7 @@ export function installZip(buf, { modulesDir, faceVersion, allowUnofficial = fal
       const p = path.resolve(tmp, f.name); if (!p.startsWith(root)) throw new Error(`unsafe path: ${f.name}`);
       fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, f.data);
     }
+    fs.rmSync(path.join(tmp, '.official'), { force: true });
     if (r.official) fs.writeFileSync(path.join(tmp, '.official'), JSON.stringify({ keyId: r.keyId, at: new Date().toISOString() }), 'utf8');
     const oldState = path.join(dest, 'state'); if (fs.existsSync(oldState)) fs.renameSync(oldState, path.join(tmp, 'state'));
     const old = dest + '.old'; fs.rmSync(old, { recursive: true, force: true }); if (fs.existsSync(dest)) fs.renameSync(dest, old); try { fs.renameSync(tmp, dest); } catch (e) { if (fs.existsSync(old)) fs.renameSync(old, dest); throw e; } fs.rmSync(old, { recursive: true, force: true });
