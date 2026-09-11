@@ -19,6 +19,8 @@ import { dashDir, dashPort } from './paths.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
 import { activeAgentsMap, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
+import { ModuleHost } from './modules.mjs';
+import { installZip, removeModule } from './modinstall.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -57,6 +59,14 @@ const sleepWatcher = new SleepWatcher({
   onWake: () => broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS) }),
 });
 sleepWatcher.start();
+// ---- 모듈 콘센트(계약 v1, 2026-09-11): modules\<이름>\ 을 별 프로세스로. 모듈이 없으면 아무것도 하지 않는다(바깥 연결 0 = verify:nomodule). ----
+const MODULES_DIR = process.env.IRIS_FACE_MODULES || path.join(ROOT, 'modules');
+const mods = new ModuleHost({
+  dir: MODULES_DIR, faceVersion: VERSION, log,
+  onChange: () => broadcast({ type: 'modules', list: mods.list() }),
+  onNotify: (n) => { log(`module notify ${n.module}: ${n.title}`); broadcast({ type: 'module-notify', ...n }); },
+  theme: () => ({ id: settings.get()?.theme || 'indigo', mode: 'dark' }),
+});
 
 // ---- TeamClaude 대시보드 뷰어 서버(3457) 보장 — 한도 서랍을 열 때 화면이 부른다(POST /api/dash/ensure) ----
 // 도구 폴더가 없는 PC(공개 배포본)면 alive:false 로 답하고 아무것도 띄우지 않는다. 브라우저는 열지 않는다.
@@ -71,7 +81,7 @@ async function ensureDash() {
 }
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
-const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py });
+const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: mods.list() });
 
 // ---- transcript tails (기록파일 읽기 전용, 폴링) ----
 // 폴링 간격은 두 단계(2026-09-10): 작업 중·확인 필요·요청을 보낸 직후 15초 = 0.3초(터미널처럼 바로 반영), 그 밖(대기·종료) = 1.5초.
@@ -186,6 +196,30 @@ const server = http.createServer(async (req, res) => {
       const { active } = wake(agent, { log: (m) => log(`wake: ${m}`) });
       broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS) });
       return json(res, 200, { ok: true, active });
+    }
+    // ---- 모듈(계약 v1): 목록 · zip 설치 · 제거 · 재시작. 본체는 모듈 이름을 모른다 — 전부 module.json 에서 온다. ----
+    if (req.method === 'GET' && p === '/api/modules') return json(res, 200, { list: mods.list(), dir: MODULES_DIR });
+    if (req.method === 'POST' && p === '/api/modules/install') {
+      const chunks = []; let size = 0;
+      await new Promise((resolve, reject) => { req.on('data', (c) => { size += c.length; if (size > 50 * 1024 * 1024) { reject(new Error('too large (50MB)')); req.destroy(); } else chunks.push(c); }); req.on('end', resolve); req.on('error', reject); });
+      const allow = url.searchParams.get('allowUnofficial') === '1';
+      try {
+        const r = installZip(Buffer.concat(chunks), { modulesDir: MODULES_DIR, faceVersion: VERSION, allowUnofficial: allow });
+        log(`module install ${r.name} v${r.version} official=${r.official} unofficialAllowed=${allow} ${size}B`);
+        await mods.stop(r.name); mods.scan(); mods.start(r.name);
+        return json(res, 201, r);
+      } catch (e) {
+        if (e.code === 'UNOFFICIAL') { log(`409 module install unofficial: ${e.inspect?.name}`); return json(res, 409, { error: 'unofficial', ...e.inspect }); }
+        log(`400 module install: ${e.message}`); return json(res, 400, { error: e.message });
+      }
+    }
+    const mm = p.match(/^\/api\/modules\/([a-z][a-z0-9-]{1,31})\/(remove|restart)$/);
+    if (mm && req.method === 'POST') {
+      const [, name, act] = mm;
+      await mods.stop(name);
+      if (act === 'remove') { removeModule(MODULES_DIR, name); log(`module remove ${name}`); mods.scan(); }
+      else { mods.scan(); mods.start(name); log(`module restart ${name}`); }
+      return json(res, 200, { ok: true, list: mods.list() });
     }
     if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, publicList());
     if (req.method === 'POST' && p === '/api/sessions') {
@@ -314,7 +348,7 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: mods.list() });
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
     try {
@@ -334,9 +368,15 @@ wss.on('connection', (ws) => {
 });
 
 // ---- single instance / pid / shutdown ----
-function shutdown() { try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200); }
+function shutdown() {
+  // 모듈에 shutdown 을 먼저(최대 2.5초), 그다음 세션·음성·PID 파일. 모듈이 없으면 즉시 지나간다.
+  Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => {
+    try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200);
+  });
+}
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
+  try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
   try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); } });
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
