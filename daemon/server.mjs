@@ -201,16 +201,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/modules') return json(res, 200, { list: mods.list(), dir: MODULES_DIR });
     if (req.method === 'POST' && p === '/api/modules/install') {
       const chunks = []; let size = 0;
-      await new Promise((resolve, reject) => { req.on('data', (c) => { size += c.length; if (size > 50 * 1024 * 1024) { reject(new Error('too large (50MB)')); req.destroy(); } else chunks.push(c); }); req.on('end', resolve); req.on('error', reject); });
       const allow = url.searchParams.get('allowUnofficial') === '1';
       try {
+        await new Promise((resolve, reject) => { req.on('data', (c) => { size += c.length; if (size > 50 * 1024 * 1024) { req.pause(); const e = new Error('too large (50MB)'); e.code = 'TOO_LARGE'; reject(e); } else chunks.push(c); }); req.on('end', resolve); req.on('error', reject); });
         const r = installZip(Buffer.concat(chunks), { modulesDir: MODULES_DIR, faceVersion: VERSION, allowUnofficial: allow });
-        log(`module install ${r.name} v${r.version} official=${r.official} unofficialAllowed=${allow} ${size}B`);
+        log(`module install ${r.name} v${String(r.version).slice(0, 40)} official=${r.official} unofficialAllowed=${allow} ${size}B`);
         await mods.stop(r.name); mods.scan(); mods.start(r.name);
         return json(res, 201, r);
       } catch (e) {
-        if (e.code === 'UNOFFICIAL') { log(`409 module install unofficial: ${e.inspect?.name}`); return json(res, 409, { error: 'unofficial', ...e.inspect }); }
-        log(`400 module install: ${e.message}`); return json(res, 400, { error: e.message });
+        if (e.code === 'TOO_LARGE') { res.setHeader('Connection', 'close'); json(res, 413, { error: e.message }); setImmediate(() => { try { req.destroy(); } catch {} }); log('413 module install: too large'); return; }
+        if (e.code === 'UNOFFICIAL') { log(`409 module install unofficial: ${String(e.inspect?.name).slice(0, 40)}`); return json(res, 409, { error: 'unofficial', ...e.inspect }); }
+        log(`400 module install: ${String(e.message).slice(0, 200)}`); return json(res, 400, { error: e.message });
       }
     }
     const mm = p.match(/^\/api\/modules\/([a-z][a-z0-9-]{1,31})\/(remove|restart)$/);
