@@ -1,10 +1,11 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-// 최소 zip 읽기/쓰기(모듈 설치 전용, 외부 의존 0). 읽기: 저장(0)·deflate(8). 쓰기: 저장(0)만. ZIP64 미지원(모듈 zip은 수 MB).
+// 최소 zip 읽기/쓰기(모듈 설치 전용, 외부 의존 0). 읽기: 저장(0)·deflate(8). 쓰기: 저장(0)·deflate(8). ZIP64 미지원(모듈 zip은 수 MB).
 import zlib from 'node:zlib';
 
 const SIG_LOCAL = 0x04034b50, SIG_CENTRAL = 0x02014b50, SIG_EOCD = 0x06054b50;
 
 function findEocd(buf) {
+  // Finds the last EOCD signature; does not validate comment-length field (minimal parser limitation).
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (buf.readUInt32LE(i) === SIG_EOCD) return i;
   throw new Error('not a zip (no end-of-central-directory)');
 }
@@ -22,6 +23,7 @@ export function zipRead(buf) {
     const csize = buf.readUInt32LE(off + 20), usize = buf.readUInt32LE(off + 24);
     const nlen = buf.readUInt16LE(off + 28), xlen = buf.readUInt16LE(off + 30), clen = buf.readUInt16LE(off + 32);
     const lho = buf.readUInt32LE(off + 42);
+    if (off + 46 + nlen > buf.length) throw new Error('bad central directory (name length)');
     const name = buf.subarray(off + 46, off + 46 + nlen).toString('utf8');
     if (lho + 30 > buf.length || buf.readUInt32LE(lho) !== SIG_LOCAL) throw new Error(`bad local header: ${name}`);
     const start = lho + 30 + buf.readUInt16LE(lho + 26) + buf.readUInt16LE(lho + 28);
@@ -38,19 +40,22 @@ export function zipRead(buf) {
   return out;
 }
 
-/** [{ name, data }] → zip 버퍼(저장 방식). 이름은 슬래시 구분, UTF-8 플래그(0x0800). */
+/** [{ name, data, deflate?: true }] → zip 버퍼. 이름은 슬래시 구분, UTF-8 플래그(0x0800). deflate 미지정(false)=저장(0), true=deflate(8). */
 export function zipWrite(entries) {
   const locals = [], centrals = []; let off = 0;
-  for (const { name, data } of entries) {
+  for (const { name, data, deflate } of entries) {
     const nb = Buffer.from(name, 'utf8'); const crc = zlib.crc32(data) >>> 0;
+    const method = deflate ? 8 : 0;
+    const payload = deflate ? zlib.deflateRawSync(data) : data;
+    const csize = payload.length, usize = data.length;
     const lh = Buffer.alloc(30);
-    lh.writeUInt32LE(SIG_LOCAL, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(0, 8); lh.writeUInt16LE(0, 10); lh.writeUInt16LE(0, 12);
-    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22); lh.writeUInt16LE(nb.length, 26); lh.writeUInt16LE(0, 28);
+    lh.writeUInt32LE(SIG_LOCAL, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(0, 8); lh.writeUInt16LE(method, 10); lh.writeUInt16LE(0, 12);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(csize, 18); lh.writeUInt32LE(usize, 22); lh.writeUInt16LE(nb.length, 26); lh.writeUInt16LE(0, 28);
     const ch = Buffer.alloc(46);
-    ch.writeUInt32LE(SIG_CENTRAL, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(0, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(0, 14);
-    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(data.length, 24); ch.writeUInt16LE(nb.length, 28);
+    ch.writeUInt32LE(SIG_CENTRAL, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(method, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(0, 14);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(csize, 20); ch.writeUInt32LE(usize, 24); ch.writeUInt16LE(nb.length, 28);
     ch.writeUInt16LE(0, 30); ch.writeUInt16LE(0, 32); ch.writeUInt16LE(0, 34); ch.writeUInt16LE(0, 36); ch.writeUInt32LE(0, 38); ch.writeUInt32LE(off, 42);
-    locals.push(lh, nb, data); centrals.push(ch, nb); off += 30 + nb.length + data.length;
+    locals.push(lh, nb, payload); centrals.push(ch, nb); off += 30 + nb.length + csize;
   }
   const cd = Buffer.concat(centrals);
   const e = Buffer.alloc(22);

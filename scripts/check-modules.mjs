@@ -17,6 +17,15 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   ok(back.length === 3 && back[1].name === 'sub/한글.txt' && back[1].data.toString('utf8') === '안녕' && back[2].data.length === 0, 'zip: 저장 방식 왕복(한글 이름·빈 파일)');
   let threw = false; try { zipRead(Buffer.from('not a zip')); } catch { threw = true; }
   ok(threw, 'zip: zip 아님 → throw');
+  const deflatEntries = [{ name: 'big.txt', data: Buffer.from('abc'.repeat(2000)), deflate: true }, { name: 'plain.txt', data: Buffer.from('x') }];
+  const deflatBuf = zipWrite(deflatEntries);
+  ok(deflatBuf.length < 6000, 'zip: deflate(method 8) 항목 왕복');
+  const deflatBack = zipRead(deflatBuf);
+  ok(deflatBack.length === 2 && deflatBack[0].name === 'big.txt' && deflatBack[0].data.length === 6000 && deflatBack[0].data.toString('utf8') === 'abc'.repeat(2000) && deflatBack[1].name === 'plain.txt' && deflatBack[1].data.toString('utf8') === 'x', 'zip: deflate 복원');
+  const folderEntries = [{ name: 'dir/', data: Buffer.alloc(0) }, { name: 'dir/f.txt', data: Buffer.from('f') }];
+  const folderBuf = zipWrite(folderEntries);
+  const folderBack = zipRead(folderBuf);
+  ok(folderBack.length === 1 && folderBack[0].name === 'dir/f.txt', 'zip: 폴더 항목(이름이 /로 끝남)은 목록에서 제외');
 }
 
 // ---- 끝 ----
