@@ -37,7 +37,7 @@ ok(o1.length === 0 && o2.length === 0, `daemon pid ${pid} outbound connections =
 
 // 정리: 데몬이 스스로 끝나게(shutdown). 3초 안에 안 끝나면 이 PID 만.
 try { await api('/api/shutdown', { method: 'POST' }); } catch {}
-let alive = true; for (let i = 0; i < 12 && alive; i++) { await sleep(250); try { process.kill(pid, 0); } catch { alive = false; } }
+let alive = true; for (let i = 0; i < 12 && alive; i++) { await sleep(250); try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; } }
 if (alive) { try { process.kill(pid); } catch {} }
 ok(!alive, 'daemon exited via /api/shutdown');
 fs.rmSync(state, { recursive: true, force: true }); fs.rmSync(mods, { recursive: true, force: true });
