@@ -9,6 +9,7 @@ import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
 import { generateTitle } from './titler.mjs';
 import { parseApproval } from './approval.mjs';
+import { readReceipt, soulRoot, toolPath } from './paths.mjs';
 
 const require = createRequire(import.meta.url);
 const pty = require('node-pty');
@@ -55,6 +56,25 @@ function childEnv() {
     if (k === 'CLAUDE_CONFIG_DIR') continue;
     if (/^CLAUDE_CODE_/.test(k) || k === 'CLAUDECODE' || k === 'CLAUDE_PID' || k === 'CLAUDE_EFFORT') delete env[k];
   }
+  return applyReceiptEnv(env);
+}
+
+// 설치기 영수증(package-receipt.json, installer Task 16)이 있으면 그 값으로 env를 보강한다 — 이 PC(영수증 없음)는 무접촉·현행 그대로.
+// receipt 인자는 시험용 주입 지점(check-first-session.mjs가 실제 파일을 건드리지 않고 가짜 영수증을 넣을 수 있게).
+export function applyReceiptEnv(env, receipt = readReceipt()) {
+  const r = receipt?.env;
+  if (!r) return env;
+  if (r.CLAUDE_CONFIG_DIR && !env.CLAUDE_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = r.CLAUDE_CONFIG_DIR;
+  if (r.CODEX_HOME && !env.CODEX_HOME) env.CODEX_HOME = r.CODEX_HOME;
+  if (r.ANTHROPIC_BASE_URL && !env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = r.ANTHROPIC_BASE_URL;
+  const root = soulRoot();
+  const shims = path.join(root, '_agent', 'shared', 'shims');
+  const nodeDir = toolPath('node');
+  const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
+  const cur = env[key] || '';
+  const already = new Set(cur.split(path.delimiter).map((s) => s.trim().toLowerCase()).filter(Boolean));
+  const add = [shims, nodeDir].filter((p) => !already.has(p.toLowerCase()));
+  if (add.length) env[key] = [...add, cur].filter(Boolean).join(path.delimiter);
   return env;
 }
 
