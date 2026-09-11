@@ -185,6 +185,9 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(inspectZip(pack([...base, { name: '.official', data: Buffer.from('{}') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: zip 안 .official 항목은 예약 이름으로 거부');
   ok(inspectZip(pack([...base, { name: 'state/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: zip 안 state/ 항목 거부');
   ok(inspectZip(pack([...base, { name: './evil.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)), 'install: "." 세그먼트 거부');
+  ok(inspectZip(pack([...base, { name: '.official/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: 중첩 .official/x 항목 거부');
+  ok(inspectZip(pack([...base, { name: '.OFFICIAL', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)) && inspectZip(pack([...base, { name: 'State/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: 대소문자 다른 .OFFICIAL·State/ 거부');
+  ok(inspectZip(pack([...base, { name: 'state.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.length === 0, 'install: state.txt 같은 이름은 허용');
   let code = null; try { installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS }); } catch (e) { code = e.code; }
   ok(code === 'UNOFFICIAL' && !fs.existsSync(path.join(mdir, 'inst')), 'install: 비공식은 allowUnofficial 없이 설치 안 됨');
   let failed = false; try { installZip(pack([...base, { name: '.official', data: Buffer.from('{}') }], false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS, allowUnofficial: true }); } catch { failed = true; }

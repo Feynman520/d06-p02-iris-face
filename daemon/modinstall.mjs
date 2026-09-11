@@ -13,7 +13,7 @@ export function inspectZip(buf, { faceVersion, keys = OFFICIAL_PUBLIC_KEYS } = {
   let files; try { files = zipRead(buf); } catch (e) { return { name: null, info: null, files: [], errors: [e.message], manifestOk: false, official: false, keyId: null, revoked: false }; }
   for (const f of files) {
     if (unsafe(f.name)) errors.push(`unsafe path: ${f.name}`);
-    if (f.name === '.official' || f.name === 'state' || f.name.startsWith('state/') || f.name.startsWith('state\\')) errors.push(`reserved path: ${f.name}`);
+    const seg0 = f.name.split(/[\\/]/)[0].toLowerCase(); if (seg0 === '.official' || seg0 === 'state') errors.push(`reserved path: ${f.name}`);
   }
   const mj = files.find(f => f.name === 'module.json'); let info = null;
   if (!mj) errors.push('module.json missing');
@@ -50,7 +50,7 @@ export function installZip(buf, { modulesDir, faceVersion, allowUnofficial = fal
     }
     if (r.official) fs.writeFileSync(path.join(tmp, '.official'), JSON.stringify({ keyId: r.keyId, at: new Date().toISOString() }), 'utf8');
     const oldState = path.join(dest, 'state'); if (fs.existsSync(oldState)) fs.renameSync(oldState, path.join(tmp, 'state'));
-    const old = dest + '.old'; fs.rmSync(old, { recursive: true, force: true }); if (fs.existsSync(dest)) fs.renameSync(dest, old); fs.renameSync(tmp, dest); fs.rmSync(old, { recursive: true, force: true });
+    const old = dest + '.old'; fs.rmSync(old, { recursive: true, force: true }); if (fs.existsSync(dest)) fs.renameSync(dest, old); try { fs.renameSync(tmp, dest); } catch (e) { if (fs.existsSync(old)) fs.renameSync(old, dest); throw e; } fs.rmSync(old, { recursive: true, force: true });
   } catch (e) { fs.rmSync(tmp, { recursive: true, force: true }); throw e; }
   return { name: r.name, version: String(r.info?.version || '?'), official: r.official };
 }
