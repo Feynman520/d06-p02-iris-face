@@ -99,10 +99,15 @@ window.Settings = (() => {
   }
   async function modAct(name, act) {
     if (act === 'remove' && !(await Dialog.confirm(`모듈 "${name}"을 제거할까요?\n그 모듈의 폴더와 안에 저장된 데이터(로그인·설정·기록)가 함께 지워집니다. 모듈이 백업 문구를 줬다면 적어 두셨는지 확인하세요.`))) return;
-    try { await fetch(`/api/modules/${encodeURIComponent(name)}/${act}`, { method: 'POST' }); } catch (e) { Dialog.alert(e.message); }
+    try {
+      const r = await fetch(`/api/modules/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) Dialog.alert(`${act === 'remove' ? '제거' : '재시작'} 실패: ${d.error || r.status}`);
+    } catch (e) { Dialog.alert(`${act === 'remove' ? '제거' : '재시작'} 실패: ${e.message}`); }
     renderMods();
   }
   async function installModule(file) {
+    const btn = $('#st-mod-install'); if (btn.disabled) return; btn.disabled = true;
     const buf = await file.arrayBuffer();
     const post = (allow) => fetch(`/api/modules/install${allow ? '?allowUnofficial=1' : ''}`, { method: 'POST', headers: { 'x-file-name': encodeURIComponent(file.name) }, body: buf });
     try {
@@ -115,7 +120,7 @@ window.Settings = (() => {
       if (!r.ok) { Dialog.alert(`설치 실패: ${d.error || r.status}`); return; }
       Dialog.alert(`설치됨: ${d.name} v${d.version} (${d.official ? '공식' : '비공식'})`);
     } catch (e) { Dialog.alert(`설치 실패: ${e.message}`); }
-    renderMods();
+    finally { btn.disabled = false; renderMods(); }
   }
   // ---- 정보(만든 사람) 대화상자 — 값은 전부 데몬 /api/health 의 about(원천 = package.json). 데몬이 아직 없으면 화면 쪽 기본값. ----
   const ABOUT_DEF = { name: 'IRIS-Face', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
@@ -174,5 +179,5 @@ window.Settings = (() => {
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health };
+  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); } };
 })();

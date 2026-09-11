@@ -299,6 +299,7 @@
     }).join('');
     for (const b of host.querySelectorAll('.mod-btn')) b.onclick = () => openModule(b.dataset.mod);
     if (drawerKey?.startsWith('mod:') && !modules.some(m => `mod:${m.name}` === drawerKey && m.panel && PANEL_RE.test(m.panel))) closeDrawer(); // 보던 모듈이 죽거나 panel 이 거부되면 서랍도 닫힘
+    try { window.Settings?.refreshModules?.(); } catch {}
   }
   $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
   $('#dash-reload').onclick = () => { if (drawerKey === 'dash') loadDash(true); else if (drawerKey) { const u = fr.src; fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = u; }); } };
