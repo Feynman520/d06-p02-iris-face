@@ -182,13 +182,19 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(inspectZip(pack(base.filter(f => f.name !== 'index.mjs'), true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /entry/.test(e)), 'install: entry 없음 거부');
   ok(inspectZip(pack([{ ...base[0], data: Buffer.from(JSON.stringify({ name: 'inst', contract: 2, grade: 0, version: '1' })) }, base[1]], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /contract/.test(e)), 'install: 계약 v2 거부');
   ok(inspectZip(zipWrite(base), { faceVersion: FACE, keys: KEYS }).errors.some(e => /manifest\.json missing/.test(e)), 'install: manifest 없음 거부');
+  ok(inspectZip(pack([...base, { name: '.official', data: Buffer.from('{}') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: zip 안 .official 항목은 예약 이름으로 거부');
+  ok(inspectZip(pack([...base, { name: 'state/x.txt', data: Buffer.from('x') }], false), { faceVersion: FACE, keys: KEYS }).errors.some(e => /reserved path/.test(e)), 'install: zip 안 state/ 항목 거부');
+  ok(inspectZip(pack([...base, { name: './evil.txt', data: Buffer.from('x') }], true), { faceVersion: FACE, keys: KEYS }).errors.some(e => /unsafe path/.test(e)), 'install: "." 세그먼트 거부');
   let code = null; try { installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS }); } catch (e) { code = e.code; }
   ok(code === 'UNOFFICIAL' && !fs.existsSync(path.join(mdir, 'inst')), 'install: 비공식은 allowUnofficial 없이 설치 안 됨');
+  let failed = false; try { installZip(pack([...base, { name: '.official', data: Buffer.from('{}') }], false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS, allowUnofficial: true }); } catch { failed = true; }
+  ok(failed && !fs.existsSync(path.join(mdir, 'inst.installing')), 'install: 거부된 zip 은 .installing 폴더를 남기지 않음');
   const res = installZip(pack(base, false), { modulesDir: mdir, faceVersion: FACE, keys: KEYS, allowUnofficial: true });
   ok(res.name === 'inst' && res.official === false && fs.existsSync(path.join(mdir, 'inst', 'sub', 'a.txt')) && !fs.existsSync(path.join(mdir, 'inst', '.official')), 'install: 동의하면 비공식 설치·.official 없음');
   fs.mkdirSync(path.join(mdir, 'inst', 'state'), { recursive: true }); fs.writeFileSync(path.join(mdir, 'inst', 'state', 'keep.txt'), 'keep');
   const res2 = installZip(good, { modulesDir: mdir, faceVersion: FACE, keys: KEYS });
   ok(res2.official === true && fs.existsSync(path.join(mdir, 'inst', '.official')) && fs.readFileSync(path.join(mdir, 'inst', 'state', 'keep.txt'), 'utf8') === 'keep', 'install: 공식으로 덮어쓰기 = .official 생성·state\\ 보존');
+  ok(!fs.existsSync(path.join(mdir, 'inst.old')), 'install: 교체 뒤 .old 폴더 없음');
   removeModule(mdir, 'inst');
   ok(!fs.existsSync(path.join(mdir, 'inst')), 'install: removeModule 로 폴더 삭제');
   let bad = false; try { removeModule(mdir, '../daemon'); } catch { bad = true; }

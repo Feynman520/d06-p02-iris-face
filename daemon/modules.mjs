@@ -44,7 +44,7 @@ export class ModuleHost {
     const seen = new Set();
     if (fs.existsSync(this.dir)) for (const f of fs.readdirSync(this.dir).sort()) {
       try {
-        const d = path.join(this.dir, f); if (!fs.statSync(d).isDirectory() || f.endsWith('.installing')) continue;
+        const d = path.join(this.dir, f); if (!fs.statSync(d).isDirectory() || /\.(installing|old)$/.test(f)) continue;
         seen.add(f);
         const prev = this.mods.get(f);
         const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false, restartTimer: null };
