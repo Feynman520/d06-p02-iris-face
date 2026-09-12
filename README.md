@@ -71,6 +71,7 @@ node launch.mjs            # starts the daemon if needed, opens the Electron win
 
 - `node launch.mjs --browser` — open in the default browser instead of Electron.
 - `node launch.mjs --no-open` — daemon only (`http://127.0.0.1:3458/`).
+- `wscript.exe //nologo launch-hidden.vbs [same flags]` — the same launcher with **no console window** (what a desktop shortcut should point at). Launcher output goes to `state/launch.log`; a fatal failure shows a message box. Set `IRIS_FACE_NODE` if `node` is not on PATH.
 - Quit everything: tray icon → ⏻, or ⚙ settings → 전부 종료. Closing the window only hides it; sessions keep running.
 
 ## Environment variables

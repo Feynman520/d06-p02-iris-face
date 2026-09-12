@@ -71,6 +71,7 @@ node launch.mjs            # 데몬이 없으면 띄우고 Electron 창을 엽�
 
 - `node launch.mjs --browser` — Electron 대신 기본 브라우저로.
 - `node launch.mjs --no-open` — 데몬만(`http://127.0.0.1:3458/`).
+- `wscript.exe //nologo launch-hidden.vbs [같은 옵션]` — 같은 실행기를 **콘솔 창 없이**(바탕화면 바로가기는 이쪽을 가리키면 됩니다). 실행기 출력은 `state/launch.log`, 치명 실패는 알림창으로. `node`가 PATH에 없으면 `IRIS_FACE_NODE`로 지정.
 - 전부 종료: 트레이 아이콘 → ⏻, 또는 ⚙ 설정 → 전부 종료. 창 닫기는 숨기기일 뿐이며 세션은 계속 돕니다.
 
 ## 환경변수

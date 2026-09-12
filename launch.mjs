@@ -1,6 +1,8 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // IRIS-Face 실행기: 데몬이 없으면 분리 실행 → 브라우저(4단계부터 Electron)로 연다.
-import { spawn } from 'node:child_process';
+// 2026-09-12(v2.49): 기본 실행은 창 없이(launch-hidden.vbs → wscript) — 그래서 콘솔 출력은 state\launch.log 에도 남기고,
+// 치명 실패(데몬이 안 뜸 등)는 알림창으로 알린다. `--console`(IRIS-Face.cmd --console)이면 옛날처럼 보이는 창.
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -15,6 +17,34 @@ const URL_ = `http://127.0.0.1:${PORT}/`;
 const STATE = path.join(ROOT, 'state');
 fs.mkdirSync(STATE, { recursive: true });
 
+// 실행기 로그: 콘솔이 숨겨져 있어도 무슨 일이 있었는지 state\launch.log 로 본다(1MB 넘으면 새로 시작).
+const LAUNCH_LOG = path.join(STATE, 'launch.log');
+try { if (fs.existsSync(LAUNCH_LOG) && fs.statSync(LAUNCH_LOG).size > 1_000_000) fs.unlinkSync(LAUNCH_LOG); } catch {}
+const say = (m, isErr = false) => {
+  (isErr ? console.error : console.log)(m);
+  try { fs.appendFileSync(LAUNCH_LOG, `${new Date().toISOString()} ${m}\n`); } catch {}
+};
+const HIDDEN = !ARGV.includes('--console'); // 창 없이 돌 때만 알림창을 띄운다(보이는 창이면 글로 충분)
+// 알림창: 콘솔이 없을 때 치명 실패를 사람에게 알리는 유일한 길. 한글이 코드페이지에 깨지지 않도록 -EncodedCommand(UTF-16LE base64).
+function msgbox(text) {
+  if (process.platform !== 'win32') return;
+  // 본문은 환경변수로 넘긴다(따옴표·줄바꿈·한글을 명령줄에 싣지 않음).
+  const ps = "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($env:IRIS_FACE_MSG, 'IRIS-Face', 'OK', 'Error')";
+  const enc = Buffer.from(ps, 'utf16le').toString('base64');
+  try {
+    spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', enc],
+      { windowsHide: true, timeout: 60000, env: { ...process.env, IRIS_FACE_MSG: text } });
+  } catch {}
+}
+function fatal(text) {
+  say(text, true);
+  if (HIDDEN) msgbox(`${text}\n\n로그: ${LAUNCH_LOG}`);
+  process.exit(1);
+}
+process.on('uncaughtException', (e) => fatal(`[iris-face] launcher crashed: ${e?.stack || e}`));
+process.on('unhandledRejection', (e) => fatal(`[iris-face] launcher crashed: ${e?.stack || e}`));
+say(`[iris-face] launch ${HIDDEN ? '(hidden)' : '(console)'} pid=${process.pid} args=${ARGV.join(' ') || '-'}`);
+
 async function health() {
   try { const r = await fetch(URL_ + 'api/health'); return r.ok ? await r.json() : null; } catch { return null; }
 }
@@ -26,9 +56,9 @@ async function health() {
 // 도구가 없는 PC(공개 배포본)나 대시보드 폴더를 못 찾은 경우는 한 줄 알리고 건너뛴다(TeamClaude 는 선택 기능 — 2026-09-11 매듭 풀기).
 // 폴더 탐색 = daemon/paths.mjs dashDir()(TEAMCLAUDE_DASH_DIR → 공유 도구 → 옛 자리).
 const DASH_DIR = dashDir();
-const tcLog = (m) => { const line = `[iris-face] ${m}`; console.log(line); try { fs.appendFileSync(path.join(STATE, 'teamclaude-ensure.log'), `${new Date().toISOString()} ${line}\n`); } catch {} };
+const tcLog = (m) => { const line = `[iris-face] ${m}`; say(line); try { fs.appendFileSync(path.join(STATE, 'teamclaude-ensure.log'), `${new Date().toISOString()} ${line}\n`); } catch {} };
 const teamclaude = (async () => {
-  if (!DASH_DIR) { console.log('[iris-face] TeamClaude tools not found — proxy/dashboard skipped (optional; set TEAMCLAUDE_DASH_DIR to enable)'); return null; }
+  if (!DASH_DIR) { say('[iris-face] TeamClaude tools not found — proxy/dashboard skipped (optional; set TEAMCLAUDE_DASH_DIR to enable)'); return null; }
   const mod = path.join(DASH_DIR, 'ensure-proxy.mjs');
   if (!fs.existsSync(mod)) { tcLog(`ensure-proxy.mjs not in ${DASH_DIR} — proxy start skipped`); return null; }
   let r = null;
@@ -57,10 +87,10 @@ if (!h) {
   });
   child.unref();
   for (let i = 0; i < 20 && !h; i++) { await new Promise(r => setTimeout(r, 400)); h = await health(); }
-  if (!h) { console.error('[iris-face] daemon did not start — see state/daemon.out.log'); process.exit(1); }
-  console.log(`[iris-face] daemon started pid=${h.pid}`);
+  if (!h) fatal(`[iris-face] daemon did not start — see ${path.join(STATE, 'daemon.out.log')}`);
+  say(`[iris-face] daemon started pid=${h.pid}`);
 } else {
-  console.log(`[iris-face] daemon already running pid=${h.pid} sessions=${h.sessions}`);
+  say(`[iris-face] daemon already running pid=${h.pid} sessions=${h.sessions}`);
 }
 // --first-session <spec.json> (installer Task 16): 설치기가 첫 세션을 대신 만들어 주는 자리.
 // spec = { cwd, agent:'claude'|'codex', model, effort, promptFile }. 같은 cwd에 살아 있는 세션이 있으면 새로 만들지 않는다(중복 방지).
@@ -74,18 +104,18 @@ if (firstSessionSpec) {
       (r) => normCwd(r.cwd) === normCwd(spec.cwd) && r.status !== 'exited'
     );
     if (dup) {
-      console.log(`[iris-face] --first-session: ${spec.cwd} 에 이미 살아 있는 세션(${dup.id})이 있어 만들지 않음`);
+      say(`[iris-face] --first-session: ${spec.cwd} 에 이미 살아 있는 세션(${dup.id})이 있어 만들지 않음`);
     } else {
       const prompt = fs.readFileSync(spec.promptFile, 'utf8');
       const r = await fetch(`${URL_}api/sessions`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ cwd: spec.cwd, agent: spec.agent, model: spec.model, effort: spec.effort, prompt }),
       });
-      if (!r.ok) console.error(`[iris-face] --first-session: 세션 생성 실패 (${r.status})`);
-      else { const rec = await r.json(); console.log(`[iris-face] --first-session: 세션 생성됨 id=${rec.id}`); }
+      if (!r.ok) say(`[iris-face] --first-session: 세션 생성 실패 (${r.status})`, true);
+      else { const rec = await r.json(); say(`[iris-face] --first-session: 세션 생성됨 id=${rec.id}`); }
     }
   } catch (e) {
-    console.error(`[iris-face] --first-session 처리 실패: ${e.message}`);
+    say(`[iris-face] --first-session 처리 실패: ${e.message}`, true);
   }
 }
 // 기본 = Electron 창(설치돼 있으면), --browser = 기본 브라우저, --no-open = 데몬만
@@ -94,9 +124,10 @@ if (process.argv.includes('--no-open')) { /* 데몬만 */ }
 else if (!process.argv.includes('--browser') && fs.existsSync(ELECTRON)) {
   const out = fs.openSync(path.join(STATE, 'app.out.log'), 'a');
   spawn(ELECTRON, [path.join(ROOT, 'app', 'electron', 'main.cjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: false }).unref();
-  console.log('[iris-face] electron window launched');
+  say('[iris-face] electron window launched');
 } else {
   spawn('cmd.exe', ['/c', 'start', '', URL_], { windowsHide: true, detached: true, stdio: 'ignore' }).unref();
 }
-console.log(`[iris-face] ${URL_}`);
+say(`[iris-face] ${URL_}`);
 await teamclaude; // 프록시 기동(회귀 검사 포함, 최대 90초)이 끝날 때까지 실행기는 기다린다 — 창은 이미 떠 있다
+say('[iris-face] launcher done');
