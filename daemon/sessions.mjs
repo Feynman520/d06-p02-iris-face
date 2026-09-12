@@ -32,7 +32,7 @@ const WORKING_RE = /(esc to interrupt|ctrl\+c to interrupt|Cogitating|Thinking�
 // 클로드 스피너 줄(2.1.26x): "✢ Propagating…  11m 11s · ↓ 21.5k tokens)" — 글리프 + 동사…  (안내줄 "esc to interrupt"는 별도 줄로 내려갔다)
 const SPINNER_RE = /^\s*[✢✶✻✽✳·•*]\s*([A-Za-z가-힣][A-Za-z가-힣 ]{1,30}…)/;
 // 주의: 답변 본문에도 흔히 나오는 낱말("승인" 등)은 넣지 않는다 — 2026-09-10 "ISBN 승인" 답변이 노란불(확인 필요)로 오판된 사례.
-const ATTENTION_RE = /(Do you trust|trust the contents|Press t to trust|enter to review hooks|Yes, continue|Yes, proceed|\(y\/n\)|\[Y\/n\]|Press enter|Esc to cancel|Enter to confirm|1\. Yes|허용하시겠|계속하시겠|승인하시겠|승인할까요)/i;
+const ATTENTION_RE = /(Do you trust|trust the contents|Press t to trust|enter to review hooks|Yes, continue|Yes, proceed|\(y\/n\)|\[Y\/n\]|Press enter|Esc to cancel|Enter to confirm|Enter to select|Do you want to proceed\?|Would you like to proceed\?|Ready to submit|Submit answers|1\. Yes|허용하시겠|계속하시겠|승인하시겠|승인할까요)/i; // v2.50: AskUserQuestion 답 검토 화면(❯ 1. Submit answers)·번호 없는 승인 화면도 노란불
 // 코덱스 시작 시 업데이트 물음(대화형 3지선다) — idleCheck가 2(Skip)로 자동 응답한다
 const CODEX_UPDATE_PROMPT_RE = /Update available[\s\S]*2\. Skip/;
 // 입력 프롬프트: 클로드 ❯(~2.1.265) 또는 >(2.1.266부터) / 코덱스 ›(빈 입력창)·»(글이 든 입력창) — 헤드리스 화면의 아래쪽 줄에서만 찾는다
@@ -260,7 +260,7 @@ export class SessionManager {
       return;
     }
     // 확인 카드(v2.43): 노란불이면 화면 글자에서 질문·선택지를 뽑아 rec.prompt 에 두고 방송한다(같은 내용이면 조용). 꺼지면 setStatus 가 비운다.
-    if (status === 'attention') this.setPrompt(id, parseApproval(tail));
+    if (status === 'attention') this.setPrompt(id, parseApproval(this.screenText(id, 40))); // v2.50: 대화상자가 14줄보다 길 수 있어(계획 승인·질문 5개+설명) 40줄을 읽힌다
     // 진행 문구: 스피너 줄의 동사("Propagating…")를 우선 쓰고, 없으면 옛 형식(스피너와 안내가 한 줄)에서 뽑는다
     const actLine = status === 'busy' ? (lines.find(l => WORKING_RE.test(l)) || '') : '';
     // 스피너 문구만 남긴다: 상태줄(⏵⏵ bypass permissions…, ← for agents, shift+tab to cycle)과 스피너 글리프 제거

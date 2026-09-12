@@ -148,21 +148,46 @@ a { color: var(--iris); }
 #term, .xterm { height: 100%; }
 .dead-bar { display: flex; gap: 12px; align-items: center; padding: 8px 16px; background: rgba(242,200,121,.08); border-top: 1px solid rgba(242,200,121,.25); color: var(--warn); font-size: 12.5px; }
 .dead-bar code { font: 12px var(--mono); color: var(--ink); background: var(--base); padding: 2px 8px; border-radius: 6px; }
-/* ---- 확인 카드(v2.43): 노란불일 때 터미널의 질문·선택지를 대화 아래에. dead-bar 와 같은 자리·같은 노란 계열 ---- */
-.approval { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 12px; background: rgba(242,200,121,.07); border-top: 1px solid rgba(242,200,121,.28); }
+/* ---- 확인 카드(v2.43 → v2.50): 노란불일 때 터미널의 질문·선택지를 대화 아래에. dead-bar 와 같은 자리, 노란 계열 한 톤 ----
+   구성: 머리(종류 배지 · 제목 · 힌트 · 터미널에서 보기) → 탭 칩(AskUserQuestion) → 본문(명령·설명·계획, 등폭) → 질문 → 선택지 세로 목록 → 행동(선택 완료 / 자유 입력) */
+.approval { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 12px; background: rgba(242,200,121,.06); border-top: 1px solid rgba(242,200,121,.28); max-height: min(60vh, 560px); overflow: auto; }
 #view[data-mode="term"] .approval { display: none; }
-.ap-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.ap-title { color: var(--warn); font-weight: 600; font-size: 13px; }
-.ap-hint { color: var(--ink-3); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ap-badge { flex: none; width: 22px; height: 22px; border-radius: 7px; display: inline-grid; place-items: center; font: 600 12px var(--mono); color: var(--base); background: var(--warn); }
+.ap-badge[data-kind="ask"], .ap-badge[data-kind="review"] { background: var(--iris); }
+.ap-badge[data-kind="trust"] { background: var(--ink-2); }
+.ap-kind { flex: none; color: var(--warn); font-weight: 600; font-size: 12px; letter-spacing: .02em; }
+.ap-title { color: var(--ink); font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ap-hint { color: var(--ink-3); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 .ap-term { flex: none; }
-.ap-q { margin: 0; max-height: 180px; overflow: auto; padding: 8px 12px; border-radius: 8px; background: var(--base); border: 1px solid var(--line); color: var(--ink-2); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
-.ap-opts { display: flex; flex-wrap: wrap; gap: 8px; }
-.ap-opt { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--raised); color: var(--ink); font-size: 13px; text-align: left; }
-.ap-opt kbd { font: 11.5px var(--mono); color: var(--warn); background: rgba(242,200,121,.12); border: 1px solid rgba(242,200,121,.3); border-radius: 5px; padding: 1px 6px; min-width: 22px; text-align: center; }
+.ap-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-tab { font-size: 12px; color: var(--ink-3); padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); }
+.ap-tab.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.ap-body, .ap-q { margin: 0; max-height: 220px; overflow: auto; padding: 8px 12px; border-radius: 8px; background: var(--base); border: 1px solid var(--line); color: var(--ink-2); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.ap-body.cmd { color: var(--ink); border-left: 3px solid rgba(242,200,121,.55); }
+.ap-question { font-size: 14px; font-weight: 600; color: var(--ink); padding: 2px 0; }
+.ap-opts { display: flex; flex-direction: column; gap: 6px; max-width: 760px; }
+.ap-opts.row { flex-direction: row; flex-wrap: wrap; }
+.ap-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--raised); color: var(--ink); font-size: 13.5px; text-align: left; width: 100%; transition: border-color .12s, background .12s; }
+.ap-opts.row .ap-opt { width: auto; }
+.ap-opt kbd, .ap-act kbd { flex: none; font: 11.5px var(--mono); color: var(--warn); background: rgba(242,200,121,.12); border: 1px solid rgba(242,200,121,.3); border-radius: 5px; padding: 1px 6px; min-width: 24px; text-align: center; white-space: nowrap; }
+.ap-check { flex: none; width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--base); display: inline-grid; place-items: center; font-size: 11px; color: var(--ok); }
+.ap-opt.on .ap-check { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 18%, var(--base)); }
+.ap-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ap-label small { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
 .ap-opt:hover { border-color: var(--warn); background: color-mix(in srgb, var(--raised) 70%, rgba(242,200,121,.18)); }
-.ap-opt.sel { border-color: rgba(242,200,121,.55); box-shadow: inset 0 0 0 1px rgba(242,200,121,.25); }
-.ap-opt:disabled { opacity: .45; cursor: default; }
-.ap-opt.picked { opacity: 1; border-color: var(--warn); background: rgba(242,200,121,.18); }
+.ap-opt.sel { border-color: rgba(242,200,121,.6); box-shadow: inset 0 0 0 1px rgba(242,200,121,.28); }
+.ap-opt.sel::after { content: '❯'; margin-left: auto; color: var(--warn); font: 12px var(--mono); }
+.ap-opt.no { color: var(--ink-2); }
+.ap-opt.no:hover { border-color: var(--bad); background: color-mix(in srgb, var(--raised) 75%, rgba(240,120,139,.2)); }
+.ap-opt.free { border-style: dashed; color: var(--ink-2); }
+.ap-opt:disabled, .ap-act:disabled { opacity: .45; cursor: default; }
+.ap-opt.picked, .ap-act.picked { opacity: 1; border-color: var(--warn); background: rgba(242,200,121,.18); }
+.ap-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ap-act { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(242,200,121,.45); background: rgba(242,200,121,.1); color: var(--ink); font-size: 13px; }
+.ap-act:hover { background: rgba(242,200,121,.2); }
+.ap-free { display: flex; gap: 6px; flex: 1; min-width: 240px; }
+.ap-free input { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--base); color: var(--ink); font: 13px var(--mono); }
 .approval.sending .ap-hint::after { content: ' 보내는 중…'; color: var(--warn); }
 
 /* ---- 말풍선(읽기 폭 720px, 가운데 열) ---- */
