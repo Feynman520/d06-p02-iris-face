@@ -1,11 +1,12 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-/* 설정(⚙): 헤더 이름·마크·글자체·테마·중앙 애니메이션·성능. 고른 것만 실제로 적용되고, 나머지 후보는 패널을 열 때만 미리보기로 돈다.
+/* 설정(⚙): 테마·중앙 애니메이션·성능·권한·알림·확장 모듈. 헤더 이름·마크·글자체는 BRAND 로 고정(v2.54, 2026-09-13 사용자 결정). 고른 것만 실제로 적용되고, 나머지 후보는 패널을 열 때만 미리보기로 돈다.
    저장: localStorage(즉시) + 데몬 state/settings.json(브라우저·Electron 공유). 사용량 배터리도 여기서 그린다. */
 window.Settings = (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const R = window.Registry;
-  const DEF = { name: '', mark: 'cube', font: 'bodoni', theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: true, markSpeed: 1, permission: '', approval: '', sandbox: '', notifyDone: true, notifyOs: true }; // pauseWhenDim 기본 켬(2026-09-12 발열 사건): 저장된 설정이 있으면 그 값이 우선
+  const BRAND = { name: 'IRIS', mark: 'cube', font: 'segoe-script', markSpeed: 2 }; // 고정 정체성 — 설정에서 바꿀 수 없다
+  const DEF = { theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: true, permission: '', approval: '', sandbox: '', notifyDone: true, notifyOs: true }; // pauseWhenDim 기본 켬(2026-09-12 발열 사건): 저장된 설정이 있으면 그 값이 우선
   let cfg = { ...DEF }, health = null, open = false, themeKeys = new Set(), agents = null, previews = [];
   const destroyPreviews = () => { for (const p of previews) { try { p.destroy(); } catch {} } previews = []; };
 
@@ -25,15 +26,15 @@ window.Settings = (() => {
   function markSvg(m, cls = 'mark') { return `<svg class="${cls} mk-${m.id}" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">${m.svg}</svg>`; }
   function markCss(m, scope) { return m.css.replace(/\.a(\d)/g, `${scope}.mk-${m.id} .a$1`); }
   function applyMark() {
-    const m = R.MARKS.find(x => x.id === cfg.mark) || R.MARKS[0];
+    const m = R.MARKS.find(x => x.id === BRAND.mark) || R.MARKS[0];
     $('#mark-slot').innerHTML = markSvg(m);
     let st = $('#mark-style'); if (!st) { st = document.createElement('style'); st.id = 'mark-style'; document.head.appendChild(st); }
-    st.textContent = R.MARK_KEYFRAMES + '\n' + markCss(m, '.mark') + `\n.mark.mk-${m.id} *{animation-duration:calc(var(--mk-dur,1s) / ${cfg.markSpeed})}`;
+    st.textContent = R.MARK_KEYFRAMES + '\n' + markCss(m, '.mark') + `\n.mark.mk-${m.id} *{animation-duration:calc(var(--mk-dur,1s) / ${BRAND.markSpeed})}`;
     // animation-duration 은 개별 keyframe 정의가 우선하므로, 속도는 애니메이션 전체에 playbackRate로 적용
-    $('#mark-slot').querySelectorAll('*').forEach(el => { for (const a of el.getAnimations?.() || []) a.playbackRate = cfg.markSpeed; });
+    $('#mark-slot').querySelectorAll('*').forEach(el => { for (const a of el.getAnimations?.() || []) a.playbackRate = BRAND.markSpeed; });
   }
-  function applyFont() { const f = R.FONTS.find(x => x.id === cfg.font) || R.FONTS[0]; $('#wordmark').style.cssText = f.css; }
-  function applyName() { const n = (cfg.name || health?.rootName || 'IRIS').trim(); $('#wordmark').textContent = n; document.title = n; }
+  function applyFont() { const f = R.FONTS.find(x => x.id === BRAND.font) || R.FONTS[0]; $('#wordmark').style.cssText = f.css; }
+  function applyName() { const n = BRAND.name; $('#wordmark').textContent = n; document.title = n; }
   function applyStage() { IrisStars.configure({ style: cfg.stage, density: cfg.density, pauseWhenDim: cfg.pauseWhenDim }); }
   // 자동 조절 표시(2026-09-12): 이 컴퓨터의 상한 밀도·지금 그리는 별 수·프레임 상한. 엔진이 'iris:stage' 이벤트로 바뀔 때마다 알린다.
   // v2.51.2(2026-09-13, 사용자 결정 "fps만 보여주자"): 부드러움 = fps 가 결정하고 부담 = fps × 화소인데 화소는 100%로 고정하므로, 사용자에겐 fps 칩만 보인다.
@@ -75,21 +76,15 @@ window.Settings = (() => {
 
   // ---- 패널 ----
   function renderPanel() {
-    const pv = $('#st-marks'); pv.innerHTML = R.MARKS.map(m => `<button class="st-card${m.id === cfg.mark ? ' cur' : ''}" data-mark="${m.id}" title="${esc(m.name)}">${markSvg(m, 'mark pv')}<span>${esc(m.name)}</span></button>`).join('');
-    let st = $('#mark-style-pv'); if (!st) { st = document.createElement('style'); st.id = 'mark-style-pv'; document.head.appendChild(st); }
-    st.textContent = R.MARKS.map(m => markCss(m, '.pv')).join('\n');
-    $('#st-fonts').innerHTML = R.FONTS.map(f => `<button class="st-card font${f.id === cfg.font ? ' cur' : ''}" data-font="${f.id}" title="${esc(f.name)}"><span class="pv-word" style="${esc(f.css)}">${esc((cfg.name || health?.rootName || 'IRIS').trim())}</span><span>${esc(f.name)}</span></button>`).join('');
     $('#st-themes').innerHTML = R.THEMES.map(t => `<button class="st-card theme${t.id === cfg.theme ? ' cur' : ''}" data-theme="${t.id}"><span class="sw" style="background:${t.vars['--base']};border-color:${t.vars['--iris']}"><i style="background:${t.vars['--surface']}"></i><i style="background:${t.vars['--iris']}"></i><i style="background:${t.vars['--iris-2']}"></i></span><span>${esc(t.name)}</span></button>`).join('');
     // 중앙 애니메이션: 카드마다 작은 캔버스에서 실제로 돌려 보여 준다(패널을 닫으면 정리)
     destroyPreviews();
     $('#st-stages').innerHTML = R.STAGES.map(s => `<button class="st-card stage${s.id === cfg.stage ? ' cur' : ''}" data-stage="${s.id}" title="${esc(s.desc)}"><canvas class="stage-pv" data-pv="${s.id}"></canvas><span>${esc(s.name)}</span></button>`).join('');
     const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0]; const colors = { a: th.vars['--star-a'], b: th.vars['--star-b'], c: th.vars['--star-c'], glow: th.vars['--glow'] };
     for (const c of $('#st-stages').querySelectorAll('canvas.stage-pv')) previews.push(IrisStars.preview(c, { style: c.dataset.pv, colors }));
-    $('#st-name').value = cfg.name || ''; $('#st-name').placeholder = health?.rootName || 'IRIS';
     $('#st-density').value = cfg.density; $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%';
     renderStage(IrisStars.status());
     $('#st-pause').checked = !!cfg.pauseWhenDim;
-    $('#st-speed').value = cfg.markSpeed; $('#st-speed-v').textContent = cfg.markSpeed + '×';
     $('#st-root').textContent = health?.root || '';
     // 알림(2026-09-11): 작업 완료 알림 켬/끔 · 창이 뒤에 있을 때 OS 알림
     $('#st-notify').checked = cfg.notifyDone !== false; $('#st-notify-os').checked = cfg.notifyOs !== false; $('#st-notify-os').disabled = cfg.notifyDone === false;
@@ -104,7 +99,6 @@ window.Settings = (() => {
     fill($('#st-perm'), agents?.claude?.permissions || FALLBACK.permissions, cfg.permission);
     fill($('#st-approval'), agents?.codex?.approvals || FALLBACK.approvals, cfg.approval);
     fill($('#st-sandbox'), agents?.codex?.sandboxes || FALLBACK.sandboxes, cfg.sandbox);
-    $('#st-marks').querySelectorAll('.pv').forEach(svg => svg.querySelectorAll('*').forEach(el => { for (const a of el.getAnimations?.() || []) a.playbackRate = cfg.markSpeed; }));
     renderMods();
   }
   // ---- 모듈(콘센트, 2026-09-11): 목록은 데몬 /api/modules. 이름·아이콘·설명은 전부 module.json 에서 온다(본체는 어떤 모듈인지 모른다). ----
@@ -168,7 +162,7 @@ window.Settings = (() => {
   const koName = (s) => (String(s || '').match(/\(([^)]+)\)\s*$/) || [])[1] || s; // 'Sejun Ham (함세준)' → '함세준'
   function applyMaker() { $('#maker').textContent = `v${health?.version || '—'} · ${koName(health?.about?.author || ABOUT_DEF.author)}`; }
   function show() { open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); renderPanel(); }
-  function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); $('#mark-style-pv')?.remove(); destroyPreviews(); }
+  function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
   function pick(patch) { Object.assign(cfg, patch); applyAll(); save(); renderPanel(); }
 
   function init(opts) {
@@ -176,20 +170,14 @@ window.Settings = (() => {
     $('#btn-settings').onclick = () => (open ? hide() : show());
     $('#st-close').onclick = hide;
     $('#settings').addEventListener('click', (e) => {
-      const m = e.target.closest('#st-marks [data-mark]'); if (m) return pick({ mark: m.dataset.mark });
-      const f = e.target.closest('#st-fonts [data-font]'); if (f) return pick({ font: f.dataset.font });
       const t = e.target.closest('#st-themes [data-theme]'); if (t) return pick({ theme: t.dataset.theme });
       const s = e.target.closest('#st-stages [data-stage]'); if (s) return pick({ stage: s.dataset.stage });
     });
-    $('#st-name').addEventListener('change', (e) => pick({ name: e.target.value.trim() }));
-    $('#st-name-reset').onclick = () => pick({ name: '' });
     $('#st-density').addEventListener('input', (e) => { cfg.density = Number(e.target.value); $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%'; applyStage(); });
     $('#st-density').addEventListener('change', save);
     $('#st-remeasure').addEventListener('click', () => { IrisStars.calibrate().then((st) => { if (open) renderStage(st); }); renderStage(IrisStars.status()); });
     $('#st-fps').addEventListener('click', (e) => { const chip = e.target.closest('.st-chip[data-fps]'); if (!chip) return; IrisStars.configure({ profile: { fps: Number(chip.dataset.fps), dprCap: 1 } }); renderStage(IrisStars.status()); });
     $('#st-pause').addEventListener('change', (e) => pick({ pauseWhenDim: e.target.checked }));
-    $('#st-speed').addEventListener('input', (e) => { cfg.markSpeed = Number(e.target.value); $('#st-speed-v').textContent = cfg.markSpeed + '×'; applyMark(); });
-    $('#st-speed').addEventListener('change', save);
     $('#st-perm').addEventListener('change', (e) => pick({ permission: e.target.value }));
     $('#st-approval').addEventListener('change', (e) => pick({ approval: e.target.value }));
     $('#st-sandbox').addEventListener('change', (e) => pick({ sandbox: e.target.value }));
