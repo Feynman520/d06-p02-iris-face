@@ -10,7 +10,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const URL_ = 'http://127.0.0.1:3458/';
 const STATE = path.join(ROOT, 'state');
-const TIP = `IRIS-Face · by ${String(PKG.author || '').replace(/\s*\(.*\)$/, '') || 'Sejun Ham'}`; // 트레이 툴팁의 각인(원천 = package.json author)
+const TIP = `IRIS · by ${String(PKG.author || '').replace(/\s*\(.*\)$/, '') || 'Sejun Ham'}`; // 트레이 툴팁의 각인(원천 = package.json author)
 let win = null, tray = null, quitting = false, lastHealth = null;
 
 // 윈도 OS 알림(작업 완료, 2026-09-11)은 앱 사용자 모델 ID가 있어야 앱 이름으로 뜬다(없으면 'electron.app.Electron')
@@ -100,7 +100,7 @@ function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: '창 열기', click: showWindow },
     { label: lastHealth ? `세션 ${n}개 · 데몬 pid ${lastHealth.pid}` : '데몬 끊김', enabled: false },
-    { label: 'IRIS-Face 정보…', click: () => { showWindow(); try { win.webContents.send('iris:about'); } catch {} } }, // 만든 사람·명함·버전(페이지 안 대화상자, 2026-09-10 각인)
+    { label: 'IRIS 정보…', click: () => { showWindow(); try { win.webContents.send('iris:about'); } catch {} } }, // 만든 사람·명함·버전(페이지 안 대화상자, 2026-09-10 각인)
     { type: 'separator' },
     { label: '전부 종료 (데몬 + 세션)', click: async () => {
       const h = await health();

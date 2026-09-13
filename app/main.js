@@ -467,8 +467,10 @@
     else sigShow({ name: SIG_NAME, motto, dur: 4300, delay: 600 });                       // 끔·별자리·움직임 줄이기: 이름도 글자로
   }
   $('#wordmark').addEventListener('dblclick', (e) => { e.preventDefault(); signature(); });
+  $('#iris').addEventListener('dblclick', (e) => { e.preventDefault(); signature(); }); // 중앙 애니메이션 두 번 클릭(v2.55, 2026-09-13 사용자 요청)
   document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'i') { e.preventDefault(); signature(); } });
-  setTimeout(() => { if (!current) sigShow({ motto: `by ${SIG_NAME}`, by: true, dur: 2800, delay: 0 }); }, 1300); // 별이 모이는 1.2초 연출이 끝난 뒤 한 번
+  // 첫 실행 각인(v2.55): `by SEJUN HAM` 크게 + 그 아래 문장, 둘 다 이스터에그 손글씨체(.sig-by). 별이 모이는 1.2초 연출이 끝난 뒤 한 번.
+  setTimeout(() => { if (!current) sigShow({ name: `by ${SIG_NAME}`, motto: Settings.health()?.about?.motto || '해결은 에이전트가, 정의는 우리가.', by: true, dur: 4200, delay: 500 }); }, 1300);
   window.irisHost?.onAbout?.(() => Settings.about()); // 트레이 메뉴 "IRIS-Face 정보…"
 
   // ---------- 검증용 미리보기 ?preview=<기록파일>&agent= ----------

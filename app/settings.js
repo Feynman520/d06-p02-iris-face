@@ -142,12 +142,12 @@ window.Settings = (() => {
     renderMods();
   }
   // ---- 정보(만든 사람) 대화상자 — 값은 전부 데몬 /api/health 의 about(원천 = package.json). 데몬이 아직 없으면 화면 쪽 기본값. ----
-  const ABOUT_DEF = { name: 'IRIS-Face', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
+  const ABOUT_DEF = { name: 'IRIS', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
   function about() {
     const a = { ...ABOUT_DEF, ...(health?.about || {}) };
     const card = a.homepage.replace(/^https?:\/\//, '').replace(/\/?#.*$/, '');
     const html = `<div class="about">
-      <div class="about-head"><span class="about-mark" aria-hidden="true">${$('#mark-slot').innerHTML}</span><span class="about-name">${esc(a.name)}</span></div>
+      <div class="about-head"><span class="about-mark" aria-hidden="true">${$('#mark-slot').innerHTML}</span><span class="about-name">${esc(BRAND.name)}</span></div>
       <p class="about-motto">“${esc(a.motto)}”</p>
       <dl class="about-grid">
         <dt>만든 사람</dt><dd>${esc(a.author)}</dd>
@@ -185,7 +185,6 @@ window.Settings = (() => {
     $('#st-notify-os').addEventListener('change', (e) => { if (e.target.checked) Notify.requestOs(); pick({ notifyOs: e.target.checked }); });
     $('#st-notify-test').onclick = () => Notify.preview();
     fetch('/api/agents').then(r => r.json()).then((a) => { agents = a; if (open) renderPanel(); }).catch(() => {});
-    $('#st-reset').onclick = async () => { if (await Dialog.confirm('꾸미기·권한 설정을 기본값으로 되돌릴까요?')) { cfg = { ...DEF }; applyAll(); save(); renderPanel(); } };
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
     $('#maker').onclick = about;
     applyMaker();

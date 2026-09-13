@@ -28,7 +28,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // 버전·만든 사람·명함·허가서의 원천은 package.json 한 곳(2026-09-10 각인). 화면·창 제목·정보 대화상자는 전부 /api/health 로 이 값을 읽는다.
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 export const VERSION = PKG.version;
-export const ABOUT = Object.freeze({ name: 'IRIS-Face', version: PKG.version, author: PKG.author, homepage: PKG.homepage, license: PKG.license, since: PKG.iris?.since, motto: PKG.iris?.motto });
+export const ABOUT = Object.freeze({ name: 'IRIS', version: PKG.version, author: PKG.author, homepage: PKG.homepage, license: PKG.license, since: PKG.iris?.since, motto: PKG.iris?.motto });
 const STATE = process.env.IRIS_FACE_STATE || path.join(ROOT, 'state');
 const APP = path.join(ROOT, 'app');
 const PID_FILE = path.join(STATE, 'daemon.pid');

@@ -506,8 +506,11 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 .sig { position: absolute; left: 0; right: 0; top: 50%; display: flex; flex-direction: column; align-items: center; gap: 22px; pointer-events: none; z-index: 2; transform: translateY(-50%); }
 .sig.placed { transform: none; } /* main.js 가 별 글자 아랫선 기준 top(px)을 직접 준 경우 — 세로 가운데 대신 그 자리 */
 .sig-name { font: 600 clamp(28px, 6.5vw, 72px)/1 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: .22em; color: var(--ink); opacity: 0; }
-.sig-motto { width: 100%; text-align: center; font-family: "Nanum Pen Script", "Segoe Script", "Ink Free", cursive; font-size: clamp(22px, 2.4vw, 30px); line-height: 1.2; letter-spacing: 0; color: var(--ink-2); opacity: 0; } /* 자간 0 = 뒤끝 여백 없이 글자 그대로 정가운데 */
-.sig-by .sig-motto { font-family: inherit; font-size: 12.5px; letter-spacing: .28em; color: var(--ink-3); } /* 첫 실행 `by SEJUN HAM` 은 이전 그대로 */
+.sig-motto { width: 100%; text-align: center; font-family: "Nanum Pen Script", "Segoe Script", "Ink Free", cursive; font-size: clamp(30px, 3.4vw, 46px); line-height: 1.2; letter-spacing: 0; color: var(--ink-2); opacity: 0; } /* 자간 0 = 뒤끝 여백 없이 글자 그대로 정가운데 */
+/* 첫 실행 각인(v2.55): 이름 `by SEJUN HAM` 은 크게, 그 아래 문장 — 둘 다 이스터에그 손글씨체 */
+.sig-by { gap: 10px; }
+.sig-by .sig-name { font: 400 clamp(40px, 4.6vw, 64px)/1.1 "Nanum Pen Script", "Segoe Script", "Ink Free", cursive; letter-spacing: .04em; color: var(--ink); }
+.sig-by .sig-motto { color: var(--ink-2); }
 .sig.run .sig-name { animation: sigFade var(--sig-dur, 4.3s) ease-in-out forwards; }
 .sig.run .sig-motto { animation: sigFade var(--sig-dur, 4.3s) ease-in-out forwards; animation-delay: var(--sig-delay, 1.2s); }
 @keyframes sigFade { 0% { opacity: 0; transform: translateY(6px); } 18% { opacity: 1; transform: none; } 78% { opacity: 1; } 100% { opacity: 0; } }
