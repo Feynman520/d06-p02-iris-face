@@ -244,6 +244,7 @@
   let dashEnabled = true;
   let modules = [];                 // ModuleInfo[] — 데몬이 준 그대로
   let drawerKey = null;             // 지금 서랍이 보여 주는 것
+  let railAutoHidden = false;       // 모듈 서랍이 작업목록을 대신 접었는가(v2.57, 2026-09-13 사용자 결정: 모듈 화면과 작업목록이 이중으로 보이지 않게)
   const PANEL_RE = /^http:\/\/127\.0\.0\.1:\d+\//;  // 모듈이 준 panel 주소는 로컬 127.0.0.1 뿐이어야 신뢰(콘센트가 신뢰 못 할 값을 줄 수 있음)
   const fr = $('#dash-frame');
   fetch('/api/health').then(r => r.json()).then((h) => {
@@ -267,6 +268,8 @@
     $('#limits').classList.toggle('active', key === 'dash');
     for (const b of $('#mod-btns').querySelectorAll('.mod-btn')) b.classList.toggle('active', key === `mod:${b.dataset.mod}`);
     d.hidden = false; requestAnimationFrame(() => requestAnimationFrame(() => d.classList.add('open')));
+    // 모듈 서랍(mod:*)은 작업목록을 접고 연다. 사용자가 이미 접어 둔 것이면 손대지 않고(닫을 때도 그대로), 우리가 접은 것만 닫을 때 되돌린다.
+    if (key.startsWith('mod:') && !$('#app').classList.contains('rail-hidden')) { $('#app').classList.add('rail-hidden'); railAutoHidden = true; }
     if (key === 'dash') loadDash(switched); else if (url && (switched || fr.src !== url)) loadFrame(url);
   }
   // 모듈 화면 넣기 + 빈 서랍 지킴이(v2.56.1): src 를 넣고도 load 가 4초 안에 안 오면(모듈 프로세스가 방금 다시 떠서 첫 연결이
@@ -286,6 +289,7 @@
     for (const b of $('#mod-btns').querySelectorAll('.mod-btn')) b.classList.remove('active');
     drawerCloseTimer = setTimeout(() => { if (!d.classList.contains('open')) d.hidden = true; }, 360);
     drawerKey = null; ta.focus();   // 서랍을 닫으면 초점은 반드시 입력창으로(iframe 초점 잔류 → "입력 불가" 재발 방지)
+    if (railAutoHidden) { railAutoHidden = false; $('#app').classList.remove('rail-hidden'); }   // 우리가 접은 작업목록만 다시 편다
   }
   const drawerOpenFor = (key) => !$('#dash').hidden && drawerKey === key;
   function toggleDash(force) {
@@ -437,7 +441,7 @@
   $('#btn-copy-resume').onclick = () => { const t = cur()?.resumeCmd; if (t) navigator.clipboard?.writeText(t); };
   $('#btn-home').onclick = goHome;
   $('#btn-shutdown').onclick = async () => { if (!(await Dialog.confirm(`데몬과 세션 ${sessions.length}개를 전부 종료할까요? (각 세션 PID 기준)`, { okLabel: '전부 종료', danger: true }))) return; await api('POST', '/api/shutdown').catch(() => {}); };
-  $('#btn-rail').onclick = () => $('#app').classList.toggle('rail-hidden');
+  $('#btn-rail').onclick = () => { railAutoHidden = false; $('#app').classList.toggle('rail-hidden'); };   // 사용자가 직접 누르면 그 뜻을 존중(서랍 닫을 때 되돌리지 않음)
   // 작업목록 너비: 오른쪽 가장자리를 끌어 조절(180~560px), localStorage 'iris.railW'. 두 번 클릭 = 기본값(248). 접힌 상태에서는 끌지 않는다.
   (() => {
     const app = $('#app'), grip = $('#rail-resize'); if (!grip) return;
