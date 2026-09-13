@@ -25,7 +25,9 @@
   </header>
   <aside id="dash" class="dash" hidden>
     <div class="dash-head"><span id="dash-title">TeamClaude 대시보드</span><span class="dash-actions"><button id="dash-reload" class="icon-btn" title="새로고침">↻</button><button id="dash-ext" class="icon-btn" title="브라우저에서 열기">⧉</button><button id="dash-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>
-    <iframe id="dash-frame" title="TeamClaude 대시보드" loading="lazy"></iframe>
+    <!-- loading="lazy" 를 두지 않는다(v2.56.1): 서랍이 미끄러져 들어오는 동안 화면 밖에 있으면 브라우저가 iframe 을 안 불러
+         빈 서랍이 되고 새로고침을 눌러야 떴다. src 는 어차피 서랍을 열 때만 넣는다. -->
+    <iframe id="dash-frame" title="TeamClaude 대시보드"></iframe>
   </aside>
   <aside id="settings" class="settings" hidden>
     <div class="dash-head"><span>설정</span><span class="dash-actions"><button id="st-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>

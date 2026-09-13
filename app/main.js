@@ -267,7 +267,18 @@
     $('#limits').classList.toggle('active', key === 'dash');
     for (const b of $('#mod-btns').querySelectorAll('.mod-btn')) b.classList.toggle('active', key === `mod:${b.dataset.mod}`);
     d.hidden = false; requestAnimationFrame(() => requestAnimationFrame(() => d.classList.add('open')));
-    if (key === 'dash') loadDash(switched); else if (url && (switched || fr.src !== url)) fr.src = url;
+    if (key === 'dash') loadDash(switched); else if (url && (switched || fr.src !== url)) loadFrame(url);
+  }
+  // 모듈 화면 넣기 + 빈 서랍 지킴이(v2.56.1): src 를 넣고도 load 가 4초 안에 안 오면(모듈 프로세스가 방금 다시 떠서 첫 연결이
+  // 끊긴 경우 등) 한 번 더 넣는다. 그래도 안 뜨면 머리의 ↻ 가 남아 있다.
+  let frameWatch = 0;
+  function loadFrame(url) {
+    clearTimeout(frameWatch);
+    let loaded = false;
+    const onLoad = () => { loaded = true; fr.removeEventListener('load', onLoad); };
+    fr.addEventListener('load', onLoad);
+    fr.src = url;
+    frameWatch = setTimeout(() => { if (!loaded && !$('#dash').hidden && fr.src === url) { fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = url; }); } }, 4000);
   }
   function closeDrawer() {
     const d = $('#dash'); if (d.hidden) return;
