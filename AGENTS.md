@@ -6,11 +6,12 @@ status_scheme: task5
 lifecycle: active
 tags:
 - {kind: 소프트웨어/산출물 종류, value: Local App}
+aliases: ['P02-IRIS 페이스(IRIS-Face) 〖Local App〗', 'R07-개발자(Developer)\D06-오픈소스(Open Source)\P02-IRIS 페이스(IRIS-Face) 〖Local App〗']
 relations:
-  canonical: ['iris:t1qy9qdb/AGENTS.md']
+  canonical: ['iris:wkknzac5/AGENTS.md']
 created: '2026-09-08'
 ---
-# P02-IRIS 페이스(IRIS-Face) 〖Local App〗
+# P02-아이리스 페이스(IRIS-Face) 〖Local App〗
 
 IRIS의 얼굴 — 클로드코드·코덱스 세션 여러 개를 한 창에 모아 지휘하는 데스크톱 앱(베타·선택 수단). 사용자가 폴더를 고르고 **에이전트(Claude/Codex)·모델·사고깊이를 터미널에서처럼 직접 고른 뒤** 요청하면 그 폴더에서 **기존 CLI를 그대로** 가상 터미널로 띄우고, 세션 기록파일을 읽어 깔끔한 대화 화면으로 그린다. 폴더 자동 선택(2026-09-08 스파이크 40%)과 규칙표+Haiku 자동 조합 판정(2026-09-09 사용자 결정)은 폐기 — 코드는 `_archive\`.
 
@@ -40,7 +41,7 @@ IRIS의 얼굴 — 클로드코드·코덱스 세션 여러 개를 한 창에 �
 - **중앙 애니메이션 자동 조절**(v2.48, 2026-09-12 발열 사건): 비용은 무대 종류가 아니라 **별 수(밀도)** 다(headless 실측: 160%면 어느 무대든 2배). `app/stars.js`가 프레임 시간을 재서 **컴퓨터별 상한 밀도**(`localStorage['iris.stage.cap']`)를 정하고 실제 별 수 = min(사용자 밀도, 상한); 단계 = 별 0.1씩↓ → 50%에서 30fps → 30%까지(올릴 땐 역순, 20초 여유마다). 프레임 상한 = 포커스 잃음 10 · 배터리 30 · 평소 60. 별 배열은 사용자 밀도로 만들어 섞고 앞 live개만 그린다(상한 변경 때 자리 재추첨 없음). `pauseWhenDim` 기본 켬. 새 무대를 추가할 때 스프라이트(drawImage) 최적화는 쓰지 않는다(GPU 없는 환경에서 5배 느림). 검사 = `npm run verify:stage`(playwright 있을 때 headless CPU 4배 느림 시험 포함). 상세 = `docs\구현계획.md` v2.48. **v2.51(2026-09-13) 실측 교정:** 진짜 비용은 JS 그리기 시간이 아니라 **GPU 합성(캔버스 화소 수 × 프레임 × 위에 얹힌 층)** 이라 v2.48 조절기는 못 본다(실제 Face 포커스 A/B: 별 60→10fps 에 GPU 3D 62→30%). 그래서 **프레임·해상도 프로필**(`profile.fps` 60·30·20 / `dprCap` 기본 1 = 150% 배율에서도 캔버스 100% 화소)을 두고 `calibrate()`가 Electron 메인 `app.getAppMetrics()`(preload `irisHost.metrics`, 창 재시작 뒤 사용 가능)로 "안 그릴 때" 대비 추가 부담을 후보별 2초씩 재서 예산(한 코어 15%) 안의 첫 후보를 고른다(첫 실행·설정 「다시 측정」 테두리 버튼). 결과·추천은 `iris.stage.cap`의 `rec`, 설정에 "이 컴퓨터 추천 … 「추천 적용」". 어두운 대화 화면에서 멈추지 않으면 20fps. 빛무리는 1.3R 원만 채움. 지표 없으면(브라우저) 30fps·100% 보수적 기본. **v2.51.1:** 통로는 `probeMetrics()`가 실제 호출 성공으로 판정(F5 만 하면 새 preload+옛 메인이라 invoke 거부 → 옛 코드는 오류를 20fps로 굳혔음), 실패 시 이전 프로필 유지·`rec.failed`. **v2.51.2(사용자 결정 "fps만 보여주자"):** 설정 무대 절에는 별의 양 · **부드러움 = 60/30/20fps 칩**(실측 뒤 칩마다 `+n%`, ★ = 예산 안 추천, 강조 = 지금) · 「다시 측정」 · 대화 중 멈춤만 둔다 — 해상도는 100% 고정, 상태 문장·추천 문장·「추천 적용」은 없앴다. 검사 30 PASS(`verify:stage` 를 package.json 에 등록). 상세 = `docs\구현계획.md` v2.51·v2.51.1.
 - **창 없는 실행기**(v2.49, 2026-09-12 "보이는 건 Face뿐" 사용자 결정): 루트 `IRIS-Face.cmd` → `wscript.exe //nologo launch-hidden.vbs`(ASCII 전용, 창 스타일 0, 기다리지 않음) → `node launch.mjs`. 실행기 출력은 `state\launch.log`(1MB 넘으면 새로), 치명 실패(데몬이 안 뜸·실행기 크래시)는 `fatal()`이 PowerShell `-EncodedCommand`+환경변수로 알림창을 띄운다(한글 안전). `--console`은 옛날처럼 보이는 창. **원인이었던 무한 대기**: `teamclaude-dash\ensure-proxy.mjs`가 관리 스크립트 출력을 파이프로 받고 `'close'`를 기다렸는데, 스크립트가 띄운 프록시가 파이프 핸들을 상속해 쥐고 있어 스크립트가 끝나도 `'close'`가 오지 않았다(프록시가 꺼진 채 Face를 켠 9/11 20:51에만 발생) → 출력은 파일(`teamclaude-manage.last.log`), 대기는 `'exit'`. 데몬·Electron·프록시·대시보드는 모두 분리(detached)라 실행기 창을 닫아도 살아남는다(9/12 실험 실증). 검사 = `npm run verify:launcher`(가짜 node로 vbs 실제 실행, Face 무접촉). 상세 = `docs\구현계획.md` v2.49.
 
-<!-- 상위(루트/R07/D06) AGENTS.md 규칙 재서술 금지 -->
+<!-- 상위(루트/R07/D09) AGENTS.md 규칙 재서술 금지 -->
 
 <!-- self-improve:begin — 자기개선 플러그인이 자동으로 관리하는 구역입니다. 손으로 고치지 마세요. 규칙을 빼려면 에이전트에게 "규칙 R-001 빼"라고 말하세요. -->
 ## 자기개선 규칙 (자동 적용)
