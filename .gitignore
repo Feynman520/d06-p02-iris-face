@@ -14,3 +14,6 @@ docs/*
 !docs/각인-*.png
 !docs/readme-*.png
 !docs/모듈-계약-v1.md
+
+# 제작 작업공간(장부·지시문·보고) — 내부
+.superpowers/
