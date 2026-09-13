@@ -349,7 +349,9 @@ a { color: var(--iris); }
 .st-line .text-btn.accent:disabled { opacity: .5; cursor: progress; } /* 「다시 측정」 진행 중(v2.51) */
 .st-line .st-sub.st-ok { color: var(--ok); }
 #st-rec { flex-wrap: wrap; row-gap: 4px; }
-.st-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; } /* 프로필 칩(2026-09-13): 후보별 실측 부담, 직접 고르기 */
+.st-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; } /* fps 칩(2026-09-13): 후보별 실측 부담, 직접 고르기 */
+#st-fps { flex: 1 1 auto; min-width: 0; }
+#st-fps + .text-btn, #st-fps ~ .st-sub, .st-line > .st-sub:first-child { white-space: nowrap; flex: none; } /* "부드러움"·「다시 측정」이 두 줄로 꺾이지 않게 */
 .st-chip { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--base); color: var(--ink-2); font-size: 12px; }
 .st-chip:hover { background: var(--raised); color: var(--ink); }
 .st-chip.cur { border-color: var(--iris); color: var(--iris); background: var(--iris-soft); }
