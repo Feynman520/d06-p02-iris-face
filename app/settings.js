@@ -173,11 +173,16 @@ window.Settings = (() => {
     else if (!dev && upd?.headline?.version) { const h = upd.headline; btn.textContent = `업데이트 v${h.version}${h.more > 0 ? ` 외 ${h.more}개` : ''}`; btn.className = 'text-btn accent'; btn.disabled = false; btn.dataset.act = 'apply'; }
     else { btn.textContent = '지금 확인'; btn.className = 'text-btn outline'; btn.disabled = false; btn.dataset.act = 'check'; }
     if (!upd) { host.innerHTML = '<div class="upd-line st-sub">데몬에 연결되지 않아 판을 읽지 못했습니다.</div>'; return; }
+    // 부품별 실패 사유(데몬 lastResult.items — 한 부품이 걸려도 나머지는 계속 간다, v2.58.0 검토 2회차).
+    // 사유는 그 부품 행에만 붙인다. 릴리스가 준 글이라 HTML 로 넣지 않고 아래에서 textContent 로 채운다.
+    const failedBy = {};
+    for (const it of (upd.lastResult?.items || [])) if (it && it.ok === false && it.part) failedBy[it.part] = it.reason || '실패';
     const rows = Object.keys(UPD_PART).map((k) => {
       const [name, desc] = UPD_PART[k], ins = upd.installed?.[k], lat = upd.latest?.[k]?.version;
       const isNew = upd.available?.includes(k);
       const val = ins ? `v${esc(ins)}` : '미설치';
-      return `<div class="st-opt upd-row"><span class="st-opt-text">${esc(name)}<small>${esc(desc)}</small></span><span class="upd-ver">${val}${isNew ? ` <span class="upd-new">→ v${esc(lat)}</span>` : ''}</span></div>`;
+      const bad = failedBy[k] ? `<small class="upd-bad" data-part="${esc(k)}"></small>` : '';
+      return `<div class="st-opt upd-row"><span class="st-opt-text">${esc(name)}<small>${esc(desc)}</small>${bad}</span><span class="upd-ver">${val}${isNew ? ` <span class="upd-new">→ v${esc(lat)}</span>` : ''}</span></div>`;
     }).join('');
     const when = fmtWhen(upd.lastCheck);
     const lines = [
@@ -187,6 +192,7 @@ window.Settings = (() => {
       `<div class="upd-line st-sub">${when ? `마지막 확인 ${esc(when)}` : '아직 확인하지 않았습니다'}</div>`,
     ].join('');
     host.innerHTML = rows + lines;
+    for (const el of host.querySelectorAll('.upd-bad')) el.textContent = failedBy[el.dataset.part] || '';
     // 릴리스 노트 첫 5줄 — 텍스트만 넣는다(HTML 로 해석하지 않음)
     const h = upd.headline, notes = h && upd.latest?.[h.part]?.notes;
     if (notes) {
@@ -230,7 +236,8 @@ window.Settings = (() => {
       try { const res = await fetch('/api/update/apply', { method: 'POST' }); r = await res.json().catch(() => ({})); } catch (e) { r = { ok: false, reason: e.message }; }
       updBusy = false; if (r.info) upd = r.info; renderUpdate();
       if (!r.ok) { Dialog.alert(`업데이트 실패: ${r.reason || r.error || '알 수 없는 오류'}`); return; }
-      if (!upd?.plan) { Dialog.alert('최신 판으로 바꿨습니다. 세션은 그대로입니다.'); return; }
+      // 부품 하나가 걸려도 나머지는 끝까지 간다 — 성공했다고만 말하지 않고 실패한 부품의 사유를 함께 알린다.
+      if (!upd?.plan) { Dialog.alert(r.reason ? `일부만 바꿨습니다. 세션은 그대로입니다.\n\n실패: ${r.reason}` : '최신 판으로 바꿨습니다. 세션은 그대로입니다.'); return; }
       act = 'confirm-apply';
     }
     if (act === 'apply-now' || act === 'confirm-apply') {

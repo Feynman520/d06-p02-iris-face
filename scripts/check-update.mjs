@@ -131,6 +131,7 @@ const DL = 'https://github.com/x/y/releases/download/t/';
 const OBJ = 'https://objects.githubusercontent.com/blob/';
 let calls = [];
 let shaOverride = null;          // 검사에서 sha256 첨부 값을 일부러 틀리게
+let msgNoSha = false;            // 남의 저장소(메신저) 릴리스에 .sha256 곁첨부가 빠진 상황
 const asset = (name, size) => ({ name, size, browser_download_url: DL + name });
 const rel = (tag, names, body) => JSON.stringify({ tag_name: tag, published_at: '2026-09-14T00:00:00Z', body, assets: names });
 const BODY_FACE = '## v2.58.0\n- 설정에 업데이트 절\n- 하루 한 번 확인\n- 내려받기 검증\n- 적용기 인계\n- 여섯째 줄은 잘린다\n- 일곱째 줄';
@@ -138,7 +139,7 @@ const R = (status, body, headers = {}) => new Response(body, { status, headers }
 function fakeFetch(url, opts) {
   calls.push({ url, redirect: opts?.redirect });
   if (/d06-p02-iris-face\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-face--v2.58.0', [asset('iris-face-v2.58.0.zip', FACE_ZIP.length), asset('iris-face-v2.58.0.zip.sha256', 80)], BODY_FACE)));
-  if (/d06-p04-iris-messenger\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-messenger--v0.4.0', [asset('iris-messenger-v0.4.0.zip', MSG_ZIP.length), asset('iris-messenger-v0.4.0.zip.sha256', 80)], '메신저 새 판')));
+  if (/d06-p04-iris-messenger\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-messenger--v0.4.0', msgNoSha ? [asset('iris-messenger-v0.4.0.zip', MSG_ZIP.length)] : [asset('iris-messenger-v0.4.0.zip', MSG_ZIP.length), asset('iris-messenger-v0.4.0.zip.sha256', 80)], '메신저 새 판')));
   if (/d09-p03-iris-installer\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-installer--v1.3.0', [asset(PKG_ZIP_NAME, PKG_ZIP.length), asset(`${PKG_ZIP_NAME}.sha256`, 80), asset(`${PKG_ZIP_NAME}.sha256.sig`, 100)], '구조판 새 판')));
   const name = url.startsWith(DL) ? url.slice(DL.length) : url.startsWith(OBJ) ? url.slice(OBJ.length) : null;
   if (url.startsWith(DL)) return Promise.resolve(R(302, null, { location: OBJ + name }));   // 실제 GitHub 처럼 한 번 넘긴다
@@ -220,23 +221,67 @@ let up;
   ok(dev.downloadsDir().startsWith(path.resolve(tmp)) && !dev.downloadsDir().startsWith(path.resolve(root)), 'dev: 받는 자리는 state\\downloads(영혼 폴더를 건드리지 않음)');
 }
 
-// ---- 10) sha256 이 맞지 않으면 받은 폴더를 지우고 적용하지 않는다 ----
+// ---- 10) 부품 하나가 걸려도 그 부품에서 끝난다(검토 2회차) ----
 // 구조판은 이미 최신인 상황(창 + 메신저만 새 판)으로 바꿔 창 zip 을 실제로 받게 한다.
 writeReceipt({ ...receipt, package: { name: 'IRIS', version: '1.3.0' } });
+// 10ⓐ 창의 sha256 이 어긋남 → 창만 거부되고 메신저는 그대로 설치된다.
 {
   nowMs += 1000; shaOverride = 'b'.repeat(64);
+  broadcasts.length = 0;
   const bad = mkUpdater();
   await bad.check();
   ok(bad.info().applyParts.join(',') === 'face,messenger', '비교: 구조판이 최신이면 창·메신저만 받는다');
   const before = msgInstalls.length;
   const r = await bad.apply();
   shaOverride = null;
-  ok(r.ok === false && /sha256/.test(r.reason), '거부: sha256 불일치 → 실패 사유');
   const dir = path.join(root, '_agent', 'shared', 'downloads', `update-${stamp(nowMs)}`);
-  ok(!fs.existsSync(dir), '거부: 받은 폴더를 통째로 지운다');
-  ok(msgInstalls.length === before, '거부: 하나라도 실패하면 아무것도 설치하지 않는다');
-  ok(bad.info().lastResult.ok === false && bad.info().plan === null, '거부: lastResult 에 사유만 남고 plan 은 없다');
-  ok(broadcasts.some(b => b.phase === 'error'), '거부: 화면에 실패 방송');
+  ok(!fs.existsSync(path.join(dir, 'face')) && !fs.existsSync(path.join(dir, 'iris-face-v2.58.0.zip')), '따로 서기: 걸린 부품(창)이 받아 둔 것만 지운다');
+  ok(msgInstalls.length === before + 1, '따로 서기: 창이 걸려도 메신저는 끝까지 간다(예전에는 통째로 멈췄다)');
+  const res = bad.info().lastResult;
+  ok(res.ok === false && /sha256/.test(res.reason) && /IRIS 창/.test(res.reason), '따로 서기: 요약 한 줄에는 부품 이름표 + 사유');
+  const byPart = Object.fromEntries(res.items.map(i => [i.part, i]));
+  ok(res.items.length === 2 && byPart.face.ok === false && /sha256/.test(byPart.face.reason) && byPart.messenger.ok === true, '따로 서기: lastResult.items = 부품별 {part, ok, reason}');
+  ok(!/IRIS 창/.test(byPart.face.reason), '따로 서기: 부품 행에 붙일 사유에는 이름표를 겹쳐 적지 않는다');
+  ok(bad.info().plan === null && r.ok === true && /sha256/.test(r.reason), '따로 서기: 창이 빠졌으니 plan 은 없지만 메신저는 적용됐다(ok=true + 사유)');
+  ok(broadcasts.some(b => b.phase === 'ready'), '따로 서기: 하나라도 성공하면 화면에는 ready(실패 사유를 함께 실어)');
+  ok(fs.existsSync(dir), '따로 서기: 성공한 부품이 있으면 받은 폴더는 남긴다');
+}
+// 10ⓑ 부품이 전부 걸리면 예전과 똑같이 받은 폴더를 통째로 지우고 아무것도 적용하지 않는다.
+{
+  nowMs += 1000; shaOverride = 'b'.repeat(64);
+  broadcasts.length = 0;
+  const before = msgInstalls.length;
+  const bad = mkUpdater({ installMessenger: null });   // 메신저 설치 경로도 없다 → 두 부품 모두 실패
+  await bad.check();
+  const r = await bad.apply();
+  shaOverride = null;
+  const dir = path.join(root, '_agent', 'shared', 'downloads', `update-${stamp(nowMs)}`);
+  ok(r.ok === false && /sha256/.test(r.reason) && /메신저/.test(r.reason), '전부 실패: 사유를 부품마다 모아 한 줄로');
+  ok(!fs.existsSync(dir), '전부 실패: 받은 폴더를 통째로 지운다');
+  ok(msgInstalls.length === before, '전부 실패: 아무것도 설치하지 않는다');
+  ok(bad.info().lastResult.ok === false && bad.info().lastResult.items.every(i => i.ok === false) && bad.info().plan === null, '전부 실패: lastResult 는 전부 실패 · plan 없음');
+  ok(broadcasts.some(b => b.phase === 'error'), '전부 실패: 화면에 실패 방송');
+}
+// 10ⓒ 남의 저장소(메신저) 릴리스에 `.sha256` 첨부가 빠졌다 → 메신저만 실패하고 창은 그대로 plan.json 까지 간다.
+// 이것이 검토 2회차가 지적한 실제 상황이다: 고칠 수 없는 남의 릴리스 하나가 내 창 업데이트를 영영 막으면 안 된다.
+{
+  nowMs += 1000; msgNoSha = true;
+  broadcasts.length = 0;
+  const before = msgInstalls.length;
+  const part = mkUpdater();
+  await part.check();
+  ok(part.info().latest.messenger.sha256Url === null, '곁첨부 없음: 메신저 릴리스에 .sha256 첨부가 없다');
+  const r = await part.apply();
+  msgNoSha = false;
+  const dir = path.join(root, '_agent', 'shared', 'downloads', `update-${stamp(nowMs)}`);
+  const byPart = Object.fromEntries(part.info().lastResult.items.map(i => [i.part, i]));
+  ok(byPart.messenger.ok === false && /\.sha256/.test(byPart.messenger.reason), '곁첨부 없음: 메신저는 실패로 기록');
+  ok(msgInstalls.length === before, '곁첨부 없음: 검증하지 못한 메신저 zip 은 설치하지 않는다');
+  ok(byPart.face.ok === true && fs.existsSync(path.join(dir, 'face', 'package.json')), '곁첨부 없음: 창은 그대로 받아 풀린다');
+  const plan = JSON.parse(fs.readFileSync(path.join(dir, 'plan.json'), 'utf8'));
+  ok(plan.items.length === 1 && plan.items[0].kind === 'face' && plan.items[0].version === '2.58.0', '곁첨부 없음: 창의 plan.json 은 그대로 만들어진다(예전에는 이 한 건에 전부 막혔다)');
+  ok(r.ok === true && /메신저/.test(r.reason), '곁첨부 없음: 적용은 계속되고 실패 사유는 따로 전해진다');
+  ok(!fs.existsSync(path.join(dir, 'iris-messenger-v0.4.0.zip')), '곁첨부 없음: 걸린 메신저가 받아 둔 zip 만 지운다(창 것은 그대로)');
 }
 
 // ---- 11) 정상 적용 ⓐ 창 + 메신저: 받기 → 검증 → 메신저 설치 → face\ 풀기 → plan.json ----
@@ -244,13 +289,15 @@ let planFile = null;
 {
   nowMs += 1000;
   broadcasts.length = 0;
+  const msgBefore = msgInstalls.length;
   up = mkUpdater();
   await up.check();
   const r = await up.apply();
-  ok(r.ok === true, '적용: 받기·검증 통과');
+  ok(r.ok === true && !r.reason, '적용: 받기·검증 통과(실패 부품 없음)');
+  ok(up.info().lastResult.items.every(i => i.ok === true), '적용: lastResult.items 는 부품마다 ok');
   const dir = path.join(root, '_agent', 'shared', 'downloads', `update-${stamp(nowMs)}`);
   ok(fs.existsSync(dir), `적용: 받는 자리 = _agent\\shared\\downloads\\update-<시각> (${path.basename(dir)})`);
-  ok(msgInstalls.length === 1 && msgInstalls[0] === MSG_ZIP.length, '적용: 메신저는 그 자리에서 기존 설치 함수로(세션 무관)');
+  ok(msgInstalls.length === msgBefore + 1 && msgInstalls[msgBefore] === MSG_ZIP.length, '적용: 메신저는 그 자리에서 기존 설치 함수로(세션 무관)');
   ok(fs.existsSync(path.join(dir, 'face', 'package.json')) && fs.existsSync(path.join(dir, 'face', 'daemon', 'server.mjs')), '적용: 창 zip 을 face\\ 에 풀었다');
   planFile = path.join(dir, 'plan.json');
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
@@ -355,6 +402,7 @@ let planFile = null;
   ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(updCode), '화면: 업데이트 코드에 이모지 문자 0');
   ok(!/(^|[^.\w])alert\(/.test(updCode.replace(/Dialog\.alert\(/g, 'Dialog_alert(')), '화면: 알림·확인은 Dialog 만(네이티브 alert 금지)');
   ok(/el\.textContent = String\(notes\)/.test(js), '화면: 릴리스 노트는 textContent(HTML 로 넣지 않음)');
+  ok(/lastResult\?\.items/.test(updCode) && /el\.textContent = failedBy\[el\.dataset\.part\]/.test(updCode), '화면: 부품별 실패 사유는 lastResult.items 에서 읽어 그 행에 textContent 로 넣는다');
   ok(/iris\.update\.noticed/.test(js), '화면: 첫 실행 한 줄 고지는 localStorage 로 1회');
   ok(/sessionCount/.test(js) && /지금 적용/.test(js) && /나중에/.test(js), '화면: 확인 카드 = 세션 수 + [지금 적용] [나중에]');
   const main = fs.readFileSync('app/main.js', 'utf8');

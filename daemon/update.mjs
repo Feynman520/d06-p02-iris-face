@@ -299,7 +299,60 @@ export class Updater {
   }
 
   // ---- 적용(설계 3절) ----
-  /** 받기 + 검증 + (메신저는 바로 설치 / IRIS 창·구조판은 풀고 plan.json). 화면은 이 뒤에 확인 카드를 띄운다. */
+  /** 부품 하나를 받아 검증하고 (메신저는 바로 설치 / IRIS 창·구조판은 풀어 둔다).
+   *  실패는 throw 로 알린다 — 부르는 쪽(apply)이 **그 부품만** 접고 나머지는 계속한다.
+   *  이 부품이 만든 자리는 전부 `mine` 에 적어 둔다: 실패했을 때 지울 것이 자기 것뿐이어야 하기 때문이다. */
+  async applyPart(name, dir, index, count, mine) {
+    const info = this.state.latest?.[name];
+    if (!info?.url) throw new Error('내려받을 주소가 없습니다');
+    const lim = PART_LIMITS[name];
+    this.applying = { part: name, index, count, received: 0, total: info.size || 0 };
+    const file = path.join(dir, info.asset);
+    mine.push(file);
+    const got = await this.downloadTo(info.url, file, {
+      maxBytes: lim.maxBytes, expectSize: info.size,
+      onProgress: (received, total) => { this.applying = { part: name, index, count, received, total }; this.broadcast({ type: 'update', phase: 'download', part: name, received, total, index, count }); },
+    });
+    // ⓐ 릴리스 첨부 .sha256 과 대조(해시는 받으면서 흐름 중에 셌다)
+    if (!info.sha256Url) throw new Error('.sha256 첨부가 없습니다');
+    const shaText = await this.text(info.sha256Url);
+    if (name === 'package') {
+      // ⓑ 구조판: .sha256 텍스트가 zip 해시와 같고 그 텍스트가 공식 서명(.sha256.sig)돼야 한다 → zip 전체가 보호된다.
+      const v = verifySignedSha256(shaText, info.sigUrl ? await this.text(info.sigUrl) : '', got.sha256, { keys: this.keys });
+      if (!v.ok) throw new Error(v.reason);
+      this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
+      // ⓓ 경로 탈출·중복은 푸는 자리에서. 수백 MB 라 파일에서 항목 하나씩 읽어 푼다(통째로 메모리에 올리지 않음).
+      const out = path.join(dir, 'package'); mine.push(out);
+      extractZipFile(file, out, { limits: PART_LIMITS.package.zip });
+      return { item: { kind: 'package', dir: out, version: info.version }, version: info.version };
+    }
+    const want = parseSha256File(shaText);
+    if (!want) throw new Error('.sha256 첨부를 읽지 못했습니다');
+    if (want !== got.sha256) throw new Error('sha256 이 맞지 않습니다');
+    this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
+    const buf = fs.readFileSync(file);   // 메신저·IRIS 창 zip 은 수 MB
+    if (name === 'messenger') {
+      if (!this.installMessenger) throw new Error('메신저 설치 경로가 없습니다');
+      const r = await this.installMessenger(buf);
+      if (r.status !== 201) throw new Error(String(r.body?.error || r.status));
+      return { installed: { kind: 'messenger', version: info.version }, version: info.version };
+    }
+    // ⓒ IRIS 창: zip 안 manifest.json+manifest.sig 가 모든 파일을 덮으므로 그대로 둔다(모듈 zip 과 같은 규칙).
+    const v = verifyFaceZip(buf, { keys: this.keys });
+    if (!v.ok) throw new Error(v.reason);
+    const out = path.join(dir, 'face'); mine.push(out);
+    extractTo(buf, v.files, out);
+    return { item: { kind: 'face', dir: out, version: info.version }, version: info.version };
+  }
+
+  /** 받기 + 검증 + (메신저는 바로 설치 / IRIS 창·구조판은 풀고 plan.json). 화면은 이 뒤에 확인 카드를 띄운다.
+   *
+   *  **부품마다 따로 선다(2026-09-14 검토 2회차).** 예전에는 부품 하나가 걸리면 for 문 전체를 throw 로 빠져나와
+   *  받은 폴더를 통째로 지웠다 — 메신저 릴리스에 `.sha256` 첨부 하나가 빠진 것만으로 IRIS 창·구조판 업데이트가
+   *  영영 막혔고, 사용자는 고칠 방법이 없었다(남의 저장소라서). 지금은 부품 하나의 실패가 그 부품에서 끝난다:
+   *  실패한 부품이 받아 둔 것만 지우고, 사유를 `lastResult.items` 에 부품별로 적고, 다음 부품으로 넘어간다.
+   *  받은 폴더를 통째로 지우는 것은 **아무 부품도 성공하지 못했을 때**(따라서 plan.json 도 쓰지 않았을 때)뿐이다.
+   *  검증 자체는 조금도 느슨해지지 않는다 — 서명·해시가 어긋난 부품은 전과 똑같이 적용되지 않는다. */
   async apply() {
     if (this.applying) return { ok: false, reason: '이미 내려받는 중입니다.' };
     if (this.mode !== 'package') return { ok: false, reason: DEV_REASON };
@@ -309,72 +362,44 @@ export class Updater {
     if (!parts.length) return { ok: false, reason: '새 판이 없습니다.' };
     const dir = path.join(this.downloadsDir(), `update-${stamp(this.now())}`);
     fs.mkdirSync(dir, { recursive: true });
-    const items = [], installed = [];
+    const items = [], installed = [], results = [];
     this.applying = { part: parts[0], index: 1, count: parts.length, received: 0, total: 0 };
-    try {
-      for (let i = 0; i < parts.length; i++) {
-        const name = parts[i], info = this.state.latest?.[name];
-        if (!info?.url) throw new Error(`${PART_LABEL[name]}: 내려받을 주소가 없습니다`);
-        const lim = PART_LIMITS[name];
-        this.applying = { part: name, index: i + 1, count: parts.length, received: 0, total: info.size || 0 };
-        const file = path.join(dir, info.asset);
-        const got = await this.downloadTo(info.url, file, {
-          maxBytes: lim.maxBytes, expectSize: info.size,
-          onProgress: (received, total) => { this.applying = { part: name, index: i + 1, count: parts.length, received, total }; this.broadcast({ type: 'update', phase: 'download', part: name, received, total, index: i + 1, count: parts.length }); },
-        });
-        // ⓐ 릴리스 첨부 .sha256 과 대조(해시는 받으면서 흐름 중에 셌다)
-        if (!info.sha256Url) throw new Error(`${PART_LABEL[name]}: .sha256 첨부가 없습니다`);
-        const shaText = await this.text(info.sha256Url);
-        if (name === 'package') {
-          // ⓑ 구조판: .sha256 텍스트가 zip 해시와 같고 그 텍스트가 공식 서명(.sha256.sig)돼야 한다 → zip 전체가 보호된다.
-          const v = verifySignedSha256(shaText, info.sigUrl ? await this.text(info.sigUrl) : '', got.sha256, { keys: this.keys });
-          if (!v.ok) throw new Error(`패키지: ${v.reason}`);
-          this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
-          // ⓓ 경로 탈출·중복은 푸는 자리에서. 수백 MB 라 파일에서 항목 하나씩 읽어 푼다(통째로 메모리에 올리지 않음).
-          extractZipFile(file, path.join(dir, 'package'), { limits: PART_LIMITS.package.zip });
-          items.push({ kind: 'package', dir: path.join(dir, 'package'), version: info.version });
-        } else {
-          const want = parseSha256File(shaText);
-          if (!want) throw new Error(`${PART_LABEL[name]}: .sha256 첨부를 읽지 못했습니다`);
-          if (want !== got.sha256) throw new Error(`${PART_LABEL[name]}: sha256 이 맞지 않습니다`);
-          this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
-          const buf = fs.readFileSync(file);   // 메신저·IRIS 창 zip 은 수 MB
-          if (name === 'messenger') {
-            if (!this.installMessenger) throw new Error('메신저 설치 경로가 없습니다');
-            const r = await this.installMessenger(buf);
-            if (r.status !== 201) throw new Error(`메신저: ${r.body?.error || r.status}`);
-            installed.push({ kind: 'messenger', version: info.version });
-          } else {
-            // ⓒ IRIS 창: zip 안 manifest.json+manifest.sig 가 모든 파일을 덮으므로 그대로 둔다(모듈 zip 과 같은 규칙).
-            const v = verifyFaceZip(buf, { keys: this.keys });
-            if (!v.ok) throw new Error(`IRIS 창: ${v.reason}`);
-            extractTo(buf, v.files, path.join(dir, 'face'));
-            items.push({ kind: 'face', dir: path.join(dir, 'face'), version: info.version });
-          }
-        }
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i], mine = [];
+      try {
+        const r = await this.applyPart(name, dir, i + 1, parts.length, mine);
+        if (r.item) items.push(r.item);
+        if (r.installed) installed.push(r.installed);
+        results.push({ part: name, ok: true, version: r.version || null });
+      } catch (e) {
+        const reason = String(e?.message || e);
+        for (const p of mine) { try { fs.rmSync(p, { recursive: true, force: true }); } catch {} }
+        results.push({ part: name, ok: false, reason });
+        this.log(`update apply: ${name} failed — ${reason}`);
       }
-    } catch (e) {
-      this.applying = null;
-      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-      const reason = String(e.message || e);
-      this.state.lastResult = { ok: false, reason, at: new Date(this.now()).toISOString() };
-      this.persist(); this.log(`update apply failed: ${reason}`);
-      this.broadcast({ type: 'update', phase: 'error', reason, info: this.info() });
-      return { ok: false, reason };
     }
     this.applying = null;
-    let plan = null;
+    const failed = results.filter(r => !r.ok);
+    const at = new Date(this.now()).toISOString();
     if (items.length) {
       const file = path.join(dir, 'plan.json');
-      plan = { schema: 1, root: this.root, daemonPort: this.daemonPort, daemonPid: process.pid, createdAt: new Date(this.now()).toISOString(), items, relaunch: true };
+      const plan = { schema: 1, root: this.root, daemonPort: this.daemonPort, daemonPid: process.pid, createdAt: at, items, relaunch: true };
       writeJsonAtomic(file, plan);
       this.state.plan = { file, dir, items, createdAt: plan.createdAt };
     } else this.state.plan = null;
-    this.state.lastResult = { ok: true, at: new Date(this.now()).toISOString(), installed, planned: items.map(i => ({ kind: i.kind, version: i.version })) };
+    // 성공한 것이 하나도 없으면 받은 폴더는 남길 이유가 없다(계획도 쓰지 않았다).
+    if (!items.length && !installed.length) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+    // 부품 이름표는 요약 한 줄에만 붙인다 — 부품 행에는 이미 이름이 있으니 사유만 적는다.
+    const reason = failed.length ? failed.map(f => `${PART_LABEL[f.part]}: ${f.reason}`).join(' · ') : null;
+    const planned = items.map(i => ({ kind: i.kind, version: i.version }));
+    this.state.lastResult = { ok: failed.length === 0, at, items: results, installed, planned, ...(reason ? { reason } : {}) };
     this.persist();
-    this.log(`update downloaded: installed=[${installed.map(i => i.kind).join(',')}] planned=[${items.map(i => i.kind).join(',')}] dir=${dir}`);
-    this.broadcast({ type: 'update', phase: 'ready', info: this.info() });
-    return { ok: true, installed, planned: items.map(i => ({ kind: i.kind, version: i.version })), plan: this.state.plan };
+    this.log(`update downloaded: installed=[${installed.map(i => i.kind).join(',')}] planned=[${items.map(i => i.kind).join(',')}]${failed.length ? ` failed=[${failed.map(f => f.part).join(',')}]` : ''} dir=${dir}`);
+    // 여기서의 ok = "무언가 적용되었는가" — 하나라도 되었으면 화면은 확인 카드까지 가야 한다.
+    // 부품별 성패는 lastResult.items 가, 한 줄 요약은 lastResult.reason 이 들고 있다.
+    const ok = items.length > 0 || installed.length > 0;
+    this.broadcast({ type: 'update', phase: ok ? 'ready' : 'error', ...(reason ? { reason } : {}), info: this.info() });
+    return { ok, ...(reason ? { reason } : {}), items: results, installed, planned, plan: this.state.plan };
   }
 
   /** 동봉 Node(없으면 PATH 의 node)로 적용기를 분리 실행. 데몬은 응답 뒤 스스로 끝난다(서버가 shutdown). */
