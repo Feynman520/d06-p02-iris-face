@@ -16,7 +16,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const state = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-nomod-state-'));
 const mods = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-nomod-mods-'));
 
-const daemon = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore', env: { ...process.env, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0' } });
+const daemon = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore', // IRIS_FACE_UPDATE_CHECK=0: 업데이트 하루 1회 확인(v2.58)은 시작 30초 뒤라 이 검사 시간 안에 돌지 않지만, 무접촉 증명이 시간에 기대지 않게 아예 끈다.
+env: { ...process.env, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' } });
 const pid = daemon.pid;
 const api = async (p, init) => { const r = await fetch(`http://127.0.0.1:${PORT}${p}`, init); return { status: r.status, body: await r.json().catch(() => ({})) }; };
 let health = null;
@@ -25,6 +26,7 @@ ok(!!health && health.pid === pid, `daemon up on ${PORT} pid=${pid}`);
 // v2.56: features.modules 는 카탈로그(저장소 안 정적 파일)와 합친 화면용 목록이라 미설치 행이 들어 있다 — 설치된(installed:true) 행·panel 은 하나도 없어야 한다.
 const fm = health?.features?.modules;
 ok(Array.isArray(fm) && fm.every(m => m.installed === false && m.catalog === true && !m.panel && m.status === undefined), `features.modules = 카탈로그 미설치 행만(${Array.isArray(fm) ? fm.length : '?'}개, installed:false·panel 없음)`);
+ok(health?.features?.update?.mode === 'dev' && typeof health.features.update.enabled === 'boolean', `features.update = { mode, enabled } (v2.58, got ${health?.features?.update?.mode})`);
 const mlist = await api('/api/modules').catch(() => null);
 ok(mlist?.status === 200 && mlist.body.list.length === 0 && mlist.body.dir === mods, '/api/modules 빈 목록·폴더 = 시험 폴더');
 
