@@ -36,12 +36,30 @@ window.Settings = (() => {
   function applyName() { const n = (cfg.name || health?.rootName || 'IRIS').trim(); $('#wordmark').textContent = n; document.title = n; }
   function applyStage() { IrisStars.configure({ style: cfg.stage, density: cfg.density, pauseWhenDim: cfg.pauseWhenDim }); }
   // 자동 조절 표시(2026-09-12): 이 컴퓨터의 상한 밀도·지금 그리는 별 수·프레임 상한. 엔진이 'iris:stage' 이벤트로 바뀔 때마다 알린다.
+  // v2.51(2026-09-13): 프레임·해상도 프로필(실측)과 "이 컴퓨터 추천" 줄. 측정 중엔 진행을, 끝나면 프로필·지금 프레임·추천을 보인다.
+  const resName = (dprCap, s) => (dprCap >= 2 || (s.nativeDpr || 1) <= 1) ? '원본 해상도' : '해상도 100%';
   function renderCap(s) {
-    const el = $('#st-cap'); if (!el || !s) return;
-    const fps = s.fpsCap === 10 ? '창이 뒤에 있어 10fps' : s.slow ? '느린 컴퓨터라 30fps' : s.fpsCap === 30 ? '배터리라 30fps' : '60fps';
-    el.textContent = s.cap < s.density
-      ? `이 컴퓨터 상한 ${Math.round(s.cap * 100)}% · 지금 별 ${s.live}개 · ${fps}`
-      : `이 컴퓨터는 고른 양을 다 그릴 수 있어요 · 별 ${s.live}개 · ${fps}`;
+    const el = $('#st-cap'), btn = $('#st-remeasure'); if (!el || !s) return;
+    if (s.calib) { el.textContent = `이 컴퓨터에 맞춰 측정 중… ${s.calib.step}/${s.calib.total} (약 ${Math.max(3, (s.calib.total - s.calib.step) * 2.5) | 0}초 남음)`; btn.disabled = true; renderRec(s); return; }
+    btn.disabled = false;
+    const why = s.fpsCap === 10 ? '창이 뒤에 있어 10fps' : s.calib ? '' : (s.dim && !s.pauseWhenDim && s.fpsCap <= 20) ? '대화 중이라 20fps' : s.slow ? '느린 컴퓨터라 30fps' : (s.onBattery && s.fpsCap === 30) ? '배터리라 30fps' : `${s.fpsCap}fps`;
+    const capNote = s.cap < s.density ? ` (상한 ${Math.round(s.cap * 100)}%)` : '';
+    el.textContent = `이 컴퓨터: ${s.fps}fps · ${resName(s.dprCap, s)} · 별 ${s.live}개${capNote} · 지금 ${why}`;
+    renderRec(s);
+  }
+  function renderRec(s) {
+    const el = $('#st-rec'); if (!el) return;
+    const r = s.rec;
+    if (s.calib || !r) {
+      el.hidden = !!s.calib || s.precise; // 지표가 없는 환경(브라우저·창 재시작 전)만 안내
+      el.innerHTML = el.hidden ? '' : `<span class="st-sub">정밀 측정은 창을 다시 연 뒤 할 수 있어요 (트레이 → 창만 닫기 → IRIS-Face 다시 실행)</span>`;
+      return;
+    }
+    const parts = [`${r.fps}fps`, resName(r.dprCap, s), `별 ${Math.round(r.density * 100)}%`, r.pauseWhenDim ? '대화 중 멈춤' : '대화 중 계속'];
+    const cost = r.precise && r.chosenCost != null ? ` · 추가 부담 CPU ${r.chosenCost}%(예산 ${r.budget}%, 한 코어=100)` : r.precise ? '' : ' · 대략(정밀 측정 전)';
+    const same = Math.abs((cfg.density || 0) - r.density) < 0.05 && !!cfg.pauseWhenDim === !!r.pauseWhenDim;
+    el.hidden = false;
+    el.innerHTML = `<span class="st-sub">이 컴퓨터 추천: ${parts.join(' · ')}${cost}</span>` + (same ? `<span class="st-sub st-ok">✓ 추천대로예요</span>` : `<button id="st-rec-apply" class="text-btn accent" type="button" title="별의 양과 '대화를 보는 동안 멈춤'을 추천값으로 바꿉니다(프레임·해상도는 이미 적용됨)">추천 적용</button>`);
   }
   document.addEventListener('iris:stage', (e) => { if (open) renderCap(e.detail); });
   function applyAll() { applyTheme(); applyMark(); applyFont(); applyName(); applyStage(); }
@@ -170,7 +188,8 @@ window.Settings = (() => {
     $('#st-name-reset').onclick = () => pick({ name: '' });
     $('#st-density').addEventListener('input', (e) => { cfg.density = Number(e.target.value); $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%'; applyStage(); });
     $('#st-density').addEventListener('change', save);
-    $('#st-remeasure').addEventListener('click', () => { IrisStars.remeasure(); renderCap(IrisStars.status()); });
+    $('#st-remeasure').addEventListener('click', () => { IrisStars.calibrate().then((s) => { if (open) renderCap(s); }); renderCap(IrisStars.status()); });
+    $('#st-rec').addEventListener('click', (e) => { if (!e.target.closest('#st-rec-apply')) return; const r = IrisStars.status().rec; if (r) pick({ density: r.density, pauseWhenDim: !!r.pauseWhenDim }); });
     $('#st-pause').addEventListener('change', (e) => pick({ pauseWhenDim: e.target.checked }));
     $('#st-speed').addEventListener('input', (e) => { cfg.markSpeed = Number(e.target.value); $('#st-speed-v').textContent = cfg.markSpeed + '×'; applyMark(); });
     $('#st-speed').addEventListener('change', save);

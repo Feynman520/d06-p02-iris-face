@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('irisHost', {
   refocus: () => ipcRenderer.invoke('iris:refocus'),
   onEscape: (cb) => { ipcRenderer.on('iris:escape', () => { try { cb(); } catch {} }); },
   onAbout: (cb) => { ipcRenderer.on('iris:about', () => { try { cb(); } catch {} }); }, // 트레이 메뉴 "IRIS-Face 정보…" → 페이지의 정보 대화상자(2026-09-10 각인)
+  // 무대 실측(2026-09-13, v2.51): 앱의 프로세스별 CPU%(GPU 프로세스·렌더러) — 별 애니메이션의 진짜 비용은 GPU 합성이라 페이지 안에서는 잴 수 없다
+  metrics: () => ipcRenderer.invoke('iris:metrics'),
 });

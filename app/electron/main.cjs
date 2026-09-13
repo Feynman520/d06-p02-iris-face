@@ -92,6 +92,8 @@ function createWindow() {
 function showWindow() { if (!win) createWindow(); win.show(); win.focus(); }
 // 사용자가 방금 이 창을 눌렀을 때만 페이지가 부르므로, 앞창 자리를 되찾는(steal) 것이 곧 사용자의 뜻이다(윈도의 앞창 잠금 우회).
 ipcMain.handle('iris:refocus', () => { if (!win || win.isDestroyed()) return false; try { win.show(); win.focus(); app.focus({ steal: true }); win.webContents.focus(); } catch {} return true; });
+// 무대 실측(2026-09-13, v2.51): 프로세스별 CPU%(한 코어 = 100, 지난 호출 이후 평균; 첫 호출은 0) — 페이지의 stars.js calibrate() 가 GPU 프로세스+렌더러의 추가 부담을 잰다
+ipcMain.handle('iris:metrics', () => { try { return app.getAppMetrics().map(m => ({ type: m.type, pid: m.pid, cpu: m.cpu?.percentCPUUsage ?? 0 })); } catch { return []; } });
 
 function buildTrayMenu() {
   const n = lastHealth ? lastHealth.sessions : '?';

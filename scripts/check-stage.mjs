@@ -26,6 +26,12 @@ ok('static: pauseWhenDim 기본 켬', /pauseWhenDim:\s*true/.test(settings.split
 ok('static: stars.js API status/remeasure/simulate', ['status:', 'remeasure:', 'simulate:'].every(k => stars.includes(k)));
 ok('static: index.html st-cap/st-remeasure', html.includes('id="st-cap"') && html.includes('id="st-remeasure"'));
 ok('static: 반딧불 격자', stars.includes('grid = new Map()'));
+// v2.51(2026-09-13): 프레임·해상도 프로필 실측(calibrate) + 테두리 「다시 측정」 + 추천 줄 + Electron 지표 통로 + 빛무리 원 채우기
+const preload = fs.readFileSync(path.join(ROOT, 'app/electron/preload.cjs'), 'utf8'), main = fs.readFileSync(path.join(ROOT, 'app/electron/main.cjs'), 'utf8');
+ok('static: stars.js calibrate/profile', ['calibrate', 'PROFILES', 'dprCap', 'DIM_FPS'].every(k => stars.includes(k)));
+ok('static: 빛무리는 1.3R 원만 채운다(fillRect 전체 채우기 없음)', /function glow[\s\S]*?ctx\.arc\(cx, cy, R \* 1\.3/.test(stars) && !/function glow[\s\S]*?fillRect\(0, 0, W, H\)/.test(stars.split('function frame')[0]));
+ok('static: 「다시 측정」 테두리 버튼(accent) + 추천 줄 st-rec', /id="st-remeasure" class="text-btn accent"/.test(html) && html.includes('id="st-rec"'));
+ok('static: preload metrics/gpu · main iris:metrics', preload.includes("invoke('iris:metrics')") && main.includes("ipcMain.handle('iris:metrics'") && main.includes('getAppMetrics'));
 
 // ---- 동적 ----
 function findPlaywright() {
@@ -41,7 +47,7 @@ else {
   const page = `<!doctype html><html><body style="margin:0;background:#000"><canvas id="c" style="width:1600px;height:900px;display:block"></canvas>
 <script>window.__frames=0; const _raf=window.requestAnimationFrame.bind(window); window.requestAnimationFrame=(cb)=>_raf((ts)=>{window.__frames++;cb(ts);});</script>
 <script>${stars}</script>
-<script>IrisStars.mount(document.getElementById('c'));</script></body></html>`;
+<script>IrisStars.mount(document.getElementById('c'), { autoCalibrate: false });</script></body></html>`;
   const b = await chromium.launch({ headless: true });
   const pg = await b.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 });
   const errors = []; pg.on('pageerror', (e) => errors.push(String(e)));
@@ -56,7 +62,7 @@ else {
   // 2) 부분집합(상한 0.8, 밀도 1.6 → live = total × 0.5, 별 배열 유지)
   await pg.evaluate(() => { localStorage.setItem('iris.stage.cap', JSON.stringify({ cap: 0.8 })); });
   await pg.evaluate((src) => { document.getElementById('c').remove(); const c = document.createElement('canvas'); c.id = 'c'; c.style.cssText = 'width:1600px;height:900px;display:block'; document.body.appendChild(c); }, '');
-  await pg.evaluate(() => { IrisStars.mount(document.getElementById('c')); IrisStars.configure({ style: 'sphere', density: 1.6, gov: { windowMs: 60000, upAfterMs: 60000 } }); });
+  await pg.evaluate(() => { IrisStars.mount(document.getElementById('c'), { autoCalibrate: false }); IrisStars.configure({ style: 'sphere', density: 1.6, gov: { windowMs: 60000, upAfterMs: 60000 } }); });
   await wait(300);
   let s = await st();
   ok('dynamic: 저장된 상한 0.8 로드', s.cap === 0.8, JSON.stringify(s));
@@ -71,7 +77,7 @@ else {
   ok('dynamic: 계속 느림 → 별 ≤50% + 30fps(slow)', s.cap <= 0.5 && s.slow && s.fpsCap === 30, JSON.stringify(s));
   // 4) 느림 해제 → 상승. 낮은 상한(0.3)이 저장된 컴퓨터를 재현(다시 mount)하고, 가벼운 밀도·짧은 대기에서 상한이 오르는지 본다
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
-  await pg.evaluate(() => { localStorage.setItem('iris.stage.cap', JSON.stringify({ cap: 0.3 })); document.getElementById('c').remove(); const c = document.createElement('canvas'); c.id = 'c'; c.style.cssText = 'width:1600px;height:900px;display:block'; document.body.appendChild(c); IrisStars.mount(c); IrisStars.configure({ style: 'drift', density: 0.4, gov: { windowMs: 400, upAfterMs: 1200, budgetMs: 40 } }); });
+  await pg.evaluate(() => { localStorage.setItem('iris.stage.cap', JSON.stringify({ cap: 0.3 })); document.getElementById('c').remove(); const c = document.createElement('canvas'); c.id = 'c'; c.style.cssText = 'width:1600px;height:900px;display:block'; document.body.appendChild(c); IrisStars.mount(c, { autoCalibrate: false }); IrisStars.configure({ style: 'drift', density: 0.4, gov: { windowMs: 400, upAfterMs: 1200, budgetMs: 40 } }); });
   await wait(300); const before = (await st()).cap;
   await wait(3500); s = await st();
   ok('dynamic: 여유 → 상한 상승', before === 0.3 && s.cap > before, `${before} → ${s.cap}`);
@@ -82,6 +88,38 @@ else {
   // 6) 저장
   const saved = await pg.evaluate(() => JSON.parse(localStorage.getItem('iris.stage.cap') || 'null'));
   ok('dynamic: 상한 localStorage 저장', saved && typeof saved.cap === 'number', JSON.stringify(saved));
+  // 7) v2.51 프로필: 기본 해상도 상한 1(150% 배율에서도 캔버스는 100% 화소) · 어두움 20fps · 수동 프로필
+  const pg2 = await b.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1.5 });
+  pg2.on('pageerror', (e) => errors.push(String(e)));
+  await pg2.route('http://iris-stage.test/**', (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: page.replace("IrisStars.mount(document.getElementById('c'), { autoCalibrate: false })", "IrisStars.mount(document.getElementById('c'), { autoCalibrate: false }); IrisStars.simulate({ focused: true })") }));
+  await pg2.goto('http://iris-stage.test/'); await pg2.waitForTimeout(300);
+  const st2 = () => pg2.evaluate(() => IrisStars.status());
+  let s2 = await st2(); const cw = await pg2.evaluate(() => [document.getElementById('c').width, document.getElementById('c').clientWidth]);
+  ok('dynamic: 기본 dprCap 1 → 배율 1.5 에서도 캔버스 화소 = CSS 폭', s2.dprCap === 1 && s2.dpr === 1 && cw[0] === cw[1], JSON.stringify({ s: s2.dprCap, dpr: s2.dpr, cw }));
+  await pg2.evaluate(() => { IrisStars.configure({ pauseWhenDim: false }); IrisStars.setDim(true); }); s2 = await st2();
+  ok('dynamic: 대화 화면(어두움)·멈춤 끔 → 20fps', s2.fpsCap === 20, String(s2.fpsCap));
+  await pg2.evaluate(() => IrisStars.setDim(false)); s2 = await st2();
+  ok('dynamic: 밝아짐 → 60fps', s2.fpsCap === 60, String(s2.fpsCap));
+  await pg2.evaluate(() => IrisStars.configure({ profile: { fps: 30, dprCap: 2 } })); s2 = await st2();
+  const cw2 = await pg2.evaluate(() => [document.getElementById('c').width, document.getElementById('c').clientWidth]);
+  ok('dynamic: 수동 프로필 30fps·원본 해상도 → 30fps, 캔버스 1.5배', s2.fpsCap === 30 && s2.fps === 30 && s2.dpr === 1.5 && cw2[0] === Math.floor(cw2[1] * 1.5), JSON.stringify({ s2, cw2 }));
+  // 8) calibrate(): 가짜 irisHost.metrics — 비용이 후보 프로필에 따라 다르고(60/2=70 … 20/1=12), 안 그릴 때(기준선) 30. 예산 15 → 20fps·100% 가 답, 예산 45 → 60fps·100%
+  await pg2.evaluate(() => {
+    const table = { '60/2': 70, '60/1': 40, '30/2': 35, '30/1': 20, '20/1': 12 };
+    window.irisHost = { metrics: async () => { const s = IrisStars.status(); const drawing = s.calib && s.calib.step > 0; const cost = drawing ? table[`${s.fps}/${s.dprCap}`] : 0; return [{ type: 'Browser', cpu: 5 }, { type: 'GPU', cpu: 30 + cost * 0.7 }, { type: 'Tab', cpu: cost * 0.3 }]; } };
+    IrisStars.remeasure(); IrisStars.configure({ gov: { calibWindowMs: 120, calibSettleMs: 30, calibBudget: 15 } });
+  });
+  let seenCalib = false; await pg2.exposeFunction('__calibSeen', () => { seenCalib = true; });
+  await pg2.evaluate(() => document.addEventListener('iris:stage', (e) => { if (e.detail.calib) window.__calibSeen(); }));
+  s2 = await pg2.evaluate(() => IrisStars.calibrate());
+  ok('dynamic: calibrate(예산 15) → 20fps·100%·후보 5개 측정·측정 중 이벤트', s2.fps === 20 && s2.dprCap === 1 && s2.rec && s2.rec.costs.length === 5 && s2.rec.precise && s2.rec.pauseWhenDim === true && s2.calib === null && seenCalib, JSON.stringify(s2.rec));
+  const saved2 = await pg2.evaluate(() => JSON.parse(localStorage.getItem('iris.stage.cap') || 'null'));
+  ok('dynamic: 프로필·추천이 localStorage 에 저장', saved2 && saved2.fps === 20 && saved2.dprCap === 1 && saved2.rec && saved2.rec.fps === 20, JSON.stringify(saved2));
+  await pg2.evaluate(() => IrisStars.configure({ gov: { calibBudget: 45 } })); s2 = await pg2.evaluate(() => IrisStars.calibrate());
+  ok('dynamic: calibrate(예산 45) → 60fps·100%(첫 통과 후보에서 멈춤)', s2.fps === 60 && s2.dprCap === 1 && s2.rec.costs.length === 2 && s2.rec.pauseWhenDim === false, JSON.stringify(s2.rec));
+  // 9) 지표 없는 환경(브라우저·창 재시작 전) → 보수적 30fps·100% + 대략 추천(precise=false)
+  await pg2.evaluate(() => { delete window.irisHost; IrisStars.remeasure(); }); s2 = await pg2.evaluate(() => IrisStars.calibrate());
+  ok('dynamic: 지표 없음 → 30fps·100%·precise=false', s2.fps === 30 && s2.dprCap === 1 && s2.rec && s2.rec.precise === false && s2.precise === false, JSON.stringify({ fps: s2.fps, rec: s2.rec }));
   ok('dynamic: 검사 중 예외 없음', errors.length === 0, errors[0]);
   await b.close();
   done();

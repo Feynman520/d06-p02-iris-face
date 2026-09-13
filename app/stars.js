@@ -11,7 +11,12 @@
    - 컴퓨터별 상한 밀도(cap): 매 프레임 그리기에 걸린 시간을 재서 예산(60fps 기준 4ms)을 넘으면 0.1씩 내리고, 20초 넉넉하면 0.1씩 올린다. 실제 별 수 = min(사용자 밀도, cap).
      별 배열은 사용자 밀도로 만들어 섞어 두고 앞에서 live개만 그린다 → cap이 바뀌어도 별 자리가 통째로 다시 뽑히지 않는다. cap은 localStorage에 기억(컴퓨터마다 다름).
    - 프레임 상한(fpsCap): 창이 포커스를 잃으면 10fps, 배터리로 돌면 30fps, 평소 60fps. 상한 아래 프레임은 그리지 않고 건너뛴다.
-   - 안 보이면 쉬기: 창 숨김(기존) + 대화 화면이 열려 어두워진 뒤(pauseWhenDim, 기본 켬) 정지. 미리보기 엔진(interactive=false)은 조절하지 않는다. */
+   - 안 보이면 쉬기: 창 숨김(기존) + 대화 화면이 열려 어두워진 뒤(pauseWhenDim, 기본 켬) 정지. 미리보기 엔진(interactive=false)은 조절하지 않는다.
+   프레임·해상도 프로필(2026-09-13, v2.51 — 실측: 비용의 대부분은 JS 그리기 시간이 아니라 GPU 합성 = 캔버스 화소 수 × 초당 프레임):
+   - profile.fps(60·30·20) = 이 컴퓨터의 평소 프레임 상한, profile.dprCap = 캔버스 해상도 상한(1 = 화면 배율이 150%여도 캔버스는 100% 화소, 기본값).
+   - calibrate(): Electron 메인의 프로세스 지표(irisHost.metrics → app.getAppMetrics: GPU 프로세스·렌더러 CPU%)로 "안 그릴 때" 기준선을 재고
+     후보 프로필(좋은 순)을 2초씩 돌려 추가 부담이 예산(한 코어의 15%) 안에 드는 첫 프로필을 고른다. 결과·추천(별 양·대화 중 멈춤)은 cap 기록에 함께 저장.
+   - 대화 화면(어두움)에서 멈추지 않기로 했으면 20fps(알파 28%의 별은 20fps 로도 매끈). 중심 빛무리(glow)는 1.3R 원만 채운다(밖은 알파 0 — 그림 같고 화소 1/8). */
 // makeEngine(): 캔버스 하나를 맡는 독립 엔진. 무대용 1개 + 설정 패널 미리보기용 여러 개.
 function makeStarEngine() {
   let canvas, ctx, W, H, dpr = 1, raf = 0, pts = [], all = [], t0 = 0, mouse = { x: 0.5, y: 0.5 }, energy = 0, targetEnergy = 0, dim = 0, targetDim = 0, ro = null, interactive = true, onMove = null, onVis = null, onFocus = null, onBlur = null, battery = null, onCharge = null;
@@ -19,17 +24,37 @@ function makeStarEngine() {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // ---- 자동 조절 상태 ----
   const CAP_KEY = 'iris.stage.cap', CAP_MIN = 0.3, CAP_MAX = 1.6;
-  let gov = { budgetMs: 4, windowMs: 2000, upAfterMs: 20000, dropRatio: 0.15 }, govern = false, cap = CAP_MAX, slow = false, fpsCap = 60, focused = true, onBattery = false;
+  let gov = { budgetMs: 4, windowMs: 2000, upAfterMs: 20000, dropRatio: 0.15, calibBudget: 15, calibWindowMs: 2000, calibSettleMs: 400 }, govern = false, cap = CAP_MAX, slow = false, fpsCap = 60, focused = true, onBattery = false;
   let acc = { t: 0, n: 0, drops: 0, at: 0 }, lastNow = 0, lastDraw = 0, goodSince = 0, lastCost = 0, lastFps = 0;
   const r1 = (v) => Math.round(v * 10) / 10;
   const SLOW_AT = 0.5; // 별을 이만큼까지 줄여도 무거우면 그다음 수단은 30fps(slow), 그래도 무거우면 별을 더 줄인다(CAP_MIN까지). 올라갈 땐 반대 순서.
-  function loadCap() { try { const s = JSON.parse(localStorage.getItem(CAP_KEY) || 'null'); if (s && s.cap >= CAP_MIN && s.cap <= CAP_MAX) { cap = s.cap; slow = !!s.slow; } } catch {} }
-  function saveCap() { try { localStorage.setItem(CAP_KEY, JSON.stringify({ cap, slow, at: new Date().toISOString() })); } catch {} }
+  // ---- 프레임·해상도 프로필(v2.51) ----
+  const DIM_FPS = 20, PROFILES = [{ fps: 60, dprCap: 2 }, { fps: 60, dprCap: 1 }, { fps: 30, dprCap: 2 }, { fps: 30, dprCap: 1 }, { fps: 20, dprCap: 1 }]; // 좋은 순. dprCap 2 = 원본 해상도(최대 2배)
+  let profile = { fps: 60, dprCap: 1 }, rec = null, calib = null; // calib = 측정 중 {step,total,hold,fps}
+  const nativeDpr = () => Math.min(2, window.devicePixelRatio || 1);
+  const metricsApi = () => (typeof window.irisHost?.metrics === 'function' ? window.irisHost.metrics : null);
+  function loadCap() {
+    try {
+      const s = JSON.parse(localStorage.getItem(CAP_KEY) || 'null'); if (!s) return;
+      if (s.cap >= CAP_MIN && s.cap <= CAP_MAX) { cap = s.cap; slow = !!s.slow; }
+      if ([60, 30, 20].includes(s.fps)) profile = { fps: s.fps, dprCap: s.dprCap === 2 ? 2 : 1 };
+      if (s.rec && typeof s.rec === 'object') rec = s.rec;
+    } catch {}
+  }
+  function saveCap() { try { localStorage.setItem(CAP_KEY, JSON.stringify({ cap, slow, fps: profile.fps, dprCap: profile.dprCap, rec, at: new Date().toISOString() })); } catch {} }
   const liveCount = () => govern ? Math.round(all.length * Math.min(1, cap / density)) : all.length;
   function applyLive() { const n = liveCount(); if (pts.length !== n || pts[0] !== all[0]) pts = all.slice(0, n); }
-  function status() { return { cap, slow, density, live: pts.length, total: all.length, fpsCap, focused, onBattery, lastCost: r1(lastCost), lastFps: Math.round(lastFps), govern }; }
+  function status() {
+    return { cap, slow, density, live: pts.length, total: all.length, fpsCap, focused, onBattery, lastCost: r1(lastCost), lastFps: Math.round(lastFps), govern,
+      fps: profile.fps, dprCap: profile.dprCap, dpr, nativeDpr: nativeDpr(), rec, calib: calib ? { step: calib.step, total: calib.total } : null, precise: !!metricsApi(), pauseWhenDim, dim: !!targetDim };
+  }
   function emit() { if (govern) try { document.dispatchEvent(new CustomEvent('iris:stage', { detail: status() })); } catch {} }
-  function updateFps() { const v = !focused ? 10 : (onBattery || slow) ? 30 : 60; if (v !== fpsCap) { fpsCap = v; acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; emit(); } }
+  function updateFps() {
+    let v = !focused ? 10 : Math.min(profile.fps, (onBattery || slow) ? 30 : 60);
+    if (calib) v = calib.fps; // 측정 중엔 후보 프로필의 프레임을 그대로(포커스·어두움 무시)
+    else if (focused && targetDim && !pauseWhenDim) v = Math.min(v, DIM_FPS); // 대화 화면에서 계속 돌리기로 했으면 느리게
+    if (v !== fpsCap) { fpsCap = v; acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; emit(); }
+  }
   // 한 단계 내림: cap을 0.1씩(사용자 밀도 아래부터) → SLOW_AT에 닿으면 30fps → 그다음 CAP_MIN까지. 바뀐 게 있으면 true.
   function stepDown() {
     const eff = Math.min(cap, density);
@@ -150,7 +175,7 @@ function makeStarEngine() {
     pts = []; applyLive();
   }
   function resize() {
-    dpr = Math.min(2, window.devicePixelRatio || 1);
+    dpr = govern ? Math.min(nativeDpr(), profile.dprCap) : nativeDpr(); // 무대 캔버스는 프로필의 해상도 상한을 따른다(미리보기는 원본)
     W = canvas.clientWidth; H = canvas.clientHeight;
     canvas.width = Math.floor(W * dpr); canvas.height = Math.floor(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -159,7 +184,7 @@ function makeStarEngine() {
   function glow(cx, cy, R, k) {
     const g = ctx.createRadialGradient(cx, cy, R * 0.1, cx, cy, R * 1.3);
     g.addColorStop(0, `rgba(${colors.glow},${0.09 * k})`); g.addColorStop(0.6, `rgba(${colors.glow},${0.03 * k})`); g.addColorStop(1, `rgba(${colors.glow},0)`);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R * 1.3, 0, 6.283); ctx.fill(); // 1.3R 밖은 알파 0 — 전체 fillRect 와 같은 그림을 화소 1/8로(2026-09-13)
   }
   function frame(now) {
     if (fpsCap < 60 && now - lastDraw < 1000 / fpsCap - 2) { raf = requestAnimationFrame(frame); return; } // 프레임 상한: 아직 차례가 아니면 건너뜀(그리기 0)
@@ -304,10 +329,42 @@ function makeStarEngine() {
       }
     }
     govSample(performance.now() - t1, now);
-    if (reduce || (pauseWhenDim && targetDim && dim > 0.98)) { raf = 0; return; }
+    if (reduce || (pauseWhenDim && targetDim && dim > 0.98 && !calib)) { raf = 0; return; }
     raf = requestAnimationFrame(frame);
   }
-  const kick = () => { if (!raf && !document.hidden) raf = requestAnimationFrame(frame); };
+  const kick = () => { if (!raf && !document.hidden && !calib?.hold) raf = requestAnimationFrame(frame); };
+  function applyProfile(p) { profile = { fps: p.fps, dprCap: p.dprCap }; resize(); updateFps(); kick(); }
+  /** 이 컴퓨터에 맞는 프레임·해상도 프로필을 실측으로 고른다(설정 「다시 측정」·첫 실행). 약 3~15초. 지표가 없으면(브라우저·창 재시작 전) 보수적 기본값. */
+  async function calibrate() {
+    if (calib || !govern || reduce || document.hidden) return status();
+    const m = metricsApi(), nat = nativeDpr();
+    const cands = PROFILES.map(p => ({ fps: p.fps, dprCap: Math.min(p.dprCap, nat) > 1 ? 2 : 1 })).filter((p, i, a) => a.findIndex(q => q.fps === p.fps && q.dprCap === p.dprCap) === i);
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const at = new Date().toISOString();
+    if (!m) { // 정밀 지표 없음 → 보수적 프로필(30fps·100%)과 대략 추천
+      applyProfile({ fps: 30, dprCap: 1 }); cap = CAP_MAX; slow = false;
+      rec = { fps: 30, dprCap: 1, density: Math.min(density, 0.5), pauseWhenDim: true, costs: [], baseline: null, budget: gov.calibBudget, precise: false, at };
+      saveCap(); emit(); return status();
+    }
+    const read = async () => { let s = 0; for (const x of await m()) if (x.type === 'GPU' || x.type === 'Tab') s += Number(x.cpu) || 0; return s; };
+    const prev = { ...profile }, costs = []; let baseline = 0, chosen = null;
+    calib = { step: 0, total: cands.length + 1, hold: true, fps: fpsCap }; cancelAnimationFrame(raf); raf = 0; emit();
+    try {
+      await m(); await sleep(gov.calibWindowMs); baseline = await read(); // 첫 호출은 0 → 한 번 비우고 "안 그릴 때"를 잰다
+      calib.hold = false;
+      for (const p of cands) {
+        calib.step++; calib.fps = p.fps; profile = { ...p }; resize(); updateFps(); emit(); kick();
+        await sleep(gov.calibSettleMs); await m(); await sleep(gov.calibWindowMs);
+        const c = Math.max(0, (await read()) - baseline); costs.push({ ...p, cost: Math.round(c) });
+        if (c <= gov.calibBudget) { chosen = p; break; } // 좋은 순이라 예산 안에 드는 첫 후보가 답
+      }
+    } catch { profile = prev; } finally { calib = null; }
+    if (!chosen) chosen = cands[cands.length - 1];
+    const last = costs[costs.length - 1], over = !costs.some(c => c.cost <= gov.calibBudget);
+    rec = { fps: chosen.fps, dprCap: chosen.dprCap, density: r1(Math.min(density, cap, over ? CAP_MIN : 1.6)), pauseWhenDim: chosen.fps < 60 || over, costs, baseline: Math.round(baseline), budget: gov.calibBudget, precise: true, at, chosenCost: last ? last.cost : null };
+    applyProfile(chosen); saveCap(); emit();
+    return status();
+  }
   function mount(el, opts = {}) {
     canvas = el; ctx = canvas.getContext('2d', { alpha: true }); interactive = opts.interactive !== false; govern = opts.govern ?? interactive;
     if (govern) loadCap();
@@ -319,6 +376,10 @@ function makeStarEngine() {
       onFocus = () => { focused = true; updateFps(); kick(); }; onBlur = () => { focused = false; updateFps(); }; window.addEventListener('focus', onFocus); window.addEventListener('blur', onBlur);
       try { navigator.getBattery?.().then((b) => { battery = b; onCharge = () => { onBattery = !b.charging; updateFps(); }; b.addEventListener('chargingchange', onCharge); onCharge(); }).catch(() => {}); } catch {}
       updateFps();
+      // 첫 실행(저장된 프로필 없음): 창이 보이고 앞에 있으면 3초 뒤 한 번 실측해 이 컴퓨터의 프로필을 정한다(지표 없으면 보수적 기본값)
+      // 대략 추천만 있는 상태(precise=false)에서 지표가 생기면(창 재시작 뒤) 한 번 정밀하게 다시 잰다.
+      const needs = () => !rec || (!rec.precise && !!metricsApi());
+      if (needs() && opts.autoCalibrate !== false) setTimeout(() => { if (needs() && focused && !document.hidden) calibrate(); }, 3000);
     }
     kick();
   }
@@ -330,22 +391,25 @@ function makeStarEngine() {
   function configure(o = {}) {
     if (o.style && o.style !== style) { style = o.style; make(); t0 = 0; }
     if (o.density && o.density !== density) { density = o.density; make(); }
-    if (typeof o.pauseWhenDim === 'boolean') pauseWhenDim = o.pauseWhenDim;
+    if (typeof o.pauseWhenDim === 'boolean') { pauseWhenDim = o.pauseWhenDim; updateFps(); }
     if (o.colors) { colors = { ...colors, ...o.colors }; colCache.clear(); }
     if (o.gov) gov = { ...gov, ...o.gov }; // 검사용 조절 상수 덮어쓰기(창 길이·상승 대기 등)
+    if (o.profile && govern && !calib) applyProfile({ fps: [60, 30, 20].includes(o.profile.fps) ? o.profile.fps : profile.fps, dprCap: o.profile.dprCap === 2 ? 2 : 1 }); // 검사·수동 지정
     if (o.style || o.density) { acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; emit(); }
     kick();
   }
-  /** 상한을 지우고 처음부터 다시 잰다(설정 「다시 측정」). */
-  function remeasure() { cap = CAP_MAX; slow = false; try { localStorage.removeItem(CAP_KEY); } catch {} acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; applyLive(); updateFps(); emit(); kick(); }
+  /** 상한·프로필 기록을 지우고 처음부터 다시 잰다(검사용 — 설정의 「다시 측정」은 calibrate()). */
+  function remeasure() { cap = CAP_MAX; slow = false; rec = null; try { localStorage.removeItem(CAP_KEY); } catch {} acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; applyLive(); applyProfile({ fps: 60, dprCap: 1 }); emit(); }
   /** 검사·시뮬레이션용: 포커스·배터리 신호를 직접 넣는다. */
   function simulate(o = {}) { if (typeof o.focused === 'boolean') focused = o.focused; if (typeof o.onBattery === 'boolean') onBattery = o.onBattery; updateFps(); kick(); }
-  return { mount, destroy, configure, signature, status, remeasure, simulate, setEnergy: (v) => { targetEnergy = Math.max(0, Math.min(1, v)); kick(); }, setDim: (v) => { targetDim = v ? 1 : 0; kick(); } };
+  return { mount, destroy, configure, signature, status, remeasure, calibrate, simulate, setEnergy: (v) => { targetEnergy = Math.max(0, Math.min(1, v)); kick(); }, setDim: (v) => { targetDim = v ? 1 : 0; updateFps(); kick(); } };
 }
 window.IrisStars = (() => {
   const main = makeStarEngine();
   return {
-    mount: (el) => main.mount(el), configure: (o) => main.configure(o), setEnergy: (v) => main.setEnergy(v), setDim: (v) => main.setDim(v),
+    mount: (el, opts) => main.mount(el, opts), configure: (o) => main.configure(o), setEnergy: (v) => main.setEnergy(v), setDim: (v) => main.setDim(v),
+    /** 이 컴퓨터에 맞는 프레임·해상도 프로필 실측(설정 「다시 측정」). 진행은 'iris:stage' 이벤트의 calib 로, 결과는 status().rec 로. */
+    calibrate: () => main.calibrate(),
     /** 서명 이스터에그: 별들이 text 모양으로 모였다가 흩어진다. 못 하면 false(호출한 쪽이 글자로 대신). */
     signature: (text) => main.signature(text),
     /** 자동 조절 상태(상한 밀도·지금 별 수·프레임 상한·마지막 프레임 비용). 바뀔 때마다 document 'iris:stage' 이벤트로도 알린다. */

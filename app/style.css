@@ -346,6 +346,9 @@ a { color: var(--iris); }
 .st-line label { display: inline-flex; align-items: center; gap: 8px; }
 .st-line.indent { margin-left: 24px; margin-top: 2px; } /* 앞 항목에 딸린 옵션(알림 절 정리, 2026-09-11). `.sub`는 보조 서랍 클래스라 쓰지 않는다 */
 .st-line .st-sub { margin-left: 0; }
+.st-line .text-btn.accent:disabled { opacity: .5; cursor: progress; } /* 「다시 측정」 진행 중(v2.51) */
+.st-line .st-sub.st-ok { color: var(--ok); }
+#st-rec { flex-wrap: wrap; row-gap: 4px; }
 .st-h-row { display: flex; align-items: center; justify-content: space-between; }
 .st-h-row .text-btn { font-weight: 400; }
 .st-input { flex: 1; font: 14px var(--sans); color: var(--ink); background: var(--base); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 10px; outline: none; }
