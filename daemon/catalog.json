@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "name": "messenger",
+      "label": "IRIS Messenger",
+      "icon": "chat",
+      "desc": "Face 사용자끼리 초대 코드로 연결해 글과 파일을 종단 간 암호화로 주고받는 1:1 메신저",
+      "repo": "https://github.com/Feynman520/d06-p04-iris-messenger",
+      "release": {
+        "api": "https://api.github.com/repos/Feynman520/d06-p04-iris-messenger/releases/latest",
+        "asset": "^iris-messenger-v.*\\.zip$"
+      }
+    }
+  ]
+}

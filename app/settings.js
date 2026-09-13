@@ -108,29 +108,43 @@ window.Settings = (() => {
     renderMods();
   }
   // ---- 모듈(콘센트, 2026-09-11): 목록은 데몬 /api/modules. 이름·아이콘·설명은 전부 module.json 에서 온다(본체는 어떤 모듈인지 모른다). ----
+  // 목록 = 데몬 /api/catalog(공식 IRIS 모듈 카탈로그 + 설치 여부, v2.53). 행마다 설치됨/미설치 표와 그에 맞는 버튼(설치 / 재시작·제거).
   // 상태 → 낱말 + 점 색(ok 초록 · warn 노랑 · bad 빨강). 아이콘은 app/icons.js 이름(모르면 plug) — 모듈이 준 문자열을 HTML 에 넣지 않는다(v2.52).
   const MOD_STATUS = { running: ['실행 중', 'ok'], stopped: ['멈춤', 'warn'], failed: ['실패', 'bad'], incompatible: ['맞지 않음', 'bad'], 'grade-unsupported': ['동의 필요', 'warn'] };
+  const installing = new Set();
   async function renderMods() {
     const host = $('#st-mods'); if (!host) return;
     let list = [];
-    try { const r = await fetch('/api/modules'); list = (await r.json()).list || []; } catch { host.innerHTML = '<div class="mods-empty">데몬에 연결되지 않아 목록을 읽지 못했습니다.</div>'; return; }
-    if (!list.length) { host.innerHTML = '<div class="mods-empty">설치된 모듈이 없습니다. 모듈이 없으면 Face는 인터넷에 연결하지 않습니다.</div>'; return; }
+    try {
+      const r = await fetch('/api/catalog');
+      if (r.ok) list = (await r.json()).list || [];
+      else { const r2 = await fetch('/api/modules'); list = ((await r2.json()).list || []).map(m => ({ ...m, installed: true, catalog: false })); } // 카탈로그 라우트가 없는 옛 데몬(⏻ 재실행 전): 설치된 것만
+    } catch { host.innerHTML = '<div class="mods-empty">데몬에 연결되지 않아 목록을 읽지 못했습니다.</div>'; return; }
+    if (!list.length) { host.innerHTML = '<div class="mods-empty">모듈이 없습니다.</div>'; return; }
     host.innerHTML = list.map(m => {
-      const [word, tone] = MOD_STATUS[m.status] || [m.status, 'warn'];
-      return `<div class="mod-row" data-mod="${esc(m.name)}">
-        <span class="mod-ic">${Icons.svg(m.icon, 18)}</span>
-        <span class="mod-text"><b>${esc(m.label)}</b><small>v${esc(m.version)} · <span class="${m.official ? '' : 'mod-unofficial'}">${m.official ? '공식' : '비공식'}</span> · <i class="mod-dot ${tone}"></i>${esc(word)}${m.reason ? ' — ' + esc(m.reason) : ''}</small></span>
-        <span class="dash-actions"><button class="text-btn" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn danger" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button></span>
-      </div>`;
+      let meta, actions;
+      if (m.installed) {
+        const [word, tone] = MOD_STATUS[m.status] || [m.status, 'warn'];
+        meta = `<span class="mod-tag on">설치됨</span>v${esc(m.version)} · <span class="${m.official ? '' : 'mod-unofficial'}">${m.official ? '공식' : '비공식'}</span> · <i class="mod-dot ${tone}"></i>${esc(word)}${m.reason ? ' — ' + esc(m.reason) : ''}`;
+        actions = `<button class="text-btn" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn danger" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button>`;
+      } else {
+        const busy = installing.has(m.name);
+        meta = `<span class="mod-tag">미설치</span>${esc(m.desc)}`;
+        actions = `<button class="text-btn accent" data-act="install" ${busy ? 'disabled' : ''} title="최신 릴리스를 내려받아 서명을 확인한 뒤 설치합니다">${busy ? '설치 중…' : '설치'}</button>`;
+      }
+      return `<div class="mod-row" data-mod="${esc(m.name)}"><span class="mod-ic">${Icons.svg(m.icon, 18)}</span><span class="mod-text"><b>${esc(m.label)}</b><small>${meta}</small></span><span class="dash-actions">${actions}</span></div>`;
     }).join('');
   }
+  const ACT_WORD = { remove: '제거', restart: '재시작', install: '설치' };
   async function modAct(name, act) {
     if (act === 'remove' && !(await Dialog.confirm(`모듈 "${name}"을 제거할까요?\n그 모듈의 폴더와 안에 저장된 데이터(로그인·설정·기록)가 함께 지워집니다. 모듈이 백업 문구를 줬다면 적어 두셨는지 확인하세요.`))) return;
+    if (act === 'install') { if (installing.has(name)) return; installing.add(name); renderMods(); }
     try {
-      const r = await fetch(`/api/modules/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
+      const r = await fetch(act === 'install' ? `/api/catalog/${encodeURIComponent(name)}/install` : `/api/modules/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) Dialog.alert(`${act === 'remove' ? '제거' : '재시작'} 실패: ${d.error || r.status}`);
-    } catch (e) { Dialog.alert(`${act === 'remove' ? '제거' : '재시작'} 실패: ${e.message}`); }
+      if (!r.ok) Dialog.alert(`${ACT_WORD[act]} 실패: ${d.error || r.status}`);
+    } catch (e) { Dialog.alert(`${ACT_WORD[act]} 실패: ${e.message}`); }
+    installing.delete(name);
     renderMods();
   }
   async function installModule(file) {

@@ -404,6 +404,9 @@ a { color: var(--iris); }
 .mod-text b { font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mod-text small { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mod-unofficial { color: var(--warn); }
+.mod-tag { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; line-height: 15px; color: var(--ink-3); border: 1px solid var(--line-2); vertical-align: 1px; } /* 설치됨 / 미설치 (v2.53) */
+.mod-tag.on { color: var(--iris); border-color: rgba(143,168,255,.45); background: var(--iris-soft); }
+.mod-row .text-btn.accent:disabled { opacity: .55; cursor: progress; }
 .mod-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 5px 1px 0; vertical-align: middle; background: var(--ink-3); }
 .mod-dot.ok { background: var(--ok); } .mod-dot.warn { background: var(--warn); } .mod-dot.bad { background: var(--bad); }
 .mod-row .dash-actions { flex: none; }

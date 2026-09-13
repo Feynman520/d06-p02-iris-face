@@ -21,6 +21,7 @@ import { Voice } from './voice.mjs';
 import { activeAgentsMap, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
 import { ModuleHost, NAME_RE } from './modules.mjs';
 import { inspectZip, installZip, removeModule } from './modinstall.mjs';
+import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -183,6 +184,25 @@ const sameOrigin = (req) => {
   return true;
 };
 const MODULE_ACTION_RE = new RegExp(`^/api/modules/(${NAME_RE.source.slice(1, -1)})/(remove|restart)$`);
+const CATALOG_INSTALL_RE = new RegExp(`^/api/catalog/(${NAME_RE.source.slice(1, -1)})/install$`);
+
+/** zip 버퍼 → 설치(zip 업로드·카탈로그 공용). 거부될 zip 이면 실행 중인 모듈을 건드리지 않고(F6), 실패하면 돌던 모듈을 되살린다. { status, body }. */
+async function installFromBuffer(buf, { allow, via }) {
+  const pre = inspectZip(buf, { faceVersion: VERSION });
+  const name = pre.name && NAME_RE.test(pre.name) ? pre.name : null;
+  const wasRunning = !!(name && mods.list().find(m => m.name === name && m.status === 'running'));
+  try {
+    if (name && pre.errors.length === 0) await mods.stop(name);
+    const r = installZip(buf, { modulesDir: MODULES_DIR, faceVersion: VERSION, allowUnofficial: allow });
+    log(`module install ${r.name} v${String(r.version).slice(0, 40)} official=${r.official} unofficialAllowed=${allow} via=${via}`);
+    mods.scan(); mods.start(r.name);
+    return { status: 201, body: r };
+  } catch (e) {
+    if (wasRunning) { mods.scan(); mods.start(name); }
+    if (e.code === 'UNOFFICIAL') { log(`409 module install unofficial: ${String(e.inspect?.name).slice(0, 40)} via=${via}`); return { status: 409, body: { error: 'unofficial', ...e.inspect } }; }
+    log(`400 module install: ${String(e.message).slice(0, 200)} via=${via}`); return { status: 400, body: { error: e.message } };
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
@@ -213,23 +233,26 @@ const server = http.createServer(async (req, res) => {
       if (!sameOrigin(req) || !req.headers['x-file-name']) { log(`403 module install: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       const chunks = []; let size = 0;
       const allow = url.searchParams.get('allowUnofficial') === '1';
-      let name = null, wasRunning = false;
       try {
         await new Promise((resolve, reject) => { req.on('data', (c) => { size += c.length; if (size > 50 * 1024 * 1024) { req.pause(); const e = new Error('too large (50MB)'); e.code = 'TOO_LARGE'; reject(e); } else chunks.push(c); }); req.on('end', resolve); req.on('error', reject); });
-        const buf = Buffer.concat(chunks);
-        const pre = inspectZip(buf, { faceVersion: VERSION });
-        name = pre.name && NAME_RE.test(pre.name) ? pre.name : null;
-        wasRunning = !!(name && mods.list().find(m => m.name === name && m.status === 'running'));
-        if (name && pre.errors.length === 0) await mods.stop(name); // 거부될 zip이면 실행 중인 모듈을 건드리지 않는다(F6)
-        const r = installZip(buf, { modulesDir: MODULES_DIR, faceVersion: VERSION, allowUnofficial: allow });
-        log(`module install ${r.name} v${String(r.version).slice(0, 40)} official=${r.official} unofficialAllowed=${allow} ${size}B`);
-        mods.scan(); mods.start(r.name);
-        return json(res, 201, r);
       } catch (e) {
-        if (e.code === 'TOO_LARGE') { res.setHeader('Connection', 'close'); json(res, 413, { error: e.message }); setImmediate(() => { try { req.destroy(); } catch {} }); log('413 module install: too large'); return; }
-        if (e.code === 'UNOFFICIAL') { log(`409 module install unofficial: ${String(e.inspect?.name).slice(0, 40)}`); if (wasRunning) { mods.scan(); mods.start(name); } return json(res, 409, { error: 'unofficial', ...e.inspect }); }
-        log(`400 module install: ${String(e.message).slice(0, 200)}`); if (wasRunning) { mods.scan(); mods.start(name); } return json(res, 400, { error: e.message });
+        res.setHeader('Connection', 'close'); json(res, 413, { error: e.message }); setImmediate(() => { try { req.destroy(); } catch {} }); log('413 module install: too large'); return;
       }
+      const r = await installFromBuffer(Buffer.concat(chunks), { allow, via: `zip ${size}B` });
+      return json(res, r.status, r.body);
+    }
+    // ---- 카탈로그(v2.53): 공식 IRIS 모듈 목록 + 설치 여부. 「설치」는 그때만 GitHub 릴리스에서 zip 을 받아 같은 설치 길(서명 필수)로. ----
+    if (req.method === 'GET' && p === '/api/catalog') return json(res, 200, { list: mergeCatalog(loadCatalog(), mods.list()) });
+    const cm = p.match(CATALOG_INSTALL_RE);
+    if (cm && req.method === 'POST') {
+      if (!sameOrigin(req)) { log(`403 catalog install: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      const entry = loadCatalog().find(c => c.name === cm[1]);
+      if (!entry) return json(res, 404, { error: `not in catalog: ${cm[1]}` });
+      let z;
+      try { z = await fetchReleaseZip(entry); log(`catalog fetch ${entry.name} ${z.asset} v${z.version} ${z.buf.length}B`); }
+      catch (e) { log(`502 catalog fetch ${entry.name}: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: `download failed: ${e.message}` }); }
+      const r = await installFromBuffer(z.buf, { allow: false, via: `catalog ${z.asset}` });
+      return json(res, r.status, r.body);
     }
     const mm = p.match(MODULE_ACTION_RE);
     if (mm && req.method === 'POST') {

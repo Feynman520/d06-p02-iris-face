@@ -239,6 +239,54 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(bad, 'install: removeModule 이름 규칙 위반 거부');
 }
 
+// ---- 7) 카탈로그(v2.53): 목록 읽기·합치기·릴리스 zip 내려받기(가짜 fetch, 바깥 연결 0) ----
+{
+  const { loadCatalog, mergeCatalog, fetchReleaseZip, ALLOWED_HOSTS } = await import('../daemon/catalog.mjs');
+  const real = loadCatalog();
+  ok(real.length >= 1 && real.every(c => /^[a-z][a-z0-9-]{1,31}$/.test(c.name) && /^https:\/\/api\.github\.com\//.test(c.release.api)), 'catalog: daemon/catalog.json 항목 = 이름 규칙 + api.github.com 릴리스 주소');
+  const bad = path.join(tmp, 'bad-catalog.json');
+  fs.writeFileSync(bad, JSON.stringify({ version: 1, modules: [
+    { name: 'okmod', label: 'Ok', icon: 'bell', release: { api: 'https://api.github.com/repos/a/b/releases/latest' } },
+    { name: 'Bad Name', release: { api: 'https://api.github.com/repos/a/b/releases/latest' } },
+    { name: 'evilhost', release: { api: 'https://evil.example.com/releases/latest' } },
+    { name: 'plainhttp', release: { api: 'http://api.github.com/repos/a/b/releases/latest' } },
+  ] }), 'utf8');
+  const filtered = loadCatalog(bad);
+  ok(filtered.length === 1 && filtered[0].name === 'okmod' && filtered[0].release.asset === '\\.zip$', 'catalog: 이름 규칙 위반·허용 밖 호스트·http 항목 제외, asset 기본값');
+  ok(loadCatalog(path.join(tmp, 'nope.json')).length === 0, 'catalog: 파일 없음 → 빈 목록(데몬 안 죽음)');
+  const merged = mergeCatalog(filtered, [{ name: 'okmod', label: 'From module.json', icon: 'chat', version: '1.2.3', status: 'running', reason: '', official: true }, { name: 'extra', label: 'Extra', icon: 'plug', version: '0.1', status: 'stopped', reason: '', official: false }]);
+  ok(merged.length === 2 && merged[0].installed && merged[0].catalog && merged[0].label === 'From module.json' && merged[0].icon === 'chat' && merged[0].version === '1.2.3', 'catalog: 설치된 모듈은 module.json 의 label·icon 우선 + 상태 합침');
+  ok(merged[1].name === 'extra' && merged[1].installed && !merged[1].catalog, 'catalog: 카탈로그 밖 설치 모듈은 뒤에 catalog:false 로');
+  ok(mergeCatalog(filtered, [])[0].installed === false && mergeCatalog(filtered, [])[0].version === undefined, 'catalog: 미설치 항목은 installed:false');
+
+  // 가짜 fetch: api → 릴리스 JSON, github.com 자산 → 302 → objects.githubusercontent.com → 본문
+  const zipBody = Buffer.from('PK-fake-zip');
+  const mk = (status, body, headers = {}) => new Response(body, { status, headers });
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    calls.push({ url, redirect: opts?.redirect });
+    if (url === 'https://api.github.com/repos/a/b/releases/latest') return mk(200, JSON.stringify({ tag_name: 'okmod--v1.4.0', assets: [{ name: 'okmod-v1.4.0.sha256', size: 64, browser_download_url: 'https://github.com/a/b/releases/download/x/okmod-v1.4.0.sha256' }, { name: 'okmod-v1.4.0.zip', size: zipBody.length, browser_download_url: 'https://github.com/a/b/releases/download/x/okmod-v1.4.0.zip' }] }), { 'content-type': 'application/json' });
+    if (url === 'https://github.com/a/b/releases/download/x/okmod-v1.4.0.zip') return mk(302, null, { location: 'https://objects.githubusercontent.com/blob/okmod.zip' });
+    if (url === 'https://objects.githubusercontent.com/blob/okmod.zip') return mk(200, zipBody, { 'content-length': String(zipBody.length) });
+    if (url === 'https://api.github.com/repos/a/evil/releases/latest') return mk(200, JSON.stringify({ tag_name: 'v9', assets: [{ name: 'x.zip', size: 5, browser_download_url: 'https://github.com/a/evil/x.zip' }] }));
+    if (url === 'https://github.com/a/evil/x.zip') return mk(302, null, { location: 'https://evil.example.com/x.zip' });
+    if (url === 'https://api.github.com/repos/a/big/releases/latest') return mk(200, JSON.stringify({ tag_name: 'v1', assets: [{ name: 'big.zip', size: 999, browser_download_url: 'https://github.com/a/big/big.zip' }] }));
+    if (url === 'https://api.github.com/repos/a/none/releases/latest') return mk(200, JSON.stringify({ tag_name: 'v1', assets: [{ name: 'readme.txt', size: 1, browser_download_url: 'https://github.com/a/none/readme.txt' }] }));
+    if (url === 'https://api.github.com/repos/a/gone/releases/latest') return mk(404, '{}');
+    return mk(500, 'unexpected ' + url);
+  };
+  const entry = { ...filtered[0], release: { api: 'https://api.github.com/repos/a/b/releases/latest', asset: '^okmod-v.*\\.zip$' } };
+  const got = await fetchReleaseZip(entry, { fetchImpl: fakeFetch });
+  ok(got.version === '1.4.0' && got.asset === 'okmod-v1.4.0.zip' && got.buf.equals(zipBody), 'catalog fetch: 태그 → 버전, 정규식으로 zip 자산 선택, 302 따라가 본문 수신');
+  ok(calls.every(c => c.redirect === 'manual') && calls.every(c => ALLOWED_HOSTS.includes(new URL(c.url).hostname)), 'catalog fetch: 모든 홉이 redirect:manual + 허용 호스트');
+  const rejects = async (e, re) => { try { await fetchReleaseZip(e, { fetchImpl: fakeFetch, maxBytes: 100 }); return false; } catch (err) { return re.test(err.message); } };
+  ok(await rejects({ release: { api: 'https://api.github.com/repos/a/evil/releases/latest', asset: '\\.zip$' } }, /address not allowed/), 'catalog fetch: 허용 밖 호스트로 리다이렉트 → 거부');
+  ok(await rejects({ release: { api: 'https://api.github.com/repos/a/big/releases/latest', asset: '\\.zip$' } }, /too large/), 'catalog fetch: 자산 크기 상한 초과 → 거부(내려받기 전)');
+  ok(await rejects({ release: { api: 'https://api.github.com/repos/a/none/releases/latest', asset: '\\.zip$' } }, /no matching zip/), 'catalog fetch: 맞는 zip 없음 → 거부');
+  ok(await rejects({ release: { api: 'https://api.github.com/repos/a/gone/releases/latest', asset: '\\.zip$' } }, /HTTP 404/), 'catalog fetch: 릴리스 조회 실패 → HTTP 상태 포함 오류');
+  ok(await rejects({ release: { api: 'http://api.github.com/repos/a/b/releases/latest', asset: '\\.zip$' } }, /address not allowed/), 'catalog fetch: http 주소 → 거부');
+}
+
 // ---- 끝 ----
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} PASS / ${fail} FAIL`);
