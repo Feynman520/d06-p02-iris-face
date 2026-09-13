@@ -298,7 +298,7 @@ export class Updater {
         const file = path.join(dir, info.asset);
         const got = await this.downloadTo(info.url, file, {
           maxBytes: lim.maxBytes, expectSize: info.size,
-          onProgress: (received, total) => { this.applying = { part: name, index: i + 1, count: parts.length, received, total }; this.broadcast({ type: 'update', phase: 'download', part: name, received, total }); },
+          onProgress: (received, total) => { this.applying = { part: name, index: i + 1, count: parts.length, received, total }; this.broadcast({ type: 'update', phase: 'download', part: name, received, total, index: i + 1, count: parts.length }); },
         });
         // ⓐ sha256 첨부와 대조
         if (!info.sha256Url) throw new Error(`${PART_LABEL[name]}: .sha256 첨부가 없습니다`);
