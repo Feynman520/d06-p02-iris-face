@@ -15,9 +15,10 @@ function findEocd(buf) {
   throw new Error('not a zip (no end-of-central-directory)');
 }
 
-/** zip 버퍼 → [{ name, data }] (폴더 항목 제외). 이름은 zip 안 표기 그대로(슬래시).
- *  opts: { maxEntryBytes, maxTotalBytes, maxEntries } — 압축해제 폭탄 방어(선언된 usize·실제 해제 결과 양쪽 다 상한 검사). */
-export function zipRead(buf, opts = {}) {
+/** 중앙 디렉터리만 훑어 항목 목록을 만든다(압축 해제 없음, 폴더 항목 포함). [{ name, method, csize, usize, start }].
+ *  큰 zip(구조판 설치 패키지)에서 이름 검사·항목 하나 꺼내기를 통째 메모리 해제 없이 하려고 분리했다(v2.58).
+ *  opts: { maxEntryBytes, maxTotalBytes, maxEntries } — 선언된 usize 기준 폭탄 방어. */
+export function zipIndex(buf, opts = {}) {
   const maxEntryBytes = opts.maxEntryBytes ?? MAX_ENTRY_BYTES, maxTotalBytes = opts.maxTotalBytes ?? MAX_TOTAL_BYTES, maxEntries = opts.maxEntries ?? MAX_ENTRIES;
   if (!Buffer.isBuffer(buf) || buf.length < 22) throw new Error('not a zip (too short)');
   const eocd = findEocd(buf);
@@ -38,16 +39,27 @@ export function zipRead(buf, opts = {}) {
     if (lho + 30 > buf.length || buf.readUInt32LE(lho) !== SIG_LOCAL) throw new Error(`bad local header: ${name}`);
     const start = lho + 30 + buf.readUInt16LE(lho + 26) + buf.readUInt16LE(lho + 28);
     if (start + csize > buf.length) throw new Error(`truncated entry: ${name}`);
-    const raw = buf.subarray(start, start + csize);
-    let data;
-    if (method === 0) data = Buffer.from(raw);
-    else if (method === 8) { try { data = zlib.inflateRawSync(raw, { maxOutputLength: usize }); } catch (e) { if (e instanceof RangeError || e.code === 'ERR_BUFFER_TOO_LARGE') throw new Error(`inflate exceeded declared size: ${name}`); throw e; } }
-    else throw new Error(`unsupported compression method ${method}: ${name}`);
-    if (data.length !== usize) throw new Error(`size mismatch: ${name}`);
-    if (!name.endsWith('/')) out.push({ name, data });
+    out.push({ name, method, csize, usize, start });
     off += 46 + nlen + xlen + clen;
   }
   return out;
+}
+
+/** zipIndex 항목 하나만 압축 해제. 선언 크기와 다르면 오류(위조 usize 방어). */
+export function zipEntryData(buf, e) {
+  const raw = buf.subarray(e.start, e.start + e.csize);
+  let data;
+  if (e.method === 0) data = Buffer.from(raw);
+  else if (e.method === 8) { try { data = zlib.inflateRawSync(raw, { maxOutputLength: e.usize }); } catch (err) { if (err instanceof RangeError || err.code === 'ERR_BUFFER_TOO_LARGE') throw new Error(`inflate exceeded declared size: ${e.name}`); throw err; } }
+  else throw new Error(`unsupported compression method ${e.method}: ${e.name}`);
+  if (data.length !== e.usize) throw new Error(`size mismatch: ${e.name}`);
+  return data;
+}
+
+/** zip 버퍼 → [{ name, data }] (폴더 항목 제외). 이름은 zip 안 표기 그대로(슬래시).
+ *  opts: { maxEntryBytes, maxTotalBytes, maxEntries } — 압축해제 폭탄 방어(선언된 usize·실제 해제 결과 양쪽 다 상한 검사). */
+export function zipRead(buf, opts = {}) {
+  return zipIndex(buf, opts).filter(e => !e.name.endsWith('/')).map(e => ({ name: e.name, data: zipEntryData(buf, e) }));
 }
 
 /** [{ name, data, deflate?: true }] → zip 버퍼. 이름은 슬래시 구분, UTF-8 플래그(0x0800). deflate 미지정(false)=저장(0), true=deflate(8). */
