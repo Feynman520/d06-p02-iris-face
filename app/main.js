@@ -86,7 +86,8 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); render(); }
+      else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
       else if (m.type === 'modules') setModules(m.list);                                                   // 모듈 콘센트: 상태·panel·배지
       else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
@@ -500,7 +501,7 @@
   }, 0));
 
   // ---------- 꾸미기 설정 + 사용량 배터리 (app/settings.js) ----------
-  Settings.init();
+  Settings.init({ sessionCount: () => sessions.length });
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
   Notify.init({ onPick: (id) => { if (String(id).startsWith('mod:')) { openModule(String(id).split(':')[1]); return; } if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------

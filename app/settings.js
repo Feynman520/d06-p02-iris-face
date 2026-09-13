@@ -7,7 +7,7 @@ window.Settings = (() => {
   const R = window.Registry;
   const BRAND = { name: 'IRIS', mark: 'cube', font: 'segoe-script', markSpeed: 2 }; // 고정 정체성 — 설정에서 바꿀 수 없다
   const DEF = { theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: true, permission: '', approval: '', sandbox: '', notifyDone: true, notifyOs: true }; // pauseWhenDim 기본 켬(2026-09-12 발열 사건): 저장된 설정이 있으면 그 값이 우선
-  let cfg = { ...DEF }, health = null, open = false, themeKeys = new Set(), agents = null, previews = [];
+  let cfg = { ...DEF }, health = null, open = false, themeKeys = new Set(), agents = null, previews = [], opts = {};
   const destroyPreviews = () => { for (const p of previews) { try { p.destroy(); } catch {} } previews = []; };
 
   // ---- 저장/불러오기 ----
@@ -100,6 +100,7 @@ window.Settings = (() => {
     fill($('#st-approval'), agents?.codex?.approvals || FALLBACK.approvals, cfg.approval);
     fill($('#st-sandbox'), agents?.codex?.sandboxes || FALLBACK.sandboxes, cfg.sandbox);
     renderMods();
+    renderUpdate();
   }
   // ---- 모듈(콘센트, 2026-09-11): 목록은 데몬 /api/modules. 이름·아이콘·설명은 전부 module.json 에서 온다(본체는 어떤 모듈인지 모른다). ----
   // 목록 = 데몬 /api/catalog(공식 IRIS 모듈 카탈로그 + 설치 여부, v2.53). 행마다 설치됨/미설치 표와 그에 맞는 버튼(설치 / 재시작·제거).
@@ -146,6 +147,104 @@ window.Settings = (() => {
     if (open) renderMods();
     return okay;
   }
+  // ---- 업데이트(v2.58, 2026-09-14): 절 머리의 유일한 행동 단추 하나로 확인 → 내려받기 → 적용까지. ----
+  // 상태는 데몬 GET /api/update 가 원천(mode·enabled·installed·latest·available·applying·plan). 화면은 그대로 그리기만 한다.
+  // 부품 행은 스위치 없는 .st-opt(제목 + 한 줄 설명 | 오른쪽 값), 새 판이 있는 행의 오른쪽 값만 청보라.
+  const UPD_PART = {
+    face: ['IRIS 창', '세션을 지휘하는 창과 데몬'],
+    messenger: ['메신저', '확장 모듈 — 설치돼 있을 때만'],
+    package: ['패키지', '동봉 런타임·도구를 담은 구조판'],
+  };
+  let upd = null, updBusy = false;
+  const fmtWhen = (iso) => { const t = Date.parse(iso || ''); if (!t) return ''; const d = new Date(t); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+  function renderUpdate() {
+    const host = $('#st-update'), btn = $('#st-update-act'), auto = $('#st-update-auto'), head = $('#st-update-h');
+    if (!host) return;
+    if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('bolt', 15) + '<span>업데이트</span>'; head.dataset.iced = '1'; } // 아이콘은 icons.js 이름만(이모지 0)
+    const dev = upd?.mode === 'dev';
+    auto.checked = upd ? upd.enabled !== false : true; auto.disabled = !upd;
+    // 단추 4종: 적용 중(비활성·진행) · 받아 둠 · 새 판 있음 · 그 밖(지금 확인)
+    const a = upd?.applying;
+    if (updBusy || a) {
+      const pct = a && a.total ? Math.floor((a.received / a.total) * 100) : 0;
+      btn.textContent = a ? `내려받는 중 ${a.index}/${a.count} · ${pct}%` : '내려받는 중…';
+      btn.className = 'text-btn outline'; btn.disabled = true; btn.dataset.act = '';
+    } else if (!dev && upd?.plan) { btn.textContent = '적용 (받아 둠)'; btn.className = 'text-btn accent'; btn.disabled = false; btn.dataset.act = 'apply-now'; }
+    else if (!dev && upd?.headline?.version) { const h = upd.headline; btn.textContent = `업데이트 v${h.version}${h.more > 0 ? ` 외 ${h.more}개` : ''}`; btn.className = 'text-btn accent'; btn.disabled = false; btn.dataset.act = 'apply'; }
+    else { btn.textContent = '지금 확인'; btn.className = 'text-btn outline'; btn.disabled = false; btn.dataset.act = 'check'; }
+    if (!upd) { host.innerHTML = '<div class="upd-line st-sub">데몬에 연결되지 않아 판을 읽지 못했습니다.</div>'; return; }
+    const rows = Object.keys(UPD_PART).map((k) => {
+      const [name, desc] = UPD_PART[k], ins = upd.installed?.[k], lat = upd.latest?.[k]?.version;
+      const isNew = upd.available?.includes(k);
+      const val = ins ? `v${esc(ins)}` : '미설치';
+      return `<div class="st-opt upd-row"><span class="st-opt-text">${esc(name)}<small>${esc(desc)}</small></span><span class="upd-ver">${val}${isNew ? ` <span class="upd-new">→ v${esc(lat)}</span>` : ''}</span></div>`;
+    }).join('');
+    const when = fmtWhen(upd.lastCheck);
+    const lines = [
+      dev ? `<div class="upd-line st-sub">${esc(DEV_NOTE)}</div>` : '',
+      upd.checkError ? `<div class="upd-line st-sub bad">확인 실패: ${esc(upd.checkError)}</div>` : '',
+      !upd.checkError && upd.lastResult && upd.lastResult.ok === false ? `<div class="upd-line st-sub bad">지난 내려받기 실패: ${esc(upd.lastResult.reason)}</div>` : '',
+      `<div class="upd-line st-sub">${when ? `마지막 확인 ${esc(when)}` : '아직 확인하지 않았습니다'}</div>`,
+    ].join('');
+    host.innerHTML = rows + lines;
+    // 릴리스 노트 첫 5줄 — 텍스트만 넣는다(HTML 로 해석하지 않음)
+    const h = upd.headline, notes = h && upd.latest?.[h.part]?.notes;
+    if (notes) {
+      const el = document.createElement('div'); el.className = 'upd-notes';
+      el.textContent = String(notes).split(/\r?\n/).slice(0, 5).join('\n').trim();
+      if (el.textContent) host.appendChild(el);
+    }
+  }
+  const DEV_NOTE = '개발 폴더에서 실행 중 — git pull로 갱신';
+  async function loadUpdate() {
+    try { const r = await fetch('/api/update'); upd = r.ok ? await r.json() : null; } catch { upd = null; }
+    notice(); if (open) renderUpdate();
+  }
+  /** 첫 실행 한 줄 고지(1회) — 하루 한 번 확인한다는 사실과 끄는 곳. */
+  function notice() {
+    if (!upd || upd.enabled === false) return;
+    try { if (localStorage.getItem('iris.update.noticed')) return; localStorage.setItem('iris.update.noticed', '1'); } catch { return; }
+    Notify.push({ title: '업데이트 확인', sub: '하루 한 번 새 판을 확인합니다 — 설정에서 끌 수 있습니다', status: 'idle', force: true });
+  }
+  /** 데몬의 {type:'update', …} 방송. info 가 실려 오면 그대로 갈아 끼우고, 내려받기 진행은 단추 글만 바꾼다. */
+  function onUpdate(m) {
+    if (m.info) { upd = m.info; updBusy = false; }
+    else if (m.phase === 'download' && upd) upd.applying = { part: m.part, index: m.index || 1, count: m.count || 1, received: m.received, total: m.total };
+    if (m.phase === 'error' || m.phase === 'ready' || m.phase === 'checked') updBusy = false;
+    if (open) renderUpdate();
+  }
+  const setUpdate = (info) => { if (info) { upd = info; notice(); if (open) renderUpdate(); } };
+  /** 적용기가 남긴 결과(데몬 hello 의 updateResult) → 토스트 한 개. */
+  function showUpdateResult(r) {
+    const items = Array.isArray(r?.items) ? r.items : [];
+    const okList = items.filter(i => i.ok).map(i => `${(UPD_PART[i.kind] || [i.kind])[0]} v${i.version}`);
+    const bad = items.find(i => !i.ok);
+    Notify.push({ title: r?.ok && !bad ? '업데이트 완료' : '업데이트 일부 실패', sub: [okList.join(' · '), bad ? `실패: ${(UPD_PART[bad.kind] || [bad.kind])[0]} — ${bad.reason || ''}` : ''].filter(Boolean).join(' / ') || '적용을 마쳤습니다', status: bad ? 'attention' : 'idle', force: true });
+  }
+  async function updAct(act) {
+    if (act === 'check') { updBusy = true; renderUpdate(); try { const r = await fetch('/api/update/check', { method: 'POST' }); upd = r.ok ? await r.json() : upd; if (!r.ok) Dialog.alert('확인 실패: 릴리스를 읽지 못했습니다.'); } catch (e) { Dialog.alert(`확인 실패: ${e.message}`); } finally { updBusy = false; renderUpdate(); } return; }
+    if (act === 'apply') {
+      updBusy = true; renderUpdate();
+      let r;
+      try { const res = await fetch('/api/update/apply', { method: 'POST' }); r = await res.json().catch(() => ({})); } catch (e) { r = { ok: false, reason: e.message }; }
+      updBusy = false; if (r.info) upd = r.info; renderUpdate();
+      if (!r.ok) { Dialog.alert(`업데이트 실패: ${r.reason || r.error || '알 수 없는 오류'}`); return; }
+      if (!upd?.plan) { Dialog.alert('최신 판으로 바꿨습니다. 세션은 그대로입니다.'); return; }
+      act = 'confirm-apply';
+    }
+    if (act === 'apply-now' || act === 'confirm-apply') {
+      const n = opts.sessionCount?.() ?? 0;
+      const kinds = (upd?.plan?.items || []).map(i => `${(UPD_PART[i.kind] || [i.kind])[0]} v${i.version}`).join(' · ');
+      const msg = `받아 둔 새 판을 지금 적용할까요?\n\n${kinds}\n\n세션 ${n}개가 끝나고 적용 뒤 자동으로 다시 열립니다. IRIS 창도 잠시 닫혔다 스스로 다시 켜집니다.`;
+      if (!(await Dialog.confirm(msg, { okLabel: '지금 적용', cancelLabel: '나중에' }))) { renderUpdate(); return; }
+      try {
+        const res = await fetch('/api/update/apply-now', { method: 'POST' }); const d = await res.json().catch(() => ({}));
+        if (!res.ok) { Dialog.alert(`적용 실패: ${d.reason || d.error || res.status}`); return; }
+        Notify.push({ title: '업데이트 적용 중', sub: '창이 잠시 닫혔다 다시 열립니다', status: 'idle', force: true });
+      } catch (e) { Dialog.alert(`적용 실패: ${e.message}`); }
+    }
+  }
+
   // ---- 정보(만든 사람) 대화상자 — 값은 전부 데몬 /api/health 의 about(원천 = package.json). 데몬이 아직 없으면 화면 쪽 기본값. ----
   const ABOUT_DEF = { name: 'IRIS', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
   function about() {
@@ -170,7 +269,8 @@ window.Settings = (() => {
   function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
   function pick(patch) { Object.assign(cfg, patch); applyAll(); save(); renderPanel(); }
 
-  function init(opts) {
+  function init(o) {
+    opts = o || {};
     load(); applyAll();
     $('#btn-settings').onclick = () => (open ? hide() : show());
     $('#st-close').onclick = hide;
@@ -191,10 +291,19 @@ window.Settings = (() => {
     $('#st-notify-test').onclick = () => Notify.preview();
     fetch('/api/agents').then(r => r.json()).then((a) => { agents = a; if (open) renderPanel(); }).catch(() => {});
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
+    // 업데이트(v2.58): 절 머리 단추 하나 + 하루 1회 스위치. 상태는 데몬이 준다(웹소켓 방송은 main.js 가 onUpdate 로 넘긴다).
+    $('#st-update-act').addEventListener('click', (e) => { const act = e.currentTarget.dataset.act; if (act) updAct(act); });
+    $('#st-update-auto').addEventListener('change', async (e) => {
+      const on = e.target.checked;
+      try { const r = await fetch('/api/update/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: on }) }); if (r.ok) upd = await r.json(); }
+      catch (err) { Dialog.alert(`설정을 바꾸지 못했습니다: ${err.message}`); }
+      renderUpdate();
+    });
+    loadUpdate();
     $('#maker').onclick = about;
     applyMaker();
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name) };
+  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult };
 })();
