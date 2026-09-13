@@ -287,21 +287,69 @@
     drawerOpenFor(`mod:${name}`) ? closeDrawer() : openDrawer(`mod:${name}`, { title: m.label, url: m.panel, ext: false });
     return true;
   }
-  // 모듈 목록 → 헤더 버튼(선 아이콘 + 배지). 아이콘은 module.json.icon 이름을 app/icons.js 에서 찾고(모르면 plug) 모듈이 준 문자열은 HTML 에 넣지 않는다(v2.52).
-  // 실행 중이 아니면(또는 panel 주소가 127.0.0.1 이 아니면) 눌리지 않고 이유를 툴팁으로. 목록이 비면 버튼 자체가 없다.
+  // ---- 헤더 모듈 버튼(v2.56, 2026-09-13 사용자 결정): 데몬이 주는 목록 = 공식 카탈로그 + 설치 여부 + 콘센트 상태 → 미설치 모듈도 항상 버튼이 있다. 세 상태:
+  //   absent(installed:false) = 흐림 + 오른쪽 아래 ↓ 점, 누르면 확인 → 설치(POST /api/catalog/:name/install) → 설치 중 고리 → 실행되면 서랍 자동 열림(pendingOpen, 60초 한도)
+  //   ready(실행 중 + 127.0.0.1 panel) = 전과 같음(배지, 서랍 열기)
+  //   off(설치됐지만 멈춤·실패·맞지 않음·동의 필요·panel 거부·아직 panel 없음) = 흐림 + ! 표(실행 중이 아닐 때), 누르면 설정 → 확장 모듈 절
+  // 아이콘은 module.json.icon 이름을 app/icons.js 에서 찾고(모르면 plug) 모듈이 준 문자열은 HTML 에 넣지 않는다(v2.52). 옛 데몬(⏻ 전)은 installed 없이 설치된 것만 주므로 그대로 installed 로 본다.
+  const MOD_STATUS_KO = { running: '실행 중', stopped: '멈춤', failed: '실패', incompatible: '맞지 않음', 'grade-unsupported': '동의 필요' };
+  const pendingOpen = new Map();    // name → timer: 헤더에서 설치한 모듈이 처음 실행되면 서랍을 연다
+  const isInstalling = (name) => { try { return !!window.Settings?.isInstalling?.(name); } catch { return false; } };
+  function modState(m) {
+    if (m.installed === false) return 'absent';
+    return (m.status === 'running' && !!m.panel && PANEL_RE.test(m.panel)) ? 'ready' : 'off';
+  }
+  function modTitle(m, state) {
+    if (isInstalling(m.name)) return `${m.label} · 설치 중…`;
+    if (state === 'absent') return `${m.label} · 미설치 — 누르면 설치`;
+    const head = `${m.label} v${m.version}${m.official ? ' · 공식' : ' · 비공식'}`;
+    if (state === 'ready') return head;
+    if (m.panel && !PANEL_RE.test(m.panel)) return `${head} · panel address rejected — 누르면 설정`;
+    if (m.status === 'running') return `${head} · 시작 중… — 누르면 설정`;
+    return `${head} · ${MOD_STATUS_KO[m.status] || m.status}${m.reason ? ': ' + m.reason : ''} — 누르면 설정`;
+  }
   function setModules(list) {
     modules = Array.isArray(list) ? list : [];
-    const host = $('#mod-btns');
-    host.innerHTML = modules.map(m => {
-      const rejected = !!m.panel && !PANEL_RE.test(m.panel);
-      const panelOk = !!m.panel && !rejected;
-      const n = Number(m.badge) || 0;
-      return `<button class="mod-btn icon-btn${drawerOpenFor(`mod:${m.name}`) ? ' active' : ''}" data-mod="${esc(m.name)}" ${panelOk ? '' : 'disabled'} title="${esc(m.label)} v${esc(m.version)}${m.official ? ' · 공식' : ' · 비공식'}${panelOk ? '' : ` · ${rejected ? 'panel address rejected' : `${esc(m.status)}${m.reason ? ': ' + esc(m.reason) : ''}`}`}">${Icons.svg(m.icon)}${n > 0 ? `<span class="mod-badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
-    }).join('');
-    for (const b of host.querySelectorAll('.mod-btn')) b.onclick = () => openModule(b.dataset.mod);
+    renderModules();
+    for (const [name, t] of pendingOpen) { const m = modules.find(x => x.name === name); if (m && modState(m) === 'ready') { clearTimeout(t); pendingOpen.delete(name); if (!drawerOpenFor(`mod:${name}`)) openModule(name); } }
     if (drawerKey?.startsWith('mod:') && !modules.some(m => `mod:${m.name}` === drawerKey && m.panel && PANEL_RE.test(m.panel))) closeDrawer(); // 보던 모듈이 죽거나 panel 이 거부되면 서랍도 닫힘
     try { window.Settings?.refreshModules?.(); } catch {}
   }
+  function renderModules() {
+    const host = $('#mod-btns');
+    host.innerHTML = modules.map(m => {
+      const state = modState(m), busy = isInstalling(m.name);
+      const n = state === 'ready' ? (Number(m.badge) || 0) : 0;
+      const cls = ['mod-btn', 'icon-btn', state, busy ? 'installing' : '', state === 'off' && m.status !== 'running' ? 'warn' : '', drawerOpenFor(`mod:${m.name}`) ? 'active' : ''].filter(Boolean).join(' ');
+      return `<button class="${cls}" data-mod="${esc(m.name)}" ${busy ? 'disabled' : ''} title="${esc(modTitle(m, state))}">${Icons.svg(m.icon)}${n > 0 ? `<span class="mod-badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
+    }).join('');
+    for (const b of host.querySelectorAll('.mod-btn')) b.onclick = () => modClick(b.dataset.mod);
+  }
+  function modClick(name) {
+    const m = modules.find(x => x.name === name); if (!m || isInstalling(name)) return;
+    const state = modState(m);
+    if (state === 'ready') openModule(name);
+    else if (state === 'absent') installModule(name);
+    else openSettingsModules();
+  }
+  function openSettingsModules() {
+    if (!Settings.isOpen()) Settings.show();
+    requestAnimationFrame(() => { const el = $('#st-mods'); (el?.closest('section') || el)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+  }
+  async function installModule(name) {
+    const m = modules.find(x => x.name === name); if (!m || m.installed !== false || isInstalling(name)) return;
+    if (!(await Dialog.confirm(`${m.label}을(를) 설치할까요?\n최신 릴리스를 내려받아 서명을 확인한 뒤 설치합니다. 설치 뒤 자동으로 시작됩니다.`, { okLabel: '설치' }))) return;
+    clearTimeout(pendingOpen.get(name)); pendingOpen.set(name, setTimeout(() => pendingOpen.delete(name), 60000));
+    renderModules();
+    const ok = await (window.Settings?.installModule ? Settings.installModule(name) : installFallback(name));
+    if (!ok) { clearTimeout(pendingOpen.get(name)); pendingOpen.delete(name); }
+    renderModules();
+  }
+  async function installFallback(name) { // Settings 가 설치를 못 맡을 때만(같은 판이면 오지 않는 길). 실패 알림은 여기서.
+    try { const r = await fetch(`/api/catalog/${encodeURIComponent(name)}/install`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) { Dialog.alert(`설치 실패: ${d.error || r.status}`); return false; } return true; }
+    catch (e) { Dialog.alert(`설치 실패: ${e.message}`); return false; }
+  }
+  window.addEventListener('iris:mod-installing', renderModules); // 설정 화면에서 설치를 시작·끝냈을 때도 헤더 고리를 맞춘다
   $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
   $('#dash-reload').onclick = () => { if (drawerKey === 'dash') loadDash(true); else if (drawerKey) { const u = fr.src; fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = u; }); } };
   $('#dash-ext').onclick = () => { if (drawerKey === 'dash') window.open(fr.src || DASH_URL, '_blank'); };
@@ -402,7 +450,7 @@
     if (e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#btn-folder').click(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); $('#btn-rail').click(); }
     if (e.ctrlKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleDash(); }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); const first = modules.find(x => x.panel); if (first) openModule(first.name); }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); const first = modules.find(x => x.catalog !== false) || modules[0]; if (first) modClick(first.name); } // 첫 카탈로그 모듈: 미설치 → 설치 확인 · 실행 중 → 서랍 · 멈춤 → 설정
     if (e.ctrlKey && e.key === ',') { e.preventDefault(); Settings.isOpen() ? Settings.hide() : Settings.show(); }
     if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm' && mode !== 'term') { e.preventDefault(); Voice.toggle(); }
     // Esc: 페이지 keydown(초점이 페이지 안일 때)과 Electron 메인의 before-input-event 중계(초점이 미리보기 iframe 안이라

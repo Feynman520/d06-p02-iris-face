@@ -309,6 +309,14 @@ a { color: var(--iris); }
 .mod-btn[disabled] { opacity: .4; cursor: default; }
 .mod-btn[disabled]:hover { background: transparent; color: var(--ink-2); }
 .mod-btn .mod-badge { position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--iris); color: #fff; font-size: 9.5px; font-weight: 600; line-height: 15px; text-align: center; box-shadow: 0 0 0 2px var(--base); }
+/* 세 상태(v2.56): absent = 미설치(흐림 + 오른쪽 아래 ↓ 점) · off = 설치됐지만 안 뜸(흐림, 실행 중이 아니면 ! 표) · installing = 설치 중 고리. 표는 전부 CSS — 모듈 문자열 없음. */
+.mod-btn.absent, .mod-btn.off { opacity: .55; }
+.mod-btn.absent:hover, .mod-btn.off:hover { opacity: .95; }
+.mod-btn.absent::after, .mod-btn.off.warn::after { content: '↓'; position: absolute; right: 1px; bottom: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--iris); color: #fff; font-size: 9px; font-weight: 700; line-height: 12px; text-align: center; box-shadow: 0 0 0 2px var(--base); }
+.mod-btn.off.warn::after { content: '!'; background: var(--warn); color: #1a1408; }
+.mod-btn.installing, .mod-btn.installing[disabled] { opacity: .85; cursor: progress; }
+.mod-btn.installing::after { content: ''; position: absolute; right: 0; bottom: 0; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--iris); border-top-color: transparent; background: var(--base); box-shadow: 0 0 0 2px var(--base); animation: mod-spin .8s linear infinite; }
+@keyframes mod-spin { to { transform: rotate(360deg); } }
 
 .batt { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); }
 .batt-label { color: var(--ink-3); }

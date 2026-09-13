@@ -64,11 +64,14 @@ sleepWatcher.start();
 const MODULES_DIR = process.env.IRIS_FACE_MODULES || path.join(ROOT, 'modules');
 const mods = new ModuleHost({
   dir: MODULES_DIR, faceVersion: VERSION, log,
-  onChange: () => broadcast({ type: 'modules', list: mods.list() }),
+  onChange: () => broadcast({ type: 'modules', list: uiModules() }),
   onNotify: (n) => { log(`module notify ${n.module}: ${n.title}`); broadcast({ type: 'module-notify', ...n }); },
   theme: () => ({ id: settings.get()?.theme || 'indigo', mode: 'dark' }),
   denyPorts: [PORT, dashPort()].filter(Boolean), // 모듈이 panel로 본체·대시보드 자기 포트를 내놓는 것 거부(F5)
 });
+// 화면(헤더 버튼·설정)에 주는 모듈 목록 = 공식 카탈로그 + 설치 여부 + 콘센트 상태(v2.56, 2026-09-13: 헤더는 미설치 모듈도 항상 보인다).
+// 카탈로그는 저장소 안 정적 파일이라 바깥 연결이 없다(verify:nomodule). 설치된 것만 보려면 GET /api/modules(원본 mods.list()).
+const uiModules = () => mergeCatalog(loadCatalog(), mods.list());
 
 // ---- TeamClaude 대시보드 뷰어 서버(3457) 보장 — 한도 서랍을 열 때 화면이 부른다(POST /api/dash/ensure) ----
 // 도구 폴더가 없는 PC(공개 배포본)면 alive:false 로 답하고 아무것도 띄우지 않는다. 브라우저는 열지 않는다.
@@ -83,7 +86,7 @@ async function ensureDash() {
 }
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
-const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: mods.list() });
+const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules() });
 
 // ---- transcript tails (기록파일 읽기 전용, 폴링) ----
 // 폴링 간격은 두 단계(2026-09-10): 작업 중·확인 필요·요청을 보낸 직후 15초 = 0.3초(터미널처럼 바로 반영), 그 밖(대기·종료) = 1.5초.
@@ -390,7 +393,7 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: mods.list() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules() });
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
     try {

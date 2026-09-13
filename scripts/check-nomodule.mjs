@@ -22,7 +22,9 @@ const api = async (p, init) => { const r = await fetch(`http://127.0.0.1:${PORT}
 let health = null;
 for (let i = 0; i < 40 && !health; i++) { await sleep(250); try { const r = await api('/api/health'); if (r.status === 200) health = r.body; } catch {} }
 ok(!!health && health.pid === pid, `daemon up on ${PORT} pid=${pid}`);
-ok(Array.isArray(health?.features?.modules) && health.features.modules.length === 0, 'features.modules = [] (모듈 없음)');
+// v2.56: features.modules 는 카탈로그(저장소 안 정적 파일)와 합친 화면용 목록이라 미설치 행이 들어 있다 — 설치된(installed:true) 행·panel 은 하나도 없어야 한다.
+const fm = health?.features?.modules;
+ok(Array.isArray(fm) && fm.every(m => m.installed === false && m.catalog === true && !m.panel && m.status === undefined), `features.modules = 카탈로그 미설치 행만(${Array.isArray(fm) ? fm.length : '?'}개, installed:false·panel 없음)`);
 const mlist = await api('/api/modules').catch(() => null);
 ok(mlist?.status === 200 && mlist.body.list.length === 0 && mlist.body.dir === mods, '/api/modules 빈 목록·폴더 = 시험 폴더');
 

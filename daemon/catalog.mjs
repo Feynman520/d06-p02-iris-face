@@ -23,16 +23,18 @@ export function loadCatalog(file = CATALOG_FILE) {
   }));
 }
 
-/** 카탈로그 + 설치된 모듈(ModuleHost.list()) → 화면용 목록. 카탈로그 순서 뒤에 카탈로그에 없는 설치 모듈. 설치된 것은 module.json 의 label·icon 이 우선. */
+/** 카탈로그 + 설치된 모듈(ModuleHost.list()) → 화면용 목록. 카탈로그 순서 뒤에 카탈로그에 없는 설치 모듈. 설치된 것은 module.json 의 label·icon 이 우선.
+ *  v2.56: 헤더 버튼도 이 목록을 쓰므로 설치된 행에는 콘센트 상태(panel·badge·pid)까지 싣는다. 미설치 행은 installed:false 에 panel·badge·status 가 없다. */
 export function mergeCatalog(catalog, installed) {
   const byName = new Map((installed || []).map(m => [m.name, m]));
+  const live = (m) => ({ version: m.version, status: m.status, reason: m.reason, official: m.official, panel: m.panel ?? null, badge: m.badge || 0, pid: m.pid ?? null });
   const rows = catalog.map(c => {
     const m = byName.get(c.name);
     const row = { name: c.name, label: m ? m.label : c.label, icon: m ? m.icon : c.icon, desc: c.desc, repo: c.repo, catalog: true, installed: !!m };
-    if (m) Object.assign(row, { version: m.version, status: m.status, reason: m.reason, official: m.official });
+    if (m) Object.assign(row, live(m));
     return row;
   });
-  for (const m of installed || []) if (!catalog.some(c => c.name === m.name)) rows.push({ name: m.name, label: m.label, icon: m.icon, desc: '', repo: '', catalog: false, installed: true, version: m.version, status: m.status, reason: m.reason, official: m.official });
+  for (const m of installed || []) if (!catalog.some(c => c.name === m.name)) rows.push({ name: m.name, label: m.label, icon: m.icon, desc: '', repo: '', catalog: false, installed: true, ...live(m) });
   return rows;
 }
 

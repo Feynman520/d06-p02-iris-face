@@ -130,16 +130,21 @@ window.Settings = (() => {
     }).join('');
   }
   const ACT_WORD = { remove: '제거', restart: '재시작', install: '설치' };
+  // 설치 중 상태는 여기 한 곳(installing)이 원천 — 헤더 버튼(main.js)은 isInstalling() 으로 읽고, 바뀔 때마다 'iris:mod-installing' 사건으로 다시 그린다(v2.56).
+  const bumpInstalling = () => { try { window.dispatchEvent(new CustomEvent('iris:mod-installing')); } catch {} };
+  /** 성공 여부(boolean)를 돌려준다 — 헤더 설치 흐름이 실패 때 자동 열기 예약을 거두려고 본다. */
   async function modAct(name, act) {
-    if (act === 'remove' && !(await Dialog.confirm(`모듈 "${name}"을 제거할까요?\n그 모듈의 폴더와 안에 저장된 데이터(로그인·설정·기록)가 함께 지워집니다. 모듈이 백업 문구를 줬다면 적어 두셨는지 확인하세요.`))) return;
-    if (act === 'install') { if (installing.has(name)) return; installing.add(name); renderMods(); }
+    if (act === 'remove' && !(await Dialog.confirm(`모듈 "${name}"을 제거할까요?\n그 모듈의 폴더와 안에 저장된 데이터(로그인·설정·기록)가 함께 지워집니다. 모듈이 백업 문구를 줬다면 적어 두셨는지 확인하세요.`))) return false;
+    if (act === 'install') { if (installing.has(name)) return false; installing.add(name); bumpInstalling(); if (open) renderMods(); }
+    let okay = false;
     try {
       const r = await fetch(act === 'install' ? `/api/catalog/${encodeURIComponent(name)}/install` : `/api/modules/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) Dialog.alert(`${ACT_WORD[act]} 실패: ${d.error || r.status}`);
+      if (!r.ok) Dialog.alert(`${ACT_WORD[act]} 실패: ${d.error || r.status}`); else okay = true;
     } catch (e) { Dialog.alert(`${ACT_WORD[act]} 실패: ${e.message}`); }
-    installing.delete(name);
-    renderMods();
+    if (installing.delete(name)) bumpInstalling();
+    if (open) renderMods();
+    return okay;
   }
   // ---- 정보(만든 사람) 대화상자 — 값은 전부 데몬 /api/health 의 about(원천 = package.json). 데몬이 아직 없으면 화면 쪽 기본값. ----
   const ABOUT_DEF = { name: 'IRIS', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
@@ -191,5 +196,5 @@ window.Settings = (() => {
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); } };
+  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name) };
 })();
