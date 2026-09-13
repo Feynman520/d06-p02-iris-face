@@ -22,6 +22,7 @@ import { activeAgentsMap, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
 import { ModuleHost, NAME_RE } from './modules.mjs';
 import { inspectZip, installZip, removeModule } from './modinstall.mjs';
 import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
+import { Updater } from './update.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -86,7 +87,16 @@ async function ensureDash() {
 }
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
-const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules() });
+const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
+
+// ---- 업데이트(설계 2·3·4절, v2.58): 하루 1회 릴리스 확인 → 사용자가 누르면 받기·검증 → 메신저는 이 자리, IRIS 창·구조판은 적용기에 넘김. ----
+// 데몬은 자기 파일을 바꾸지 않는다. 화면에 줄 진행은 웹소켓 {type:'update', …} 방송.
+const updater = new Updater({
+  stateDir: STATE, modulesDir: MODULES_DIR, faceRoot: ROOT, faceVersion: VERSION, daemonPort: PORT,
+  log: (m) => log(m), broadcast: (o) => broadcast(o),
+  installMessenger: (buf) => installFromBuffer(buf, { allow: false, via: 'update' }),
+});
+let updateResult = null; // 적용기가 남긴 결과(첫 화면에 한 번만 토스트)
 
 // ---- transcript tails (기록파일 읽기 전용, 폴링) ----
 // 폴링 간격은 두 단계(2026-09-10): 작업 중·확인 필요·요청을 보낸 직후 15초 = 0.3초(터미널처럼 바로 반영), 그 밖(대기·종료) = 1.5초.
@@ -257,6 +267,19 @@ const server = http.createServer(async (req, res) => {
       const r = await installFromBuffer(z.buf, { allow: false, via: `catalog ${z.asset}` });
       return json(res, r.status, r.body);
     }
+    // ---- 업데이트(v2.58): 확인·설정·내려받기·적용. 전부 같은 출처만(화면에서만 부른다). ----
+    if (req.method === 'GET' && p === '/api/update') return json(res, 200, updater.info());
+    if (p.startsWith('/api/update/') && req.method === 'POST') {
+      if (!sameOrigin(req)) { log(`403 update ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      if (p === '/api/update/check') { try { return json(res, 200, await updater.check()); } catch (e) { log(`502 update check: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: e.message }); } }
+      if (p === '/api/update/settings') { const b = await readBody(req); return json(res, 200, updater.setEnabled(b.enabled !== false)); }
+      if (p === '/api/update/apply') { const r = await updater.apply(); return json(res, r.ok ? 200 : 400, { ...r, info: updater.info() }); }
+      if (p === '/api/update/apply-now') {
+        const r = updater.applyNow();
+        if (!r.ok) return json(res, 400, r);
+        json(res, 200, r); log('update apply-now: shutting down for the updater'); setTimeout(shutdown, 300); return;   // ⏻ 와 같은 경로 — 적용기가 폴더를 바꾸고 다시 띄운다
+      }
+    }
     const mm = p.match(MODULE_ACTION_RE);
     if (mm && req.method === 'POST') {
       if (!sameOrigin(req)) { log(`403 module ${mm[2]}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
@@ -393,7 +416,9 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules() });
+  // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult });
+  if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
     try {
@@ -416,14 +441,16 @@ wss.on('connection', (ws) => {
 function shutdown() {
   // 모듈에 shutdown 을 먼저(최대 2.5초), 그다음 세션·음성·PID 파일. 모듈이 없으면 즉시 지나간다.
   Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => {
-    try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200);
+    try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200);
   });
 }
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
-  try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); } });
+  try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
+  // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
+  try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); } });
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });
