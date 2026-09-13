@@ -359,6 +359,9 @@ export class Updater {
     if (!plan?.file || !fs.existsSync(plan.file)) return { ok: false, reason: '받아 둔 적용 계획이 없습니다. 먼저 내려받아 주세요.' };
     const apply = this.updaterPath();
     if (!fs.existsSync(apply)) return { ok: false, reason: '적용기가 아직 설치돼 있지 않습니다(설치 패키지 v1.3.0부터).' };
+    // 「나중에」 뒤 데몬이 한 번 재시작됐을 수 있다 — 적용기가 기다릴 PID·포트는 지금 이 데몬의 것으로 다시 적는다.
+    try { const p = readJson(plan.file); if (p) writeJsonAtomic(plan.file, { ...p, daemonPid: process.pid, daemonPort: this.daemonPort }); }
+    catch (e) { return { ok: false, reason: `적용 계획을 고치지 못했습니다: ${e.message}` }; }
     let child;
     try { child = this.spawnImpl(this.nodeExe(), [apply, plan.file], { detached: true, stdio: 'ignore', windowsHide: true, cwd: path.dirname(apply) }); }
     catch (e) { return { ok: false, reason: `적용기를 실행하지 못했습니다: ${e.message}` }; }

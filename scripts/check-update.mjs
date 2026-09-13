@@ -270,6 +270,12 @@ let planFile = null;
   const s = spawns[spawns.length - 1];
   ok(s.cmd === 'node' && s.args[0] === path.join(updDir, 'apply.mjs') && s.args[1] === planFile, '인계: 동봉 node 가 없으면 PATH 의 node + apply.mjs <plan>');
   ok(s.o.detached === true && s.o.stdio === 'ignore' && s.o.windowsHide === true, '인계: detached·stdio ignore — 데몬이 끝나도 살아남는다');
+  // 「나중에」 뒤 데몬이 재시작됐을 수 있으므로 적용기가 기다릴 PID·포트는 누를 때 다시 적는다
+  const stale = JSON.parse(fs.readFileSync(planFile, 'utf8')); stale.daemonPid = 1; stale.daemonPort = 1;
+  fs.writeFileSync(planFile, JSON.stringify(stale), 'utf8');
+  up.applyNow();
+  const fixed = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  ok(fixed.daemonPid === process.pid && fixed.daemonPort === 3459 && fixed.items.length === 1, '인계: 누를 때 plan.json 의 daemonPid·daemonPort 를 지금 데몬의 것으로 다시 적는다');
   const nodeDir = path.join(root, '_agent', 'shared', 'tools', 'node');
   fs.mkdirSync(nodeDir, { recursive: true }); fs.writeFileSync(path.join(nodeDir, 'node.exe'), 'stub', 'utf8');
   up.applyNow();
