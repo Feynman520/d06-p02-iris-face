@@ -73,13 +73,18 @@ const packZip = (files, { sign = true, key = KP.privatePem } = {}) => {
   return zipWrite(all);
 };
 const FACE_ZIP = packZip(faceFiles);
+// 설치 패키지 zip 의 실제 모양: IRIS-설치.cmd 는 루트, 매니페스트는 payload\manifest.json (P03 build.mjs, 2026-09-14 확인)
 const pkgFiles = [
   { name: 'IRIS-설치.cmd', data: Buffer.from('@echo off\n') },
   { name: 'installer/server.mjs', data: Buffer.from('// installer\n') },
   { name: 'lock.json', data: Buffer.from('{"package":{"version":"1.3.0"}}') },
+  { name: 'payload/tools/face/package.json', data: Buffer.from('{"version":"2.58.0"}') },
 ];
 const PKG_MANIFEST = JSON.stringify({ version: 1, package: { name: 'IRIS', version: '1.3.0' }, files: Object.fromEntries(pkgFiles.map(f => [f.name, sha256(f.data)])) });
-const PKG_ZIP = zipWrite([...pkgFiles, { name: 'manifest.json', data: Buffer.from(PKG_MANIFEST) }]);
+// 실물 v1.3.0 zip 은 항목 이름을 전부 `./` 로 시작해 적는다 — 픽스처도 같게 해서 그 형태를 잠근다.
+const dot = (files) => files.map(f => ({ ...f, name: './' + f.name }));
+const PKG_ENTRIES = dot([...pkgFiles, { name: 'payload/manifest.json', data: Buffer.from(PKG_MANIFEST) }]);
+const PKG_ZIP = zipWrite(PKG_ENTRIES);
 const PKG_SIG = signManifest(PKG_MANIFEST, KP.privatePem);
 {
   const good = verifyFaceZip(FACE_ZIP, { keys: KEYS });
@@ -97,11 +102,15 @@ const PKG_SIG = signManifest(PKG_MANIFEST, KP.privatePem);
   const bentPkg = Buffer.from(PKG_ZIP); bentPkg.writeUInt16LE(8, 8);
   ok(/local header method mismatch/.test(verifyPackageZip(bentPkg, PKG_SIG, { keys: KEYS }).reason || ''), '검증(구조판): 로컬/중앙 압축 방식 불일치 거부');
 
-  ok(verifyPackageZip(PKG_ZIP, PKG_SIG, { keys: KEYS }).ok, '검증(구조판): zip 안 manifest.json 을 첨부 manifest.sig 로 검증');
+  const pv = verifyPackageZip(PKG_ZIP, PKG_SIG, { keys: KEYS });
+  ok(pv.ok && pv.manifest === 'payload/manifest.json', '검증(구조판): zip 안 payload\\manifest.json 을 첨부 manifest.sig 로 검증(루트 manifest.json 없어도 통과)');
+  ok(pv.ok && pv.index.every(e => !e.name.startsWith('./')), '검증(구조판): 실물처럼 `./` 로 시작하는 항목 이름을 경로 탈출로 보지 않고 맨 앞 `./` 만 떼어 낸다');
+  const rootOnly = zipWrite([...pkgFiles, { name: 'manifest.json', data: Buffer.from(PKG_MANIFEST) }]);
+  ok(verifyPackageZip(rootOnly, PKG_SIG, { keys: KEYS }).manifest === 'manifest.json', '검증(구조판): 루트 manifest.json 만 있는 옛 꾸러미도 받아 준다(`./` 없이도)');
   ok(verifyPackageZip(PKG_ZIP, signManifest(PKG_MANIFEST, OTHER.privatePem), { keys: KEYS }).reason === '공식 서명이 없습니다', '검증(구조판): 다른 열쇠 서명 → 거부');
   ok(verifyPackageZip(PKG_ZIP, '', { keys: KEYS }).reason === 'manifest.sig 첨부가 없습니다', '검증(구조판): 서명 첨부 없음 → 거부');
-  ok(verifyPackageZip(zipWrite(pkgFiles), PKG_SIG, { keys: KEYS }).reason === 'manifest.json missing', '검증(구조판): zip 안 manifest.json 없음 → 거부');
-  ok(/unsafe path/.test(verifyPackageZip(zipWrite([...pkgFiles, { name: 'manifest.json', data: Buffer.from(PKG_MANIFEST) }, { name: '../out.txt', data: Buffer.from('x') }]), PKG_SIG, { keys: KEYS }).reason), '검증(구조판): 경로 탈출 거부(통째로 풀기 전)');
+  ok(/manifest\.json missing/.test(verifyPackageZip(zipWrite(dot(pkgFiles)), PKG_SIG, { keys: KEYS }).reason), '검증(구조판): 두 자리 어디에도 매니페스트가 없으면 거부');
+  ok(/unsafe path/.test(verifyPackageZip(zipWrite([...PKG_ENTRIES, { name: './../out.txt', data: Buffer.from('x') }]), PKG_SIG, { keys: KEYS }).reason), '검증(구조판): `./` 를 뗀 뒤에도 경로 탈출은 거부(통째로 풀기 전)');
 }
 
 // ---- 5) 가짜 GitHub(바깥 연결 0) ----
@@ -252,7 +261,8 @@ let planFile = null;
   await pk.check();
   const r = await pk.apply();
   const dir = path.join(root, '_agent', 'shared', 'downloads', `update-${stamp(nowMs)}`);
-  ok(r.ok === true && fs.existsSync(path.join(dir, 'package', 'IRIS-설치.cmd')) && fs.existsSync(path.join(dir, 'package', 'lock.json')), '적용(구조판): zip 을 package\\ 에 풀었다(한글 이름 포함)');
+  ok(r.ok === true && fs.existsSync(path.join(dir, 'package', 'IRIS-설치.cmd')) && fs.existsSync(path.join(dir, 'package', 'payload', 'manifest.json')), '적용(구조판): zip 을 package\\ 에 풀었다(한글 이름·payload\\manifest.json 포함)');
+  ok(fs.existsSync(path.join(dir, 'package', 'payload', 'tools', 'face', 'package.json')), '적용(구조판): payload\\ 아래 깊은 항목까지 그대로');
   ok(!fs.existsSync(path.join(dir, 'face')), '적용(구조판): 창 zip 은 받지도 풀지도 않는다(구조판 안에 들어 있다)');
   const plan = JSON.parse(fs.readFileSync(path.join(dir, 'plan.json'), 'utf8'));
   ok(plan.items.length === 1 && plan.items[0].kind === 'package' && plan.items[0].version === '1.3.0', 'plan.json(구조판): items = package 하나 — 설치기가 나머지를 다 한다');

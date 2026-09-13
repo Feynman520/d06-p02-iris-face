@@ -90,20 +90,27 @@ export function verifyFaceZip(buf, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_
   return { ok: true, files, keyId: m.keyId };
 }
 
-/** 구조판 zip: 항목 이름 검사 + zip 안 manifest.json 텍스트를 릴리스 첨부 manifest.sig 로 검증(설계 3절 ⓒ).
+/** 설치 패키지 매니페스트의 자리 — P03 build.mjs 는 payload\manifest.json 에 쓴다(2026-09-14 실물 확인).
+ *  옛 꾸러미를 위해 zip 루트도 뒤로 본다. 먼저 찾은 하나의 텍스트에 대해 서명을 검증한다. */
+export const PACKAGE_MANIFEST_PATHS = ['payload/manifest.json', 'manifest.json'];
+/** 설치 패키지 zip 은 항목 이름을 `./payload/…` 처럼 `./` 로 시작해 적는다(v1.3.0 실물 확인).
+ *  `./x` 와 `x` 는 같은 자리라 경로 탈출이 아니므로 맨 앞 `./` 하나만 떼고 검사·해제한다.
+ *  모듈 zip 검사(modinstall)는 예전처럼 `.` 세그먼트를 거부한다 — 거긴 우리가 만든 zip 만 들어온다. */
+const stripDot = (name) => name.replace(/^\.\//, '');
+/** 구조판 zip: 항목 이름 검사 + zip 안 payload/manifest.json 텍스트를 릴리스 첨부 manifest.sig 로 검증(설계 3절 ⓒ).
  *  수백 MB 라 통째로 풀지 않고 중앙 디렉터리만 훑는다. */
 export function verifyPackageZip(buf, sigText, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_LIMITS.package.zip } = {}) {
   let index; try { index = zipIndex(buf, { ...limits, strictLocal: true }); } catch (e) { return { ok: false, reason: e.message }; }
-  const entries = index.filter(e => !e.name.endsWith('/'));
+  const entries = index.filter(e => !e.name.endsWith('/')).map(e => ({ ...e, name: stripDot(e.name) }));
   const errors = checkPaths(entries);
   if (errors.length) return { ok: false, reason: errors.join('; ') };
-  const man = entries.find(e => e.name === 'manifest.json');
-  if (!man) return { ok: false, reason: 'manifest.json missing' };
+  const man = PACKAGE_MANIFEST_PATHS.map(p => entries.find(e => e.name === p)).find(Boolean);
+  if (!man) return { ok: false, reason: `manifest.json missing (${PACKAGE_MANIFEST_PATHS.join(' / ')})` };
   if (!String(sigText || '').trim()) return { ok: false, reason: 'manifest.sig 첨부가 없습니다' };
   let text; try { text = zipEntryData(buf, man).toString('utf8'); } catch (e) { return { ok: false, reason: e.message }; }
   const r = verifyManifest(text, sigText, keys);
   if (!r.ok || r.revoked) return { ok: false, reason: r.revoked ? '폐기된 열쇠로 서명됨' : '공식 서명이 없습니다' };
-  return { ok: true, index: entries, keyId: r.keyId };
+  return { ok: true, index: entries, keyId: r.keyId, manifest: man.name };
 }
 
 /** zip 항목을 폴더에 푼다(항목 하나씩 해제 — 큰 zip 도 메모리를 한 항목만 쓴다). 경로 탈출은 여기서도 막는다. */
