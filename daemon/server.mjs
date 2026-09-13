@@ -92,7 +92,7 @@ const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice
 // ---- 업데이트(설계 2·3·4절, v2.58): 하루 1회 릴리스 확인 → 사용자가 누르면 받기·검증 → 메신저는 이 자리, IRIS 창·구조판은 적용기에 넘김. ----
 // 데몬은 자기 파일을 바꾸지 않는다. 화면에 줄 진행은 웹소켓 {type:'update', …} 방송.
 const updater = new Updater({
-  stateDir: STATE, modulesDir: MODULES_DIR, faceRoot: ROOT, faceVersion: VERSION, daemonPort: PORT,
+  stateDir: STATE, modulesDir: MODULES_DIR, faceRoot: ROOT, daemonPort: PORT,
   log: (m) => log(m), broadcast: (o) => broadcast(o),
   installMessenger: (buf) => installFromBuffer(buf, { allow: false, via: 'update' }),
 });

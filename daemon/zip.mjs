@@ -1,8 +1,11 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // 최소 zip 읽기/쓰기(모듈 설치 전용, 외부 의존 0). 읽기: 저장(0)·deflate(8). 쓰기: 저장(0)·deflate(8). ZIP64 미지원(모듈 zip은 수 MB).
+// v2.58: 수백 MB 짜리 설치 패키지도 다루므로 **파일에서 바로 읽는 길**(zipOpenFile·zipEntryDataFile)을 함께 둔다 — 통째로 메모리에 올리지 않는다.
+import fs from 'node:fs';
 import zlib from 'node:zlib';
 
 const SIG_LOCAL = 0x04034b50, SIG_CENTRAL = 0x02014b50, SIG_EOCD = 0x06054b50;
+const MAX_CD_BYTES = 64 * 1024 * 1024;   // 중앙 디렉터리 자체의 상한(항목 6만 개라도 수 MB)
 
 // 폭탄 방어 기본 상한(설계 조각 F1) — 호출자가 zipRead(buf, opts)로 덮어쓸 수 있다.
 export const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
@@ -48,15 +51,69 @@ export function zipIndex(buf, opts = {}) {
   return out;
 }
 
-/** zipIndex 항목 하나만 압축 해제. 선언 크기와 다르면 오류(위조 usize 방어). */
-export function zipEntryData(buf, e) {
-  const raw = buf.subarray(e.start, e.start + e.csize);
+/** 압축된 바이트 한 덩이 → 원본. 선언 크기와 다르면 오류(위조 usize 방어). */
+function inflateEntry(raw, e) {
   let data;
   if (e.method === 0) data = Buffer.from(raw);
   else if (e.method === 8) { try { data = zlib.inflateRawSync(raw, { maxOutputLength: e.usize }); } catch (err) { if (err instanceof RangeError || err.code === 'ERR_BUFFER_TOO_LARGE') throw new Error(`inflate exceeded declared size: ${e.name}`); throw err; } }
   else throw new Error(`unsupported compression method ${e.method}: ${e.name}`);
   if (data.length !== e.usize) throw new Error(`size mismatch: ${e.name}`);
   return data;
+}
+
+/** zipIndex 항목 하나만 압축 해제. 선언 크기와 다르면 오류(위조 usize 방어). */
+export function zipEntryData(buf, e) { return inflateEntry(buf.subarray(e.start, e.start + e.csize), e); }
+
+/** 파일에서 중앙 디렉터리만 읽어 항목 목록을 만든다(zip 을 메모리에 올리지 않는다).
+ *  { fd, entries, close() } — 항목은 zipEntryDataFile(fd, e) 로 하나씩 해제하고, 끝나면 반드시 close(). 검사·상한은 zipIndex 와 같다. */
+export function zipOpenFile(file, opts = {}) {
+  const maxEntryBytes = opts.maxEntryBytes ?? MAX_ENTRY_BYTES, maxTotalBytes = opts.maxTotalBytes ?? MAX_TOTAL_BYTES, maxEntries = opts.maxEntries ?? MAX_ENTRIES;
+  const fd = fs.openSync(file, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (size < 22) throw new Error('not a zip (too short)');
+    const tailLen = Math.min(65557, size), tail = Buffer.alloc(tailLen);
+    fs.readSync(fd, tail, 0, tailLen, size - tailLen);
+    let eocd = -1;
+    for (let i = tailLen - 22; i >= 0; i--) if (tail.readUInt32LE(i) === SIG_EOCD) { eocd = i; break; }
+    if (eocd < 0) throw new Error('not a zip (no end-of-central-directory)');
+    const count = tail.readUInt16LE(eocd + 10);
+    if (count > maxEntries) throw new Error('too many entries');
+    const cdSize = tail.readUInt32LE(eocd + 12), cdOff = tail.readUInt32LE(eocd + 16);
+    if (cdSize > MAX_CD_BYTES) throw new Error('central directory too large');
+    if (cdOff + cdSize > size) throw new Error('bad central directory (offset)');
+    const cd = Buffer.alloc(cdSize); if (cdSize) fs.readSync(fd, cd, 0, cdSize, cdOff);
+    const lh = Buffer.alloc(30);
+    const out = []; let off = 0, total = 0;
+    for (let i = 0; i < count; i++) {
+      if (off + 46 > cd.length || cd.readUInt32LE(off) !== SIG_CENTRAL) throw new Error('bad central directory');
+      const method = cd.readUInt16LE(off + 10);
+      const csize = cd.readUInt32LE(off + 20), usize = cd.readUInt32LE(off + 24);
+      const nlen = cd.readUInt16LE(off + 28), xlen = cd.readUInt16LE(off + 30), clen = cd.readUInt16LE(off + 32);
+      const lho = cd.readUInt32LE(off + 42);
+      if (off + 46 + nlen > cd.length) throw new Error('bad central directory (name length)');
+      const name = cd.subarray(off + 46, off + 46 + nlen).toString('utf8');
+      if (usize > maxEntryBytes) throw new Error(`entry too large: ${name} (${usize} bytes)`);
+      total += usize; if (total > maxTotalBytes) throw new Error('zip too large (total)');
+      if (lho + 30 > size) throw new Error(`bad local header: ${name}`);
+      fs.readSync(fd, lh, 0, 30, lho);
+      if (lh.readUInt32LE(0) !== SIG_LOCAL) throw new Error(`bad local header: ${name}`);
+      const localMethod = lh.readUInt16LE(8);
+      if (opts.strictLocal && localMethod !== method) throw new Error(`local header method mismatch: ${name} (local ${localMethod}, central ${method})`);
+      const start = lho + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
+      if (start + csize > size) throw new Error(`truncated entry: ${name}`);
+      out.push({ name, method, localMethod, csize, usize, start });
+      off += 46 + nlen + xlen + clen;
+    }
+    return { fd, entries: out, close: () => { try { fs.closeSync(fd); } catch {} } };
+  } catch (e) { try { fs.closeSync(fd); } catch {} throw e; }
+}
+
+/** zipOpenFile 항목 하나를 파일에서 읽어 해제(그 항목 크기만큼만 메모리를 쓴다). */
+export function zipEntryDataFile(fd, e) {
+  const raw = Buffer.alloc(e.csize);
+  if (e.csize) fs.readSync(fd, raw, 0, e.csize, e.start);
+  return inflateEntry(raw, e);
 }
 
 /** zip 버퍼 → [{ name, data }] (폴더 항목 제외). 이름은 zip 안 표기 그대로(슬래시).

@@ -200,9 +200,10 @@ window.Settings = (() => {
     try { const r = await fetch('/api/update'); upd = r.ok ? await r.json() : null; } catch { upd = null; }
     notice(); if (open) renderUpdate();
   }
-  /** 첫 실행 한 줄 고지(1회) — 하루 한 번 확인한다는 사실과 끄는 곳. */
+  /** 첫 실행 한 줄 고지(1회) — 하루 한 번 확인한다는 사실과 끄는 곳.
+   *  dev 모드(개발 폴더 실행)에서는 고지도 하지 않고 1회 표시도 쓰지 않는다 — 설치본에서 처음 볼 때 나와야 한다. */
   function notice() {
-    if (!upd || upd.enabled === false) return;
+    if (!upd || upd.enabled === false || upd.mode === 'dev') return;
     try { if (localStorage.getItem('iris.update.noticed')) return; localStorage.setItem('iris.update.noticed', '1'); } catch { return; }
     Notify.push({ title: '업데이트 확인', sub: '하루 한 번 새 판을 확인합니다 — 설정에서 끌 수 있습니다', status: 'idle', force: true });
   }

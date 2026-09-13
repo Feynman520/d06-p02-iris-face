@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { zipIndex, zipEntryData, zipRead } from './zip.mjs';
+import { zipRead, zipOpenFile, zipEntryDataFile } from './zip.mjs';
 import { verifyManifest, OFFICIAL_PUBLIC_KEYS } from './modsign.mjs';
 import { checkPaths, checkManifest } from './modinstall.mjs';
 import { ALLOWED_HOSTS, loadCatalog, CATALOG_FILE } from './catalog.mjs';
@@ -92,25 +92,41 @@ export function verifyFaceZip(buf, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_
 
 /** 설치 패키지 매니페스트의 자리 — P03 build.mjs 는 payload\manifest.json 에 쓴다(2026-09-14 실물 확인).
  *  옛 꾸러미를 위해 zip 루트도 뒤로 본다. 먼저 찾은 하나의 텍스트에 대해 서명을 검증한다. */
-export const PACKAGE_MANIFEST_PATHS = ['payload/manifest.json', 'manifest.json'];
 /** 설치 패키지 zip 은 항목 이름을 `./payload/…` 처럼 `./` 로 시작해 적는다(v1.3.0 실물 확인).
  *  `./x` 와 `x` 는 같은 자리라 경로 탈출이 아니므로 맨 앞 `./` 하나만 떼고 검사·해제한다.
  *  모듈 zip 검사(modinstall)는 예전처럼 `.` 세그먼트를 거부한다 — 거긴 우리가 만든 zip 만 들어온다. */
 const stripDot = (name) => name.replace(/^\.\//, '');
-/** 구조판 zip: 항목 이름 검사 + zip 안 payload/manifest.json 텍스트를 릴리스 첨부 manifest.sig 로 검증(설계 3절 ⓒ).
- *  수백 MB 라 통째로 풀지 않고 중앙 디렉터리만 훑는다. */
-export function verifyPackageZip(buf, sigText, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_LIMITS.package.zip } = {}) {
-  let index; try { index = zipIndex(buf, { ...limits, strictLocal: true }); } catch (e) { return { ok: false, reason: e.message }; }
-  const entries = index.filter(e => !e.name.endsWith('/')).map(e => ({ ...e, name: stripDot(e.name) }));
-  const errors = checkPaths(entries);
-  if (errors.length) return { ok: false, reason: errors.join('; ') };
-  const man = PACKAGE_MANIFEST_PATHS.map(p => entries.find(e => e.name === p)).find(Boolean);
-  if (!man) return { ok: false, reason: `manifest.json missing (${PACKAGE_MANIFEST_PATHS.join(' / ')})` };
-  if (!String(sigText || '').trim()) return { ok: false, reason: 'manifest.sig 첨부가 없습니다' };
-  let text; try { text = zipEntryData(buf, man).toString('utf8'); } catch (e) { return { ok: false, reason: e.message }; }
-  const r = verifyManifest(text, sigText, keys);
+
+/** 구조판 무결성(2026-09-14 컨트롤러 판정으로 방식 교체).
+ *  zip **안**의 매니페스트를 서명하는 방식은 폐기했다 — `installer\`·`IRIS-설치.cmd` 처럼 매니페스트 밖에 있는 파일을 덮지 못해 zip 전체를 보호하지 못했다.
+ *  대신 릴리스 첨부 `<zip>.sha256` 텍스트가 ⓐ 내려받은 zip 의 실제 해시와 같고 ⓑ 그 텍스트 자체가 공식 열쇠로 서명(`<zip>.sha256.sig`)돼야 한다.
+ *  해시는 받으면서 흐름 중에 세므로 **zip 을 메모리에 올리지 않고도 zip 전체 바이트가 서명으로 보호된다.** */
+export function verifySignedSha256(shaText, sigB64, computedSha, { keys = OFFICIAL_PUBLIC_KEYS } = {}) {
+  const want = parseSha256File(shaText);
+  if (!want) return { ok: false, reason: '.sha256 첨부를 읽지 못했습니다' };
+  if (want !== String(computedSha || '').toLowerCase()) return { ok: false, reason: 'sha256 이 맞지 않습니다' };
+  if (!String(sigB64 || '').trim()) return { ok: false, reason: '.sha256.sig 첨부가 없습니다' };
+  const r = verifyManifest(shaText, sigB64, keys);
   if (!r.ok || r.revoked) return { ok: false, reason: r.revoked ? '폐기된 열쇠로 서명됨' : '공식 서명이 없습니다' };
-  return { ok: true, index: entries, keyId: r.keyId, manifest: man.name };
+  return { ok: true, sha: want, keyId: r.keyId };
+}
+
+/** 큰 zip 을 통째로 메모리에 올리지 않고 파일에서 바로 푼다(항목 하나씩). 경로 탈출·중복은 여기서도 막고 맨 앞 `./` 는 뗀다. */
+export function extractZipFile(file, dest, { limits = PART_LIMITS.package.zip } = {}) {
+  const z = zipOpenFile(file, { ...limits, strictLocal: true });
+  try {
+    const entries = z.entries.filter(e => !e.name.endsWith('/')).map(e => ({ ...e, name: stripDot(e.name) }));
+    const errors = checkPaths(entries);
+    if (errors.length) throw new Error(errors.join('; '));
+    fs.mkdirSync(dest, { recursive: true });
+    const root = path.resolve(dest) + path.sep;
+    for (const e of entries) {
+      const p = path.resolve(dest, e.name); if (!p.startsWith(root)) throw new Error(`unsafe path: ${e.name}`);
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, zipEntryDataFile(z.fd, e));
+    }
+    return entries.length;
+  } finally { z.close(); }
 }
 
 /** zip 항목을 폴더에 푼다(항목 하나씩 해제 — 큰 zip 도 메모리를 한 항목만 쓴다). 경로 탈출은 여기서도 막는다. */
@@ -130,7 +146,6 @@ export class Updater {
     this.stateDir = opts.stateDir || path.join(FACE_ROOT, 'state');
     this.faceRoot = opts.faceRoot || FACE_ROOT;
     this.modulesDir = opts.modulesDir || path.join(this.faceRoot, 'modules');
-    this.faceVersion = opts.faceVersion || readJson(path.join(this.faceRoot, 'package.json'))?.version || '0.0.0';
     this.root = opts.root || soulRoot();
     this.daemonPort = opts.daemonPort || 3458;
     this.keys = opts.keys || OFFICIAL_PUBLIC_KEYS;
@@ -197,7 +212,7 @@ export class Updater {
     return {
       version: versionFromTag(rel?.tag_name), tag: String(rel?.tag_name || ''), asset: String(zip.name),
       url: String(zip.browser_download_url), size: Number(zip.size) || 0,
-      sha256Url: byName(`${zip.name}.sha256`), sigUrl: byName('manifest.sig'),
+      sha256Url: byName(`${zip.name}.sha256`), sigUrl: byName(`${zip.name}.sha256.sig`),   // 구조판은 .sha256 텍스트에 대한 서명 첨부를 함께 올린다
       publishedAt: rel?.published_at || null, notes: String(rel?.body || '').slice(0, MAX_NOTES),
     };
   }
@@ -307,30 +322,35 @@ export class Updater {
           maxBytes: lim.maxBytes, expectSize: info.size,
           onProgress: (received, total) => { this.applying = { part: name, index: i + 1, count: parts.length, received, total }; this.broadcast({ type: 'update', phase: 'download', part: name, received, total, index: i + 1, count: parts.length }); },
         });
-        // ⓐ sha256 첨부와 대조
+        // ⓐ 릴리스 첨부 .sha256 과 대조(해시는 받으면서 흐름 중에 셌다)
         if (!info.sha256Url) throw new Error(`${PART_LABEL[name]}: .sha256 첨부가 없습니다`);
-        const want = parseSha256File(await this.text(info.sha256Url));
-        if (!want) throw new Error(`${PART_LABEL[name]}: .sha256 첨부를 읽지 못했습니다`);
-        if (want !== got.sha256) throw new Error(`${PART_LABEL[name]}: sha256 이 맞지 않습니다`);
-        this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
-        // ⓑ·ⓒ·ⓓ 서명·경로 검사 뒤 부품별 처리
-        const buf = fs.readFileSync(file);
-        if (name === 'messenger') {
-          if (!this.installMessenger) throw new Error('메신저 설치 경로가 없습니다');
-          const r = await this.installMessenger(buf);
-          if (r.status !== 201) throw new Error(`메신저: ${r.body?.error || r.status}`);
-          installed.push({ kind: 'messenger', version: info.version });
-        } else if (name === 'face') {
-          const v = verifyFaceZip(buf, { keys: this.keys });
-          if (!v.ok) throw new Error(`IRIS 창: ${v.reason}`);
-          extractTo(buf, v.files, path.join(dir, 'face'));
-          items.push({ kind: 'face', dir: path.join(dir, 'face'), version: info.version });
-        } else {
-          if (!info.sigUrl) throw new Error('패키지: manifest.sig 첨부가 없습니다');
-          const v = verifyPackageZip(buf, await this.text(info.sigUrl), { keys: this.keys });
+        const shaText = await this.text(info.sha256Url);
+        if (name === 'package') {
+          // ⓑ 구조판: .sha256 텍스트가 zip 해시와 같고 그 텍스트가 공식 서명(.sha256.sig)돼야 한다 → zip 전체가 보호된다.
+          const v = verifySignedSha256(shaText, info.sigUrl ? await this.text(info.sigUrl) : '', got.sha256, { keys: this.keys });
           if (!v.ok) throw new Error(`패키지: ${v.reason}`);
-          extractTo(buf, v.index, path.join(dir, 'package'));
+          this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
+          // ⓓ 경로 탈출·중복은 푸는 자리에서. 수백 MB 라 파일에서 항목 하나씩 읽어 푼다(통째로 메모리에 올리지 않음).
+          extractZipFile(file, path.join(dir, 'package'), { limits: PART_LIMITS.package.zip });
           items.push({ kind: 'package', dir: path.join(dir, 'package'), version: info.version });
+        } else {
+          const want = parseSha256File(shaText);
+          if (!want) throw new Error(`${PART_LABEL[name]}: .sha256 첨부를 읽지 못했습니다`);
+          if (want !== got.sha256) throw new Error(`${PART_LABEL[name]}: sha256 이 맞지 않습니다`);
+          this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
+          const buf = fs.readFileSync(file);   // 메신저·IRIS 창 zip 은 수 MB
+          if (name === 'messenger') {
+            if (!this.installMessenger) throw new Error('메신저 설치 경로가 없습니다');
+            const r = await this.installMessenger(buf);
+            if (r.status !== 201) throw new Error(`메신저: ${r.body?.error || r.status}`);
+            installed.push({ kind: 'messenger', version: info.version });
+          } else {
+            // ⓒ IRIS 창: zip 안 manifest.json+manifest.sig 가 모든 파일을 덮으므로 그대로 둔다(모듈 zip 과 같은 규칙).
+            const v = verifyFaceZip(buf, { keys: this.keys });
+            if (!v.ok) throw new Error(`IRIS 창: ${v.reason}`);
+            extractTo(buf, v.files, path.join(dir, 'face'));
+            items.push({ kind: 'face', dir: path.join(dir, 'face'), version: info.version });
+          }
         }
       }
     } catch (e) {
@@ -370,7 +390,8 @@ export class Updater {
     try { const p = readJson(plan.file); if (p) writeJsonAtomic(plan.file, { ...p, daemonPid: process.pid, daemonPort: this.daemonPort }); }
     catch (e) { return { ok: false, reason: `적용 계획을 고치지 못했습니다: ${e.message}` }; }
     let child;
-    try { child = this.spawnImpl(this.nodeExe(), [apply, plan.file], { detached: true, stdio: 'ignore', windowsHide: true, cwd: path.dirname(apply) }); }
+    // 적용기는 `--plan <경로>` 한 가지만 받는다(P03 parseArgs) — 자리 인자로 주면 계획을 못 읽는다.
+    try { child = this.spawnImpl(this.nodeExe(), [apply, '--plan', plan.file], { detached: true, stdio: 'ignore', windowsHide: true, cwd: path.dirname(apply) }); }
     catch (e) { return { ok: false, reason: `적용기를 실행하지 못했습니다: ${e.message}` }; }
     child?.unref?.();
     this.log(`update apply-now: updater pid=${child?.pid} plan=${plan.file}`);

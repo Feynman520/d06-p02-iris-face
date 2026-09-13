@@ -9,7 +9,7 @@ import { zipWrite } from '../daemon/zip.mjs';
 import { buildManifest, signManifest, generateKeyPair, sha256 } from '../daemon/modsign.mjs';
 import {
   Updater, versionFromTag, cmpSemver, isNewer, parseSha256File, stamp, detectMode, readInstalled,
-  verifyFaceZip, verifyPackageZip, PART_NAMES, APPLY_ORDER, PART_SOURCE, DEV_REASON,
+  verifyFaceZip, verifySignedSha256, extractZipFile, PART_NAMES, APPLY_ORDER, PART_SOURCE, DEV_REASON,
 } from '../daemon/update.mjs';
 
 let pass = 0, fail = 0;
@@ -85,7 +85,10 @@ const PKG_MANIFEST = JSON.stringify({ version: 1, package: { name: 'IRIS', versi
 const dot = (files) => files.map(f => ({ ...f, name: './' + f.name }));
 const PKG_ENTRIES = dot([...pkgFiles, { name: 'payload/manifest.json', data: Buffer.from(PKG_MANIFEST) }]);
 const PKG_ZIP = zipWrite(PKG_ENTRIES);
-const PKG_SIG = signManifest(PKG_MANIFEST, KP.privatePem);
+// 구조판 무결성 = 릴리스 첨부 `<zip>.sha256` 텍스트에 대한 서명(`<zip>.sha256.sig`). zip 안 매니페스트 서명은 폐기(2026-09-14).
+const PKG_ZIP_NAME = 'IRIS-Setup_v1.3.0_2026-09-14.zip';
+const PKG_SHA_TEXT = `${sha256(PKG_ZIP)}  ${PKG_ZIP_NAME}\n`;
+const PKG_SHA_SIG = signManifest(PKG_SHA_TEXT, KP.privatePem);
 {
   const good = verifyFaceZip(FACE_ZIP, { keys: KEYS });
   ok(good.ok && good.files.length === 5 && good.keyId === 'test', '검증(창): 서명된 zip 통과 — module.json 을 요구하지 않음');
@@ -99,22 +102,30 @@ const PKG_SIG = signManifest(PKG_MANIFEST, KP.privatePem);
   ok(/not a zip/.test(verifyFaceZip(Buffer.from('not a zip at all'), { keys: KEYS }).reason), '검증(창): zip 이 아니면 조용히 거부(throw 없음)');
   const bentFace = Buffer.from(FACE_ZIP); bentFace.writeUInt16LE(8, 8);   // 첫 항목 로컬 헤더의 압축 방식만 위조
   ok(/local header method mismatch/.test(verifyFaceZip(bentFace, { keys: KEYS }).reason || ''), '검증(창): 로컬/중앙 압축 방식 불일치 거부(탐색기·7-Zip 이 못 푸는 zip)');
-  const bentPkg = Buffer.from(PKG_ZIP); bentPkg.writeUInt16LE(8, 8);
-  ok(/local header method mismatch/.test(verifyPackageZip(bentPkg, PKG_SIG, { keys: KEYS }).reason || ''), '검증(구조판): 로컬/중앙 압축 방식 불일치 거부');
-
-  const pv = verifyPackageZip(PKG_ZIP, PKG_SIG, { keys: KEYS });
-  ok(pv.ok && pv.manifest === 'payload/manifest.json', '검증(구조판): zip 안 payload\\manifest.json 을 첨부 manifest.sig 로 검증(루트 manifest.json 없어도 통과)');
-  ok(pv.ok && pv.index.every(e => !e.name.startsWith('./')), '검증(구조판): 실물처럼 `./` 로 시작하는 항목 이름을 경로 탈출로 보지 않고 맨 앞 `./` 만 떼어 낸다');
-  const rootOnly = zipWrite([...pkgFiles, { name: 'manifest.json', data: Buffer.from(PKG_MANIFEST) }]);
-  ok(verifyPackageZip(rootOnly, PKG_SIG, { keys: KEYS }).manifest === 'manifest.json', '검증(구조판): 루트 manifest.json 만 있는 옛 꾸러미도 받아 준다(`./` 없이도)');
-  ok(verifyPackageZip(PKG_ZIP, signManifest(PKG_MANIFEST, OTHER.privatePem), { keys: KEYS }).reason === '공식 서명이 없습니다', '검증(구조판): 다른 열쇠 서명 → 거부');
-  ok(verifyPackageZip(PKG_ZIP, '', { keys: KEYS }).reason === 'manifest.sig 첨부가 없습니다', '검증(구조판): 서명 첨부 없음 → 거부');
-  ok(/manifest\.json missing/.test(verifyPackageZip(zipWrite(dot(pkgFiles)), PKG_SIG, { keys: KEYS }).reason), '검증(구조판): 두 자리 어디에도 매니페스트가 없으면 거부');
-  ok(/unsafe path/.test(verifyPackageZip(zipWrite([...PKG_ENTRIES, { name: './../out.txt', data: Buffer.from('x') }]), PKG_SIG, { keys: KEYS }).reason), '검증(구조판): `./` 를 뗀 뒤에도 경로 탈출은 거부(통째로 풀기 전)');
+  // 구조판(2026-09-14 방식 교체): zip 안 매니페스트가 아니라 릴리스 첨부 `.sha256` 텍스트 + 그 텍스트의 서명 `.sha256.sig`.
+  const PKG_SHA = sha256(PKG_ZIP);
+  ok(verifySignedSha256(PKG_SHA_TEXT, PKG_SHA_SIG, PKG_SHA, { keys: KEYS }).ok, '검증(구조판): .sha256 텍스트가 zip 해시와 같고 그 텍스트가 공식 서명됨 → 통과(zip 전체가 보호된다)');
+  ok(verifySignedSha256(PKG_SHA_TEXT, PKG_SHA_SIG, 'c'.repeat(64), { keys: KEYS }).reason === 'sha256 이 맞지 않습니다', '검증(구조판): 내려받은 zip 의 해시가 다르면 거부');
+  ok(verifySignedSha256(`${'d'.repeat(64)}  ${PKG_ZIP_NAME}\n`, PKG_SHA_SIG, PKG_SHA, { keys: KEYS }).reason === 'sha256 이 맞지 않습니다', '검증(구조판): .sha256 첨부를 바꿔치기하면 거부(서명도 같이 깨진다)');
+  ok(verifySignedSha256(PKG_SHA_TEXT, '', PKG_SHA, { keys: KEYS }).reason === '.sha256.sig 첨부가 없습니다', '검증(구조판): 서명 첨부 없음 → 거부');
+  ok(verifySignedSha256(PKG_SHA_TEXT, signManifest(PKG_SHA_TEXT, OTHER.privatePem), PKG_SHA, { keys: KEYS }).reason === '공식 서명이 없습니다', '검증(구조판): 다른 열쇠 서명 → 거부');
+  ok(verifySignedSha256(PKG_SHA_TEXT + ' ', PKG_SHA_SIG, PKG_SHA, { keys: KEYS }).reason === '공식 서명이 없습니다', '검증(구조판): .sha256 텍스트가 1자라도 다르면 서명 실패');
+  ok(verifySignedSha256('no hex here', PKG_SHA_SIG, PKG_SHA, { keys: KEYS }).reason === '.sha256 첨부를 읽지 못했습니다', '검증(구조판): .sha256 첨부가 깨졌으면 거부');
+  // 푸는 단계(경로 검사는 여기서) — 파일에서 항목 하나씩, 통째로 메모리에 올리지 않는다
+  const zf = path.join(tmp, PKG_ZIP_NAME); fs.writeFileSync(zf, PKG_ZIP);
+  const outDir = path.join(tmp, 'pkg-out');
+  const n = extractZipFile(zf, outDir);
+  ok(n === PKG_ENTRIES.length && fs.existsSync(path.join(outDir, 'IRIS-설치.cmd')) && fs.existsSync(path.join(outDir, 'payload', 'manifest.json')), '풀기(구조판): 실물처럼 `./` 로 시작하는 이름을 경로 탈출로 보지 않고 맨 앞 `./` 만 떼어 푼다');
+  const evil = path.join(tmp, 'evil.zip'); fs.writeFileSync(evil, zipWrite([...PKG_ENTRIES, { name: './../out.txt', data: Buffer.from('x') }]));
+  let evilThrew = ''; try { extractZipFile(evil, path.join(tmp, 'pkg-evil')); } catch (e) { evilThrew = e.message; }
+  ok(/unsafe path/.test(evilThrew) && !fs.existsSync(path.join(tmp, 'out.txt')), '풀기(구조판): `./` 를 뗀 뒤에도 경로 탈출은 거부(한 파일도 쓰지 않음)');
+  const bentFile = path.join(tmp, 'bent.zip'); const bentPkg = Buffer.from(PKG_ZIP); bentPkg.writeUInt16LE(8, 8); fs.writeFileSync(bentFile, bentPkg);
+  let bentThrew = ''; try { extractZipFile(bentFile, path.join(tmp, 'pkg-bent')); } catch (e) { bentThrew = e.message; }
+  ok(/local header method mismatch/.test(bentThrew), '풀기(구조판): 로컬/중앙 압축 방식 불일치 거부');
 }
 
 // ---- 5) 가짜 GitHub(바깥 연결 0) ----
-const FACE_SHA = sha256(FACE_ZIP), PKG_SHA = sha256(PKG_ZIP);
+const FACE_SHA = sha256(FACE_ZIP);
 const MSG_ZIP = Buffer.from('PK-fake-messenger-zip'); const MSG_SHA = sha256(MSG_ZIP);
 const DL = 'https://github.com/x/y/releases/download/t/';
 const OBJ = 'https://objects.githubusercontent.com/blob/';
@@ -128,16 +139,16 @@ function fakeFetch(url, opts) {
   calls.push({ url, redirect: opts?.redirect });
   if (/d06-p02-iris-face\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-face--v2.58.0', [asset('iris-face-v2.58.0.zip', FACE_ZIP.length), asset('iris-face-v2.58.0.zip.sha256', 80)], BODY_FACE)));
   if (/d06-p04-iris-messenger\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-messenger--v0.4.0', [asset('iris-messenger-v0.4.0.zip', MSG_ZIP.length), asset('iris-messenger-v0.4.0.zip.sha256', 80)], '메신저 새 판')));
-  if (/d09-p03-iris-installer\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-installer--v1.3.0', [asset('IRIS-Setup_v1.3.0_2026-09-14.zip', PKG_ZIP.length), asset('IRIS-Setup_v1.3.0_2026-09-14.zip.sha256', 80), asset('manifest.sig', 100)], '구조판 새 판')));
+  if (/d09-p03-iris-installer\/releases\/latest$/.test(url)) return Promise.resolve(R(200, rel('iris-installer--v1.3.0', [asset(PKG_ZIP_NAME, PKG_ZIP.length), asset(`${PKG_ZIP_NAME}.sha256`, 80), asset(`${PKG_ZIP_NAME}.sha256.sig`, 100)], '구조판 새 판')));
   const name = url.startsWith(DL) ? url.slice(DL.length) : url.startsWith(OBJ) ? url.slice(OBJ.length) : null;
   if (url.startsWith(DL)) return Promise.resolve(R(302, null, { location: OBJ + name }));   // 실제 GitHub 처럼 한 번 넘긴다
   if (name === 'iris-face-v2.58.0.zip') return Promise.resolve(R(200, FACE_ZIP, { 'content-length': String(FACE_ZIP.length) }));
   if (name === 'iris-messenger-v0.4.0.zip') return Promise.resolve(R(200, MSG_ZIP, { 'content-length': String(MSG_ZIP.length) }));
-  if (name === 'IRIS-Setup_v1.3.0_2026-09-14.zip') return Promise.resolve(R(200, PKG_ZIP, { 'content-length': String(PKG_ZIP.length) }));
+  if (name === PKG_ZIP_NAME) return Promise.resolve(R(200, PKG_ZIP, { 'content-length': String(PKG_ZIP.length) }));
   if (name === 'iris-face-v2.58.0.zip.sha256') return Promise.resolve(R(200, `${shaOverride || FACE_SHA}  iris-face-v2.58.0.zip\n`));
   if (name === 'iris-messenger-v0.4.0.zip.sha256') return Promise.resolve(R(200, `${MSG_SHA}  iris-messenger-v0.4.0.zip\n`));
-  if (name === 'IRIS-Setup_v1.3.0_2026-09-14.zip.sha256') return Promise.resolve(R(200, `${PKG_SHA}  IRIS-Setup_v1.3.0_2026-09-14.zip\n`));
-  if (name === 'manifest.sig') return Promise.resolve(R(200, PKG_SIG));
+  if (name === `${PKG_ZIP_NAME}.sha256`) return Promise.resolve(R(200, PKG_SHA_TEXT));
+  if (name === `${PKG_ZIP_NAME}.sha256.sig`) return Promise.resolve(R(200, PKG_SHA_SIG));
   return Promise.resolve(R(404, 'unexpected ' + url));
 }
 
@@ -146,7 +157,7 @@ const broadcasts = [];
 const msgInstalls = [];
 const spawns = [];
 const mkUpdater = (extra = {}) => new Updater({
-  root, faceRoot: faceHome, stateDir, modulesDir, faceVersion: '2.57.1', daemonPort: 3459, keys: KEYS,
+  root, faceRoot: faceHome, stateDir, modulesDir, daemonPort: 3459, keys: KEYS,
   fetchImpl: fakeFetch, now: () => nowMs, log: () => {}, broadcast: (o) => broadcasts.push(o),
   installMessenger: async (buf) => { msgInstalls.push(buf.length); return { status: 201, body: { name: 'messenger', version: '0.4.0' } }; },
   spawnImpl: (cmd, args, o) => { spawns.push({ cmd, args, o }); return { pid: 4242, unref() {} }; },
@@ -163,7 +174,7 @@ let up;
   const info = await up.check();
   ok(calls.length === 3 && calls.every(c => c.redirect === 'manual' && /^https:\/\/api\.github\.com\//.test(c.url)), '확인: 요청 3개(부품마다 1개) · redirect:manual · api.github.com');
   ok(info.latest.face.version === '2.58.0' && info.latest.face.asset === 'iris-face-v2.58.0.zip' && /\.sha256$/.test(info.latest.face.sha256Url), '확인: 창 = 태그의 판 + 첨부 정규식으로 zip + .sha256 주소');
-  ok(info.latest.package.version === '1.3.0' && /manifest\.sig$/.test(info.latest.package.sigUrl), '확인: 구조판 = manifest.sig 첨부 주소까지');
+  ok(info.latest.package.version === '1.3.0' && info.latest.package.sigUrl.endsWith(`${PKG_ZIP_NAME}.sha256.sig`), '확인: 구조판 = `<zip>.sha256.sig` 첨부 주소까지');
   ok(info.latest.messenger.version === '0.4.0', '확인: 메신저는 카탈로그(daemon/catalog.json)의 주소·정규식 재사용');
   ok(info.installed.face === '2.57.1' && info.installed.package === '1.2.0' && info.installed.messenger === '0.3.2', '확인: 설치 판 3개를 함께 준다');
   ok(info.available.join(',') === 'face,messenger,package', '비교: 세 부품 모두 새 판 → available');
@@ -278,7 +289,7 @@ let planFile = null;
   const r = up.applyNow();
   ok(r.ok === true && r.pid === 4242 && r.plan === planFile, '인계: 적용기를 분리 실행하고 plan 경로를 돌려준다');
   const s = spawns[spawns.length - 1];
-  ok(s.cmd === 'node' && s.args[0] === path.join(updDir, 'apply.mjs') && s.args[1] === planFile, '인계: 동봉 node 가 없으면 PATH 의 node + apply.mjs <plan>');
+  ok(s.cmd === 'node' && s.args.length === 3 && s.args[0] === path.join(updDir, 'apply.mjs') && s.args[1] === '--plan' && s.args[2] === planFile, '인계: 동봉 node 가 없으면 PATH 의 node + apply.mjs --plan <계획>(적용기 parseArgs 는 --plan 만 받는다)');
   ok(s.o.detached === true && s.o.stdio === 'ignore' && s.o.windowsHide === true, '인계: detached·stdio ignore — 데몬이 끝나도 살아남는다');
   // 「나중에」 뒤 데몬이 재시작됐을 수 있으므로 적용기가 기다릴 PID·포트는 누를 때 다시 적는다
   const stale = JSON.parse(fs.readFileSync(planFile, 'utf8')); stale.daemonPid = 1; stale.daemonPort = 1;
