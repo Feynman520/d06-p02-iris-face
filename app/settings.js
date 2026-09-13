@@ -56,10 +56,14 @@ window.Settings = (() => {
       return;
     }
     const parts = [`${r.fps}fps`, resName(r.dprCap, s), `별 ${Math.round(r.density * 100)}%`, r.pauseWhenDim ? '대화 중 멈춤' : '대화 중 계속'];
-    const cost = r.precise && r.chosenCost != null ? ` · 추가 부담 CPU ${r.chosenCost}%(예산 ${r.budget}%, 한 코어=100)` : r.precise ? '' : ' · 대략(정밀 측정 전)';
+    const cost = r.precise && r.chosenCost != null ? ` · 추가 부담 CPU ${r.chosenCost}%(예산 ${r.budget}%, 한 코어=100)` : r.failed ? ' · 측정이 중간에 끊겨 이전 값 유지(창을 다시 연 뒤 다시 측정)' : r.precise ? '' : ' · 대략(정밀 측정 전)';
     const same = Math.abs((cfg.density || 0) - r.density) < 0.05 && !!cfg.pauseWhenDim === !!r.pauseWhenDim;
+    // 프로필 칩(2026-09-13 사용자 "부드럽게 하면 부담인가?"): 후보마다 실측 추가 부담을 보이고 직접 고를 수 있다. ★ = 추천, 테두리 강조 = 지금 값.
+    const list = r.precise && r.costs.length ? r.costs : [{ fps: 60, dprCap: 1 }, { fps: 30, dprCap: 1 }, { fps: 20, dprCap: 1 }];
+    const chips = list.map(c => { const cur = c.fps === s.fps && c.dprCap === s.dprCap, isRec = c.fps === r.fps && c.dprCap === r.dprCap; const label = `${c.fps}fps · ${resName(c.dprCap, s)}${c.cost != null ? ` +${c.cost}%` : ''}`; return `<button class="st-chip${cur ? ' cur' : ''}${c.cost != null && c.cost > r.budget ? ' heavy' : ''}" type="button" data-fps="${c.fps}" data-dpr="${c.dprCap}" title="${esc(c.cost != null ? `이 컴퓨터에서 이 프로필의 추가 부담: CPU ${c.cost}% (GPU 프로세스+화면, 한 코어=100). 예산 ${r.budget}%` : '실측 전 — 직접 고르기')}">${isRec ? '★ ' : ''}${esc(label)}</button>`; }).join('');
     el.hidden = false;
-    el.innerHTML = `<span class="st-sub">이 컴퓨터 추천: ${parts.join(' · ')}${cost}</span>` + (same ? `<span class="st-sub st-ok">✓ 추천대로예요</span>` : `<button id="st-rec-apply" class="text-btn accent" type="button" title="별의 양과 '대화를 보는 동안 멈춤'을 추천값으로 바꿉니다(프레임·해상도는 이미 적용됨)">추천 적용</button>`);
+    el.innerHTML = `<span class="st-sub">이 컴퓨터 추천: ${parts.join(' · ')}${cost}</span>` + (same ? `<span class="st-sub st-ok">✓ 추천대로예요</span>` : `<button id="st-rec-apply" class="text-btn accent" type="button" title="별의 양과 '대화를 보는 동안 멈춤'을 추천값으로 바꿉니다(프레임·해상도는 이미 적용됨)">추천 적용</button>`)
+      + `<div class="st-chips"><span class="st-sub">직접 고르기:</span>${chips}</div>`;
   }
   document.addEventListener('iris:stage', (e) => { if (open) renderCap(e.detail); });
   function applyAll() { applyTheme(); applyMark(); applyFont(); applyName(); applyStage(); }
@@ -189,7 +193,10 @@ window.Settings = (() => {
     $('#st-density').addEventListener('input', (e) => { cfg.density = Number(e.target.value); $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%'; applyStage(); });
     $('#st-density').addEventListener('change', save);
     $('#st-remeasure').addEventListener('click', () => { IrisStars.calibrate().then((s) => { if (open) renderCap(s); }); renderCap(IrisStars.status()); });
-    $('#st-rec').addEventListener('click', (e) => { if (!e.target.closest('#st-rec-apply')) return; const r = IrisStars.status().rec; if (r) pick({ density: r.density, pauseWhenDim: !!r.pauseWhenDim }); });
+    $('#st-rec').addEventListener('click', (e) => {
+      const chip = e.target.closest('.st-chip[data-fps]'); if (chip) { IrisStars.configure({ profile: { fps: Number(chip.dataset.fps), dprCap: Number(chip.dataset.dpr) } }); renderCap(IrisStars.status()); return; }
+      if (!e.target.closest('#st-rec-apply')) return; const r = IrisStars.status().rec; if (r) pick({ density: r.density, pauseWhenDim: !!r.pauseWhenDim });
+    });
     $('#st-pause').addEventListener('change', (e) => pick({ pauseWhenDim: e.target.checked }));
     $('#st-speed').addEventListener('input', (e) => { cfg.markSpeed = Number(e.target.value); $('#st-speed-v').textContent = cfg.markSpeed + '×'; applyMark(); });
     $('#st-speed').addEventListener('change', save);

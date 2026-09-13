@@ -32,7 +32,15 @@ function makeStarEngine() {
   const DIM_FPS = 20, PROFILES = [{ fps: 60, dprCap: 2 }, { fps: 60, dprCap: 1 }, { fps: 30, dprCap: 2 }, { fps: 30, dprCap: 1 }, { fps: 20, dprCap: 1 }]; // 좋은 순. dprCap 2 = 원본 해상도(최대 2배)
   let profile = { fps: 60, dprCap: 1 }, rec = null, calib = null; // calib = 측정 중 {step,total,hold,fps}
   const nativeDpr = () => Math.min(2, window.devicePixelRatio || 1);
-  const metricsApi = () => (typeof window.irisHost?.metrics === 'function' ? window.irisHost.metrics : null);
+  // 지표 통로는 "함수가 있다"만으로 믿지 않는다 — F5 만 하면 새 preload(metrics 있음)가 옛 메인(핸들러 없음) 위에서 돌아 invoke 가 거부된다(2026-09-13 실증). mount 때 한 번 실제로 불러 본다.
+  let metricsOk = null; // null = 아직 모름
+  const metricsApi = () => (metricsOk !== false && typeof window.irisHost?.metrics === 'function' ? window.irisHost.metrics : null);
+  async function probeMetrics() {
+    const f = typeof window.irisHost?.metrics === 'function' ? window.irisHost.metrics : null;
+    if (!f) { metricsOk = false; return false; }
+    try { const r = await f(); metricsOk = Array.isArray(r) && r.length > 0; } catch { metricsOk = false; }
+    emit(); return metricsOk;
+  }
   function loadCap() {
     try {
       const s = JSON.parse(localStorage.getItem(CAP_KEY) || 'null'); if (!s) return;
@@ -337,6 +345,7 @@ function makeStarEngine() {
   /** 이 컴퓨터에 맞는 프레임·해상도 프로필을 실측으로 고른다(설정 「다시 측정」·첫 실행). 약 3~15초. 지표가 없으면(브라우저·창 재시작 전) 보수적 기본값. */
   async function calibrate() {
     if (calib || !govern || reduce || document.hidden) return status();
+    await probeMetrics(); // 매번 실제로 불러 본다(창 재시작으로 통로가 생겼거나, 반대로 죽었을 수 있다)
     const m = metricsApi(), nat = nativeDpr();
     const cands = PROFILES.map(p => ({ fps: p.fps, dprCap: Math.min(p.dprCap, nat) > 1 ? 2 : 1 })).filter((p, i, a) => a.findIndex(q => q.fps === p.fps && q.dprCap === p.dprCap) === i);
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -347,21 +356,24 @@ function makeStarEngine() {
       saveCap(); emit(); return status();
     }
     const read = async () => { let s = 0; for (const x of await m()) if (x.type === 'GPU' || x.type === 'Tab') s += Number(x.cpu) || 0; return s; };
-    const prev = { ...profile }, costs = []; let baseline = 0, chosen = null;
+    const prev = { ...profile }, costs = []; let baseline = 0, failed = false;
     calib = { step: 0, total: cands.length + 1, hold: true, fps: fpsCap }; cancelAnimationFrame(raf); raf = 0; emit();
     try {
       await m(); await sleep(gov.calibWindowMs); baseline = await read(); // 첫 호출은 0 → 한 번 비우고 "안 그릴 때"를 잰다
       calib.hold = false;
-      for (const p of cands) {
+      for (const p of cands) { // 후보 전부를 잰다 — 사용자가 "부드럽게 하면 얼마나 부담인가"를 표로 보고 직접 고를 수 있게(2026-09-13)
         calib.step++; calib.fps = p.fps; profile = { ...p }; resize(); updateFps(); emit(); kick();
         await sleep(gov.calibSettleMs); await m(); await sleep(gov.calibWindowMs);
-        const c = Math.max(0, (await read()) - baseline); costs.push({ ...p, cost: Math.round(c) });
-        if (c <= gov.calibBudget) { chosen = p; break; } // 좋은 순이라 예산 안에 드는 첫 후보가 답
+        costs.push({ ...p, cost: Math.round(Math.max(0, (await read()) - baseline)) });
       }
-    } catch { profile = prev; } finally { calib = null; }
-    if (!chosen) chosen = cands[cands.length - 1];
-    const last = costs[costs.length - 1], over = !costs.some(c => c.cost <= gov.calibBudget);
-    rec = { fps: chosen.fps, dprCap: chosen.dprCap, density: r1(Math.min(density, cap, over ? CAP_MIN : 1.6)), pauseWhenDim: chosen.fps < 60 || over, costs, baseline: Math.round(baseline), budget: gov.calibBudget, precise: true, at, chosenCost: last ? last.cost : null };
+    } catch { failed = true; } finally { calib = null; }
+    if (failed || costs.length !== cands.length) { // 지표가 도중에 죽음(핸들러 없음 등) → 이전 프로필로 되돌리고 "정밀 측정 못 함"으로 남긴다. 가장 가벼운 후보로 굳히지 않는다.
+      metricsOk = false; applyProfile(prev);
+      rec = { fps: prev.fps, dprCap: prev.dprCap, density: r1(Math.min(density, cap)), pauseWhenDim, costs: [], baseline: null, budget: gov.calibBudget, precise: false, failed: true, at };
+      saveCap(); emit(); return status();
+    }
+    const chosen = costs.find(c => c.cost <= gov.calibBudget) || costs[costs.length - 1], over = chosen.cost > gov.calibBudget; // 좋은 순이라 예산 안의 첫 후보가 추천
+    rec = { fps: chosen.fps, dprCap: chosen.dprCap, density: r1(Math.min(density, cap, over ? CAP_MIN : 1.6)), pauseWhenDim: chosen.fps < 60 || over, costs, baseline: Math.round(baseline), budget: gov.calibBudget, precise: true, at, chosenCost: chosen.cost };
     applyProfile(chosen); saveCap(); emit();
     return status();
   }
@@ -379,7 +391,7 @@ function makeStarEngine() {
       // 첫 실행(저장된 프로필 없음): 창이 보이고 앞에 있으면 3초 뒤 한 번 실측해 이 컴퓨터의 프로필을 정한다(지표 없으면 보수적 기본값)
       // 대략 추천만 있는 상태(precise=false)에서 지표가 생기면(창 재시작 뒤) 한 번 정밀하게 다시 잰다.
       const needs = () => !rec || (!rec.precise && !!metricsApi());
-      if (needs() && opts.autoCalibrate !== false) setTimeout(() => { if (needs() && focused && !document.hidden) calibrate(); }, 3000);
+      if (opts.autoCalibrate !== false) probeMetrics().then(() => { if (needs()) setTimeout(() => { if (needs() && focused && !document.hidden) calibrate(); }, 3000); });
     }
     kick();
   }
@@ -394,7 +406,7 @@ function makeStarEngine() {
     if (typeof o.pauseWhenDim === 'boolean') { pauseWhenDim = o.pauseWhenDim; updateFps(); }
     if (o.colors) { colors = { ...colors, ...o.colors }; colCache.clear(); }
     if (o.gov) gov = { ...gov, ...o.gov }; // 검사용 조절 상수 덮어쓰기(창 길이·상승 대기 등)
-    if (o.profile && govern && !calib) applyProfile({ fps: [60, 30, 20].includes(o.profile.fps) ? o.profile.fps : profile.fps, dprCap: o.profile.dprCap === 2 ? 2 : 1 }); // 검사·수동 지정
+    if (o.profile && govern && !calib) { applyProfile({ fps: [60, 30, 20].includes(o.profile.fps) ? o.profile.fps : profile.fps, dprCap: o.profile.dprCap === 2 ? 2 : 1 }); saveCap(); emit(); } // 수동 지정(설정의 프로필 칩)·검사 — 저장돼 다음 실행에도 유지
     if (o.style || o.density) { acc = { t: 0, n: 0, drops: 0, at: 0 }; goodSince = 0; emit(); }
     kick();
   }

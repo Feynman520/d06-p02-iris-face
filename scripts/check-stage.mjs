@@ -31,6 +31,7 @@ const preload = fs.readFileSync(path.join(ROOT, 'app/electron/preload.cjs'), 'ut
 ok('static: stars.js calibrate/profile', ['calibrate', 'PROFILES', 'dprCap', 'DIM_FPS'].every(k => stars.includes(k)));
 ok('static: 빛무리는 1.3R 원만 채운다(fillRect 전체 채우기 없음)', /function glow[\s\S]*?ctx\.arc\(cx, cy, R \* 1\.3/.test(stars) && !/function glow[\s\S]*?fillRect\(0, 0, W, H\)/.test(stars.split('function frame')[0]));
 ok('static: 「다시 측정」 테두리 버튼(accent) + 추천 줄 st-rec', /id="st-remeasure" class="text-btn accent"/.test(html) && html.includes('id="st-rec"'));
+ok('static: 프로필 칩(직접 고르기) + 지표 실제 호출 확인(probeMetrics)', settings.includes('st-chip') && settings.includes('data-fps') && stars.includes('async function probeMetrics'));
 ok('static: preload metrics/gpu · main iris:metrics', preload.includes("invoke('iris:metrics')") && main.includes("ipcMain.handle('iris:metrics'") && main.includes('getAppMetrics'));
 
 // ---- 동적 ----
@@ -116,7 +117,14 @@ else {
   const saved2 = await pg2.evaluate(() => JSON.parse(localStorage.getItem('iris.stage.cap') || 'null'));
   ok('dynamic: 프로필·추천이 localStorage 에 저장', saved2 && saved2.fps === 20 && saved2.dprCap === 1 && saved2.rec && saved2.rec.fps === 20, JSON.stringify(saved2));
   await pg2.evaluate(() => IrisStars.configure({ gov: { calibBudget: 45 } })); s2 = await pg2.evaluate(() => IrisStars.calibrate());
-  ok('dynamic: calibrate(예산 45) → 60fps·100%(첫 통과 후보에서 멈춤)', s2.fps === 60 && s2.dprCap === 1 && s2.rec.costs.length === 2 && s2.rec.pauseWhenDim === false, JSON.stringify(s2.rec));
+  ok('dynamic: calibrate(예산 45) → 60fps·100%(후보 5개 다 재고 예산 안 첫 후보)', s2.fps === 60 && s2.dprCap === 1 && s2.rec.costs.length === 5 && s2.rec.pauseWhenDim === false && s2.rec.chosenCost === 40, JSON.stringify(s2.rec));
+  // 8b) 지표가 도중에 죽음(옛 메인 + 새 preload: invoke 거부) → 이전 프로필 유지 · precise=false · failed. 가장 가벼운 후보로 굳히지 않는다(2026-09-13 실증 버그)
+  await pg2.evaluate(() => { let n = 0; window.irisHost = { metrics: async () => { if (++n > 2) throw new Error('No handler registered'); return [{ type: 'GPU', cpu: 1 }]; } }; });
+  s2 = await pg2.evaluate(() => IrisStars.calibrate());
+  ok('dynamic: 측정 중 지표 실패 → 60fps 유지·precise=false·failed', s2.fps === 60 && s2.dprCap === 1 && s2.rec && s2.rec.failed === true && s2.rec.precise === false && s2.precise === false, JSON.stringify({ fps: s2.fps, rec: s2.rec, precise: s2.precise }));
+  await pg2.evaluate(() => IrisStars.configure({ profile: { fps: 30, dprCap: 1 } }));
+  const saved3 = await pg2.evaluate(() => JSON.parse(localStorage.getItem('iris.stage.cap') || 'null'));
+  ok('dynamic: 수동 프로필(칩)은 저장된다', saved3 && saved3.fps === 30 && saved3.dprCap === 1, JSON.stringify(saved3));
   // 9) 지표 없는 환경(브라우저·창 재시작 전) → 보수적 30fps·100% + 대략 추천(precise=false)
   await pg2.evaluate(() => { delete window.irisHost; IrisStars.remeasure(); }); s2 = await pg2.evaluate(() => IrisStars.calibrate());
   ok('dynamic: 지표 없음 → 30fps·100%·precise=false', s2.fps === 30 && s2.dprCap === 1 && s2.rec && s2.rec.precise === false && s2.precise === false, JSON.stringify({ fps: s2.fps, rec: s2.rec }));
