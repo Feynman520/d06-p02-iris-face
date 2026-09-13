@@ -126,7 +126,7 @@ window.Settings = (() => {
       if (m.installed) {
         const [word, tone] = MOD_STATUS[m.status] || [m.status, 'warn'];
         meta = `<span class="mod-tag on">설치됨</span>v${esc(m.version)} · <span class="${m.official ? '' : 'mod-unofficial'}">${m.official ? '공식' : '비공식'}</span> · <i class="mod-dot ${tone}"></i>${esc(word)}${m.reason ? ' — ' + esc(m.reason) : ''}`;
-        actions = `<button class="text-btn" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn danger" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button>`;
+        actions = `<button class="text-btn outline" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn outline danger" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button>`;
       } else {
         const busy = installing.has(m.name);
         meta = `<span class="mod-tag">미설치</span>${esc(m.desc)}`;
@@ -146,22 +146,6 @@ window.Settings = (() => {
     } catch (e) { Dialog.alert(`${ACT_WORD[act]} 실패: ${e.message}`); }
     installing.delete(name);
     renderMods();
-  }
-  async function installModule(file) {
-    const btn = $('#st-mod-install'); if (btn.disabled) return; btn.disabled = true;
-    const buf = await file.arrayBuffer();
-    const post = (allow) => fetch(`/api/modules/install${allow ? '?allowUnofficial=1' : ''}`, { method: 'POST', headers: { 'x-file-name': encodeURIComponent(file.name) }, body: buf });
-    try {
-      let r = await post(false); let d = await r.json().catch(() => ({}));
-      if (r.status === 409 && d.error === 'unofficial') {
-        const go = await Dialog.confirm(`"${d.name || file.name}" v${d.version || '?'}은(는) ${d.revoked ? '폐기된 열쇠로 서명된' : '서명이 없거나 확인되지 않는'} 비공식 모듈입니다.\n출처를 믿을 수 있을 때만 설치하세요. 설치할까요?`);
-        if (!go) return;
-        r = await post(true); d = await r.json().catch(() => ({}));
-      }
-      if (!r.ok) { Dialog.alert(`설치 실패: ${d.error || r.status}`); return; }
-      Dialog.alert(`설치됨: ${d.name} v${d.version} (${d.official ? '공식' : '비공식'})`);
-    } catch (e) { Dialog.alert(`설치 실패: ${e.message}`); }
-    finally { btn.disabled = false; renderMods(); }
   }
   // ---- 정보(만든 사람) 대화상자 — 값은 전부 데몬 /api/health 의 about(원천 = package.json). 데몬이 아직 없으면 화면 쪽 기본값. ----
   const ABOUT_DEF = { name: 'IRIS-Face', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
@@ -215,8 +199,6 @@ window.Settings = (() => {
     fetch('/api/agents').then(r => r.json()).then((a) => { agents = a; if (open) renderPanel(); }).catch(() => {});
     $('#st-reset').onclick = async () => { if (await Dialog.confirm('꾸미기·권한 설정을 기본값으로 되돌릴까요?')) { cfg = { ...DEF }; applyAll(); save(); renderPanel(); } };
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
-    $('#st-mod-install').onclick = () => $('#st-mod-file').click();
-    $('#st-mod-file').addEventListener('change', (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) installModule(f); });
     $('#maker').onclick = about;
     applyMaker();
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
