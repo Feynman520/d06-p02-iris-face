@@ -284,10 +284,11 @@
   }
   function openModule(name) {
     const m = modules.find(x => x.name === name); if (!m || !m.panel || !PANEL_RE.test(m.panel)) return false;
-    drawerOpenFor(`mod:${name}`) ? closeDrawer() : openDrawer(`mod:${name}`, { title: `${m.icon} ${m.label}`, url: m.panel, ext: false });
+    drawerOpenFor(`mod:${name}`) ? closeDrawer() : openDrawer(`mod:${name}`, { title: m.label, url: m.panel, ext: false });
     return true;
   }
-  // 모듈 목록 → 헤더 버튼(아이콘 + 배지). 실행 중이 아니면(또는 panel 주소가 127.0.0.1 이 아니면) 눌리지 않고 이유를 툴팁으로. 목록이 비면 버튼 자체가 없다.
+  // 모듈 목록 → 헤더 버튼(선 아이콘 + 배지). 아이콘은 module.json.icon 이름을 app/icons.js 에서 찾고(모르면 plug) 모듈이 준 문자열은 HTML 에 넣지 않는다(v2.52).
+  // 실행 중이 아니면(또는 panel 주소가 127.0.0.1 이 아니면) 눌리지 않고 이유를 툴팁으로. 목록이 비면 버튼 자체가 없다.
   function setModules(list) {
     modules = Array.isArray(list) ? list : [];
     const host = $('#mod-btns');
@@ -295,7 +296,7 @@
       const rejected = !!m.panel && !PANEL_RE.test(m.panel);
       const panelOk = !!m.panel && !rejected;
       const n = Number(m.badge) || 0;
-      return `<button class="mod-btn${drawerOpenFor(`mod:${m.name}`) ? ' active' : ''}" data-mod="${esc(m.name)}" ${panelOk ? '' : 'disabled'} title="${esc(m.label)} v${esc(m.version)}${m.official ? ' · 공식' : ' · 비공식'}${panelOk ? '' : ` · ${rejected ? 'panel address rejected' : `${esc(m.status)}${m.reason ? ': ' + esc(m.reason) : ''}`}`}">${esc(m.icon)}${n > 0 ? `<span class="mod-badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
+      return `<button class="mod-btn icon-btn${drawerOpenFor(`mod:${m.name}`) ? ' active' : ''}" data-mod="${esc(m.name)}" ${panelOk ? '' : 'disabled'} title="${esc(m.label)} v${esc(m.version)}${m.official ? ' · 공식' : ' · 비공식'}${panelOk ? '' : ` · ${rejected ? 'panel address rejected' : `${esc(m.status)}${m.reason ? ': ' + esc(m.reason) : ''}`}`}">${Icons.svg(m.icon)}${n > 0 ? `<span class="mod-badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
     }).join('');
     for (const b of host.querySelectorAll('.mod-btn')) b.onclick = () => openModule(b.dataset.mod);
     if (drawerKey?.startsWith('mod:') && !modules.some(m => `mod:${m.name}` === drawerKey && m.panel && PANEL_RE.test(m.panel))) closeDrawer(); // 보던 모듈이 죽거나 panel 이 거부되면 서랍도 닫힘

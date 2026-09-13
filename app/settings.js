@@ -108,13 +108,21 @@ window.Settings = (() => {
     renderMods();
   }
   // ---- 모듈(콘센트, 2026-09-11): 목록은 데몬 /api/modules. 이름·아이콘·설명은 전부 module.json 에서 온다(본체는 어떤 모듈인지 모른다). ----
-  const MOD_STATUS = { running: '실행 중', stopped: '멈춤', failed: '실패', incompatible: '맞지 않음', 'grade-unsupported': '동의 필요(2차)' };
+  // 상태 → 낱말 + 점 색(ok 초록 · warn 노랑 · bad 빨강). 아이콘은 app/icons.js 이름(모르면 plug) — 모듈이 준 문자열을 HTML 에 넣지 않는다(v2.52).
+  const MOD_STATUS = { running: ['실행 중', 'ok'], stopped: ['멈춤', 'warn'], failed: ['실패', 'bad'], incompatible: ['맞지 않음', 'bad'], 'grade-unsupported': ['동의 필요', 'warn'] };
   async function renderMods() {
     const host = $('#st-mods'); if (!host) return;
     let list = [];
-    try { const r = await fetch('/api/modules'); list = (await r.json()).list || []; } catch { host.innerHTML = '<div class="st-hint">데몬에 연결되지 않아 목록을 읽지 못했습니다.</div>'; return; }
-    if (!list.length) { host.innerHTML = '<div class="st-hint">설치된 모듈 없음</div>'; return; }
-    host.innerHTML = list.map(m => `<div class="st-row" data-mod="${esc(m.name)}"><span class="st-row-main">${esc(m.icon)} <b>${esc(m.label)}</b> <span class="st-sub">v${esc(m.version)} · ${m.official ? '공식 ✓' : '비공식 ⚠'} · ${esc(MOD_STATUS[m.status] || m.status)}${m.reason ? ' — ' + esc(m.reason) : ''}</span></span><span class="dash-actions"><button class="text-btn" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button></span></div>`).join('');
+    try { const r = await fetch('/api/modules'); list = (await r.json()).list || []; } catch { host.innerHTML = '<div class="mods-empty">데몬에 연결되지 않아 목록을 읽지 못했습니다.</div>'; return; }
+    if (!list.length) { host.innerHTML = '<div class="mods-empty">설치된 모듈이 없습니다. 모듈이 없으면 Face는 인터넷에 연결하지 않습니다.</div>'; return; }
+    host.innerHTML = list.map(m => {
+      const [word, tone] = MOD_STATUS[m.status] || [m.status, 'warn'];
+      return `<div class="mod-row" data-mod="${esc(m.name)}">
+        <span class="mod-ic">${Icons.svg(m.icon, 18)}</span>
+        <span class="mod-text"><b>${esc(m.label)}</b><small>v${esc(m.version)} · <span class="${m.official ? '' : 'mod-unofficial'}">${m.official ? '공식' : '비공식'}</span> · <i class="mod-dot ${tone}"></i>${esc(word)}${m.reason ? ' — ' + esc(m.reason) : ''}</small></span>
+        <span class="dash-actions"><button class="text-btn" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn danger" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button></span>
+      </div>`;
+    }).join('');
   }
   async function modAct(name, act) {
     if (act === 'remove' && !(await Dialog.confirm(`모듈 "${name}"을 제거할까요?\n그 모듈의 폴더와 안에 저장된 데이터(로그인·설정·기록)가 함께 지워집니다. 모듈이 백업 문구를 줬다면 적어 두셨는지 확인하세요.`))) return;

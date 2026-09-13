@@ -37,7 +37,7 @@
       <section><h3>중앙 애니메이션</h3><div id="st-stages" class="st-list"></div>
         <div class="st-line"><label>별의 양 <input id="st-density" type="range" min="0.3" max="1.6" step="0.1"> <span id="st-density-v"></span></label></div>
         <div class="st-line indent"><span class="st-sub">부드러움</span><span id="st-fps" class="st-chips"></span> <button id="st-remeasure" class="text-btn accent" type="button" title="이 컴퓨터에서 각 fps가 CPU·GPU에 주는 부담을 약 10초 실측해 추천(★)을 표시합니다">다시 측정</button></div>
-        <div class="st-line"><label class="ro"><input id="st-pause" type="checkbox"> 대화를 보는 동안 멈춤</label></div></section>
+        <label class="st-opt"><span class="st-opt-text">대화를 보는 동안 멈춤<small>세션 화면이 덮으면 별을 그리지 않습니다</small></span><input id="st-pause" class="sw" type="checkbox"></label></section>
       <section><h3>권한 기본값 <span class="st-sub">새로 여는 세션에 적용 · "설정 파일대로" = 터미널과 동일</span></h3>
         <div class="perm-grid">
           <span class="chip claude">Claude</span>
@@ -48,13 +48,13 @@
             <label class="perm-field"><select id="st-sandbox" class="pick"></select><span>샌드박스</span></label>
           </div>
         </div></section>
+      <!-- 알림·모듈(v2.52, 2026-09-13): 한 줄 = 제목 + 한 줄 설명 + 오른쪽 스위치(.st-opt). 절 제목 오른쪽에 그 절의 유일한 행동 버튼. -->
       <section><h3 class="st-h-row">알림 <button id="st-notify-test" class="text-btn" title="예시 알림을 띄워 봅니다">미리보기</button></h3>
-        <div class="st-line"><label class="ro"><input id="st-notify" type="checkbox"> 작업이 끝나면 알림</label><span class="st-sub">대기·확인 필요·종료로 바뀔 때</span></div>
-        <div class="st-line indent"><label class="ro"><input id="st-notify-os" type="checkbox"> 창이 뒤에 있거나 숨어 있으면 윈도 알림도</label></div></section>
-      <section><h3>모듈 <span class="st-sub">꽂아 쓰는 확장 기능 · 하나도 없으면 Face는 바깥과 통신하지 않습니다</span></h3>
-        <div id="st-mods" class="st-list"></div>
-        <div class="st-line"><button id="st-mod-install" class="text-btn accent" title="모듈 zip 파일을 골라 설치합니다">zip으로 설치</button><input id="st-mod-file" type="file" accept=".zip" hidden></div>
-        <p class="st-hint">공식 모듈은 서명으로 확인합니다. 서명이 없거나 맞지 않는 모듈은 출처를 확인한 뒤에만 설치하세요. 설치된 모듈이 접근하는 것: 인터넷(그 모듈의 서버) · 자기 폴더 · Face 알림.</p></section>
+        <label class="st-opt"><span class="st-opt-text">작업이 끝나면 알림<small>세션이 대기·확인 필요·종료로 바뀔 때 창 오른쪽 아래에</small></span><input id="st-notify" class="sw" type="checkbox"></label>
+        <label class="st-opt child"><span class="st-opt-text">윈도 알림도<small>Face 창이 뒤에 있거나 숨어 있을 때만</small></span><input id="st-notify-os" class="sw" type="checkbox"></label></section>
+      <section><h3 class="st-h-row">모듈 <button id="st-mod-install" class="text-btn accent" title="모듈 zip 파일을 골라 설치합니다">zip으로 설치</button><input id="st-mod-file" type="file" accept=".zip" hidden></h3>
+        <div id="st-mods" class="mods"></div>
+        <p class="st-hint">서명이 확인된 모듈만 공식으로 표시합니다. 모듈은 자기 폴더·자기 서버·Face 알림에만 닿습니다.</p></section>
     </div>
     <div class="st-foot">
       <button id="btn-shutdown" class="power-btn" title="데몬과 모든 세션을 각 PID 기준으로 끝내고 창도 닫습니다"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 3v8M6.3 6.6a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>전부 종료</button>
@@ -161,6 +161,7 @@
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/addon-fit.js"></script>
 <script src="/app/dialog.js"></script>
+<script src="/app/icons.js"></script>
 <script src="/app/registry.js"></script>
 <script src="/app/stars.js"></script>
 <script src="/app/transcript.js"></script>

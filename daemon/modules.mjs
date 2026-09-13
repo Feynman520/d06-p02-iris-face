@@ -73,7 +73,7 @@ export class ModuleHost {
     return this.list();
   }
   list() {
-    return [...this.mods.values()].map(m => ({ name: m.name, label: String(m.info?.label || m.name), icon: String(m.info?.icon || '▫'), version: String(m.info?.version || '?'), contract: Number(m.info?.contract) || null, grade: Number(m.info?.grade ?? 0), status: m.status, reason: m.reason || '', panel: m.panel, badge: m.badge || 0, official: !!m.official, pid: m.pid }));
+    return [...this.mods.values()].map(m => ({ name: m.name, label: String(m.info?.label || m.name), icon: String(m.info?.icon || 'plug'), version: String(m.info?.version || '?'), contract: Number(m.info?.contract) || null, grade: Number(m.info?.grade ?? 0), status: m.status, reason: m.reason || '', panel: m.panel, badge: m.badge || 0, official: !!m.official, pid: m.pid }));
   }
   // ---- 프로세스: node <entry> 를 자식으로. stdin/stdout = 계약 전선, stderr = 로그. PID 는 메모리 + 로그. ----
   start(name) {
