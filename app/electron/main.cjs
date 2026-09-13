@@ -11,6 +11,10 @@ const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const URL_ = 'http://127.0.0.1:3458/';
 const STATE = path.join(ROOT, 'state');
 const TIP = `IRIS · by ${String(PKG.author || '').replace(/\s*\(.*\)$/, '') || 'Sejun Ham'}`; // 트레이 툴팁의 각인(원천 = package.json author)
+// IRIS 아이콘(2026-09-13, v2.57.1): app/iris.ico 한 파일이 창·작업표시줄·트레이·설치기 바탕화면 바로가기의 공통 원천.
+// (별의 구 아이콘 — 이 PC의 바탕화면 바로가기가 쓰던 그 파일.) 없으면 예전처럼 그려 쓰는 마름모로 되돌아간다.
+const ICON_PATH = path.join(ROOT, 'app', 'iris.ico');
+const ICON = fs.existsSync(ICON_PATH) ? ICON_PATH : null;
 let win = null, tray = null, quitting = false, lastHealth = null;
 
 // 윈도 OS 알림(작업 완료, 2026-09-11)은 앱 사용자 모델 ID가 있어야 앱 이름으로 뜬다(없으면 'electron.app.Electron')
@@ -55,7 +59,8 @@ async function ensureDaemon() {
 }
 
 function trayIcon() {
-  // 32×32 BGRA 마름모(◈) — 외부 이미지 파일 없이 그린다
+  // app/iris.ico 가 있으면 그것(윈도가 트레이 크기에 맞는 판을 고른다), 없으면 아래 그려 쓰는 마름모(◈).
+  if (ICON) { try { const img = nativeImage.createFromPath(ICON); if (!img.isEmpty()) return img; } catch {} }
   const S = 32, buf = Buffer.alloc(S * S * 4, 0);
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const d = Math.abs(x - 15.5) + Math.abs(y - 15.5);
@@ -68,6 +73,7 @@ function trayIcon() {
 function createWindow() {
   win = new BrowserWindow({
     width: 1440, height: 920, minWidth: 900, minHeight: 600, backgroundColor: '#0f1218', title: 'IRIS', autoHideMenuBar: true, show: false,
+    ...(ICON ? { icon: ICON } : {}),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') },
   });
   win.loadURL(URL_);
