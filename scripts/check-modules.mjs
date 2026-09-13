@@ -3,7 +3,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { zipRead, zipWrite, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, MAX_ENTRIES } from '../daemon/zip.mjs';
+import { spawnSync } from 'node:child_process';
+import { zipRead, zipWrite, zipIndex, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, MAX_ENTRIES } from '../daemon/zip.mjs';
 import { buildManifest, signManifest, verifyManifest, generateKeyPair, OFFICIAL_PUBLIC_KEYS } from '../daemon/modsign.mjs';
 import { ModuleHost, validateInfo, semverGte, CONTRACT, readModuleJson } from '../daemon/modules.mjs';
 import { inspectZip, installZip, removeModule } from '../daemon/modinstall.mjs';
@@ -39,6 +40,24 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   forged.writeUInt32LE(10, 22); forged.writeUInt32LE(10, centralOff + 24); // local·central usize 필드 둘 다 위조
   let forgedThrew = false; try { zipRead(forged); } catch (e) { forgedThrew = /inflate exceeded declared size/.test(e.message); }
   ok(forgedThrew, 'zip: 위조 usize 거부');
+  // 로컬 헤더의 압축 방식(method)은 오프셋 8 — 중앙 디렉터리와 달라지면 우리 zipRead 는 넘어가지만
+  // 탐색기·7-Zip·bsdtar 는 항목 전부를 CRC 오류로 거절한다(2026-09-14 고침).
+  ok(zipIndex(buf).every(e => e.localMethod === e.method) && zipIndex(deflatBuf).every(e => e.localMethod === e.method), 'zip: 로컬 헤더 method(offset 8) == 중앙 디렉터리 method (저장·deflate 둘 다)');
+  const bent = Buffer.from(deflatBuf); bent.writeUInt16LE(0, 8); // 첫 항목 로컬 헤더의 method 만 위조
+  ok(zipIndex(bent)[0].localMethod === 0 && zipIndex(bent)[0].method === 8, 'zip: 로컬/중앙 method 불일치를 읽어 낸다(localMethod)');
+  let mismatchThrew = false; try { zipIndex(bent, { strictLocal: true }); } catch (e) { mismatchThrew = /local header method mismatch/.test(e.message); }
+  ok(mismatchThrew, 'zip: strictLocal 이면 불일치 거부(업데이트 검증이 쓴다)');
+  // 바깥 zip 도구(윈도 기본 bsdtar)로도 풀리는지 — 도구가 없으면 건너뛴다
+  const outDir = path.join(tmp, 'zip-extract'); fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, 'roundtrip.zip'), zipWrite([...entries, ...deflatEntries]));
+  // 윈도 기본 bsdtar(System32\tar.exe — PATH 의 tar 는 zip 을 못 읽는 GNU tar 일 수 있다).
+  // bsdtar 는 드라이브 문자가 든 경로를 원격 호스트로 보므로 그 폴더에서 상대 이름으로 부른다.
+  const bsdtar = process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'tar.exe') : null;
+  if (!bsdtar || !fs.existsSync(bsdtar)) { pass++; console.log('PASS zip: 바깥 zip 도구 없음 — 건너뜀'); }
+  else {
+    const tarRun = spawnSync(bsdtar, ['-xf', 'roundtrip.zip'], { cwd: outDir, encoding: 'utf8', windowsHide: true });
+    ok(tarRun.status === 0 && fs.readFileSync(path.join(outDir, 'big.txt'), 'utf8').length === 6000 && fs.readFileSync(path.join(outDir, 'sub', '한글.txt'), 'utf8') === '안녕', `zip: 바깥 zip 도구(bsdtar)로도 풀린다 ${(tarRun.stderr || '').trim().slice(0, 90)}`);
+  }
 }
 
 // ---- 2) 매니페스트·서명 ----

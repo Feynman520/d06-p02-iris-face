@@ -82,7 +82,7 @@ export function readInstalled({ root, mode, modulesDir, faceRoot = FACE_ROOT, re
 
 /** IRIS 창 zip: 모듈 zip 과 같은 규칙(경로 탈출·중복·매니페스트 일치) + 서명 필수. module.json 은 요구하지 않는다. */
 export function verifyFaceZip(buf, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_LIMITS.face.zip } = {}) {
-  let files; try { files = zipRead(buf, limits); } catch (e) { return { ok: false, reason: e.message }; }
+  let files; try { files = zipRead(buf, { ...limits, strictLocal: true }); } catch (e) { return { ok: false, reason: e.message }; }
   const errors = checkPaths(files);
   const m = checkManifest(files, keys); errors.push(...m.errors);
   if (errors.length) return { ok: false, reason: errors.join('; ') };
@@ -93,7 +93,7 @@ export function verifyFaceZip(buf, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_
 /** 구조판 zip: 항목 이름 검사 + zip 안 manifest.json 텍스트를 릴리스 첨부 manifest.sig 로 검증(설계 3절 ⓒ).
  *  수백 MB 라 통째로 풀지 않고 중앙 디렉터리만 훑는다. */
 export function verifyPackageZip(buf, sigText, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_LIMITS.package.zip } = {}) {
-  let index; try { index = zipIndex(buf, limits); } catch (e) { return { ok: false, reason: e.message }; }
+  let index; try { index = zipIndex(buf, { ...limits, strictLocal: true }); } catch (e) { return { ok: false, reason: e.message }; }
   const entries = index.filter(e => !e.name.endsWith('/'));
   const errors = checkPaths(entries);
   if (errors.length) return { ok: false, reason: errors.join('; ') };

@@ -92,6 +92,10 @@ const PKG_SIG = signManifest(PKG_MANIFEST, KP.privatePem);
   ok(/unsafe path/.test(verifyFaceZip(packZip([...faceFiles, { name: 'C:\\evil.mjs', data: Buffer.from('x') }]), { keys: KEYS }).reason), '검증(창): 절대경로 항목 거부');
   ok(/duplicate entry/.test(verifyFaceZip(packZip([...faceFiles, { name: 'APP/main.js', data: Buffer.from('x') }]), { keys: KEYS }).reason), '검증(창): 중복 항목(대소문자 무시) 거부');
   ok(/not a zip/.test(verifyFaceZip(Buffer.from('not a zip at all'), { keys: KEYS }).reason), '검증(창): zip 이 아니면 조용히 거부(throw 없음)');
+  const bentFace = Buffer.from(FACE_ZIP); bentFace.writeUInt16LE(8, 8);   // 첫 항목 로컬 헤더의 압축 방식만 위조
+  ok(/local header method mismatch/.test(verifyFaceZip(bentFace, { keys: KEYS }).reason || ''), '검증(창): 로컬/중앙 압축 방식 불일치 거부(탐색기·7-Zip 이 못 푸는 zip)');
+  const bentPkg = Buffer.from(PKG_ZIP); bentPkg.writeUInt16LE(8, 8);
+  ok(/local header method mismatch/.test(verifyPackageZip(bentPkg, PKG_SIG, { keys: KEYS }).reason || ''), '검증(구조판): 로컬/중앙 압축 방식 불일치 거부');
 
   ok(verifyPackageZip(PKG_ZIP, PKG_SIG, { keys: KEYS }).ok, '검증(구조판): zip 안 manifest.json 을 첨부 manifest.sig 로 검증');
   ok(verifyPackageZip(PKG_ZIP, signManifest(PKG_MANIFEST, OTHER.privatePem), { keys: KEYS }).reason === '공식 서명이 없습니다', '검증(구조판): 다른 열쇠 서명 → 거부');

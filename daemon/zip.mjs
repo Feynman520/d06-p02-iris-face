@@ -17,7 +17,8 @@ function findEocd(buf) {
 
 /** 중앙 디렉터리만 훑어 항목 목록을 만든다(압축 해제 없음, 폴더 항목 포함). [{ name, method, csize, usize, start }].
  *  큰 zip(구조판 설치 패키지)에서 이름 검사·항목 하나 꺼내기를 통째 메모리 해제 없이 하려고 분리했다(v2.58).
- *  opts: { maxEntryBytes, maxTotalBytes, maxEntries } — 선언된 usize 기준 폭탄 방어. */
+ *  opts: { maxEntryBytes, maxTotalBytes, maxEntries } — 선언된 usize 기준 폭탄 방어.
+ *  opts.strictLocal: 로컬 헤더의 method 가 중앙 디렉터리와 다르면 거부(보통 zip 도구가 못 푸는 zip). 업데이트 검증에서 쓴다. */
 export function zipIndex(buf, opts = {}) {
   const maxEntryBytes = opts.maxEntryBytes ?? MAX_ENTRY_BYTES, maxTotalBytes = opts.maxTotalBytes ?? MAX_TOTAL_BYTES, maxEntries = opts.maxEntries ?? MAX_ENTRIES;
   if (!Buffer.isBuffer(buf) || buf.length < 22) throw new Error('not a zip (too short)');
@@ -37,9 +38,11 @@ export function zipIndex(buf, opts = {}) {
     if (usize > maxEntryBytes) throw new Error(`entry too large: ${name} (${usize} bytes)`);
     total += usize; if (total > maxTotalBytes) throw new Error('zip too large (total)');
     if (lho + 30 > buf.length || buf.readUInt32LE(lho) !== SIG_LOCAL) throw new Error(`bad local header: ${name}`);
+    const localMethod = buf.readUInt16LE(lho + 8);
+    if (opts.strictLocal && localMethod !== method) throw new Error(`local header method mismatch: ${name} (local ${localMethod}, central ${method})`);
     const start = lho + 30 + buf.readUInt16LE(lho + 26) + buf.readUInt16LE(lho + 28);
     if (start + csize > buf.length) throw new Error(`truncated entry: ${name}`);
-    out.push({ name, method, csize, usize, start });
+    out.push({ name, method, localMethod, csize, usize, start });
     off += 46 + nlen + xlen + clen;
   }
   return out;
@@ -62,7 +65,9 @@ export function zipRead(buf, opts = {}) {
   return zipIndex(buf, opts).filter(e => !e.name.endsWith('/')).map(e => ({ name: e.name, data: zipEntryData(buf, e) }));
 }
 
-/** [{ name, data, deflate?: true }] → zip 버퍼. 이름은 슬래시 구분, UTF-8 플래그(0x0800). deflate 미지정(false)=저장(0), true=deflate(8). */
+/** [{ name, data, deflate?: true }] → zip 버퍼. 이름은 슬래시 구분, UTF-8 플래그(0x0800). deflate 미지정(false)=저장(0), true=deflate(8).
+ *  ⚠ 로컬 헤더의 압축 방식(method)은 **오프셋 8**이다(10은 수정 시각). 2026-09-14 이전에는 10에 썼는데,
+ *  우리 zipRead 는 중앙 디렉터리만 보므로 왕복은 됐지만 탐색기·7-Zip·bsdtar 는 항목 전부를 CRC 오류로 거절했다. */
 export function zipWrite(entries) {
   const locals = [], centrals = []; let off = 0;
   for (const { name, data, deflate } of entries) {
@@ -71,7 +76,7 @@ export function zipWrite(entries) {
     const payload = deflate ? zlib.deflateRawSync(data) : data;
     const csize = payload.length, usize = data.length;
     const lh = Buffer.alloc(30);
-    lh.writeUInt32LE(SIG_LOCAL, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(0, 8); lh.writeUInt16LE(method, 10); lh.writeUInt16LE(0, 12);
+    lh.writeUInt32LE(SIG_LOCAL, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(method, 8); lh.writeUInt16LE(0, 10); lh.writeUInt16LE(0, 12);
     lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(csize, 18); lh.writeUInt32LE(usize, 22); lh.writeUInt16LE(nb.length, 26); lh.writeUInt16LE(0, 28);
     const ch = Buffer.alloc(46);
     ch.writeUInt32LE(SIG_CENTRAL, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(method, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(0, 14);
