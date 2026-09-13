@@ -339,9 +339,11 @@ a { color: var(--iris); }
 .st-about code { font: 11px var(--mono); }
 
 /* ---- 설정 패널 ---- */
-.settings { position: fixed; top: 48px; right: 0; bottom: 0; width: min(720px, 80vw); display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line-2); box-shadow: -20px 0 60px rgba(0,0,0,.45); z-index: 21; }
-.st-body { overflow-y: auto; padding: 6px 18px 30px; }
-.st-body section { padding: 14px 0 6px; border-bottom: 1px solid var(--line); }
+/* 대시보드 서랍(.dash)과 같은 자리·같은 크기로 — 레일 오른쪽 화면 전체(v2.56, 2026-09-13 사용자 요청). 이전엔 오른쪽 720px 패널이었다. */
+.settings { position: fixed; top: 48px; left: var(--rail-w); right: 0; bottom: 0; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line-2); box-shadow: -20px 0 60px rgba(0,0,0,.45); z-index: 21; transition: left .22s ease; }
+#app.rail-hidden .settings { left: 52px; }
+.st-body { overflow-y: auto; padding: 6px 24px 30px; }
+.st-body section { padding: 14px 0 6px; border-bottom: 1px solid var(--line); max-width: 960px; margin: 0 auto; } /* 넓은 화면에서도 읽기 폭은 가운데 한 줄로 */
 .st-body h3 { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
 .st-line { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; color: var(--ink-2); }
 .st-line label { display: inline-flex; align-items: center; gap: 8px; }
