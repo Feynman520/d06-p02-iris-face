@@ -355,6 +355,7 @@ a { color: var(--iris); }
 .st-chip.cur { border-color: var(--iris); color: var(--iris); background: var(--iris-soft); }
 .st-chip.heavy { color: var(--warn); }
 .st-chip.heavy.cur { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.st-chip small { margin-left: 5px; font-size: 10.5px; opacity: .75; } /* 실측 뒤 "+n%" */
 .st-h-row { display: flex; align-items: center; justify-content: space-between; }
 .st-h-row .text-btn { font-weight: 400; }
 .st-input { flex: 1; font: 14px var(--sans); color: var(--ink); background: var(--base); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 10px; outline: none; }

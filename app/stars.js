@@ -29,7 +29,7 @@ function makeStarEngine() {
   const r1 = (v) => Math.round(v * 10) / 10;
   const SLOW_AT = 0.5; // 별을 이만큼까지 줄여도 무거우면 그다음 수단은 30fps(slow), 그래도 무거우면 별을 더 줄인다(CAP_MIN까지). 올라갈 땐 반대 순서.
   // ---- 프레임·해상도 프로필(v2.51) ----
-  const DIM_FPS = 20, PROFILES = [{ fps: 60, dprCap: 2 }, { fps: 60, dprCap: 1 }, { fps: 30, dprCap: 2 }, { fps: 30, dprCap: 1 }, { fps: 20, dprCap: 1 }]; // 좋은 순. dprCap 2 = 원본 해상도(최대 2배)
+  const DIM_FPS = 20, PROFILES = [{ fps: 60, dprCap: 1 }, { fps: 30, dprCap: 1 }, { fps: 20, dprCap: 1 }]; // 좋은 순. 해상도는 100%(dprCap 1) 고정 — 부드러움은 fps 만이 정하고, 원본 해상도는 화소 2.25배에 눈에 띄는 차이가 없다(2026-09-13 사용자 결정 "fps만 보여주자"). dprCap 2 는 검사·수동용으로만 남김
   let profile = { fps: 60, dprCap: 1 }, rec = null, calib = null; // calib = 측정 중 {step,total,hold,fps}
   const nativeDpr = () => Math.min(2, window.devicePixelRatio || 1);
   // 지표 통로는 "함수가 있다"만으로 믿지 않는다 — F5 만 하면 새 preload(metrics 있음)가 옛 메인(핸들러 없음) 위에서 돌아 invoke 가 거부된다(2026-09-13 실증). mount 때 한 번 실제로 불러 본다.
@@ -347,7 +347,7 @@ function makeStarEngine() {
     if (calib || !govern || reduce || document.hidden) return status();
     await probeMetrics(); // 매번 실제로 불러 본다(창 재시작으로 통로가 생겼거나, 반대로 죽었을 수 있다)
     const m = metricsApi(), nat = nativeDpr();
-    const cands = PROFILES.map(p => ({ fps: p.fps, dprCap: Math.min(p.dprCap, nat) > 1 ? 2 : 1 })).filter((p, i, a) => a.findIndex(q => q.fps === p.fps && q.dprCap === p.dprCap) === i);
+    const cands = PROFILES.map(p => ({ ...p }));
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const at = new Date().toISOString();
     if (!m) { // 정밀 지표 없음 → 보수적 프로필(30fps·100%)과 대략 추천

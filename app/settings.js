@@ -36,36 +36,23 @@ window.Settings = (() => {
   function applyName() { const n = (cfg.name || health?.rootName || 'IRIS').trim(); $('#wordmark').textContent = n; document.title = n; }
   function applyStage() { IrisStars.configure({ style: cfg.stage, density: cfg.density, pauseWhenDim: cfg.pauseWhenDim }); }
   // 자동 조절 표시(2026-09-12): 이 컴퓨터의 상한 밀도·지금 그리는 별 수·프레임 상한. 엔진이 'iris:stage' 이벤트로 바뀔 때마다 알린다.
-  // v2.51(2026-09-13): 프레임·해상도 프로필(실측)과 "이 컴퓨터 추천" 줄. 측정 중엔 진행을, 끝나면 프로필·지금 프레임·추천을 보인다.
-  const resName = (dprCap, s) => (dprCap >= 2 || (s.nativeDpr || 1) <= 1) ? '원본 해상도' : '해상도 100%';
-  function renderCap(s) {
-    const el = $('#st-cap'), btn = $('#st-remeasure'); if (!el || !s) return;
-    if (s.calib) { el.textContent = `이 컴퓨터에 맞춰 측정 중… ${s.calib.step}/${s.calib.total} (약 ${Math.max(3, (s.calib.total - s.calib.step) * 2.5) | 0}초 남음)`; btn.disabled = true; renderRec(s); return; }
+  // v2.51.2(2026-09-13, 사용자 결정 "fps만 보여주자"): 부드러움 = fps 가 결정하고 부담 = fps × 화소인데 화소는 100%로 고정하므로, 사용자에겐 fps 칩만 보인다.
+  // 칩 = 60·30·20fps, ★ = 이 컴퓨터 실측 추천(예산 안 첫 후보), 강조 = 지금 값, 실측 뒤엔 칩마다 "+n%"(추가 CPU 부담, 한 코어=100). 측정 중엔 진행만.
+  function renderStage(s) {
+    const el = $('#st-fps'), btn = $('#st-remeasure'); if (!el || !s) return;
+    if (s.calib) { el.innerHTML = `<span class="st-sub">이 컴퓨터에 맞춰 측정 중… ${s.calib.step}/${s.calib.total}</span>`; btn.disabled = true; return; }
     btn.disabled = false;
-    const why = s.fpsCap === 10 ? '창이 뒤에 있어 10fps' : s.calib ? '' : (s.dim && !s.pauseWhenDim && s.fpsCap <= 20) ? '대화 중이라 20fps' : s.slow ? '느린 컴퓨터라 30fps' : (s.onBattery && s.fpsCap === 30) ? '배터리라 30fps' : `${s.fpsCap}fps`;
-    const capNote = s.cap < s.density ? ` (상한 ${Math.round(s.cap * 100)}%)` : '';
-    el.textContent = `이 컴퓨터: ${s.fps}fps · ${resName(s.dprCap, s)} · 별 ${s.live}개${capNote} · 지금 ${why}`;
-    renderRec(s);
+    const r = s.rec, measured = !!(r && r.precise && r.costs && r.costs.length);
+    const list = measured ? r.costs : [{ fps: 60 }, { fps: 30 }, { fps: 20 }];
+    const chips = list.map(c => {
+      const cur = c.fps === s.fps, isRec = measured && c.fps === r.fps, heavy = c.cost != null && c.cost > r.budget;
+      const tip = c.cost != null ? `이 컴퓨터에서 추가 CPU 부담 ${c.cost}% (한 코어=100, 예산 ${r.budget}%)${isRec ? ' — 추천' : ''}` : '아직 실측 전 — 「다시 측정」을 누르면 부담이 표시돼요';
+      return `<button class="st-chip${cur ? ' cur' : ''}${heavy ? ' heavy' : ''}" type="button" data-fps="${c.fps}" title="${esc(tip)}">${isRec ? '★ ' : ''}${c.fps}fps${c.cost != null ? `<small>+${c.cost}%</small>` : ''}</button>`;
+    }).join('');
+    const note = measured ? '' : r && r.failed ? `<span class="st-sub">측정이 끊겨 이전 값 유지</span>` : s.precise ? '' : `<span class="st-sub" title="트레이 → 창만 닫기 → IRIS-Face 다시 실행">실측은 창을 다시 연 뒤</span>`;
+    el.innerHTML = chips + note;
   }
-  function renderRec(s) {
-    const el = $('#st-rec'); if (!el) return;
-    const r = s.rec;
-    if (s.calib || !r) {
-      el.hidden = !!s.calib || s.precise; // 지표가 없는 환경(브라우저·창 재시작 전)만 안내
-      el.innerHTML = el.hidden ? '' : `<span class="st-sub">정밀 측정은 창을 다시 연 뒤 할 수 있어요 (트레이 → 창만 닫기 → IRIS-Face 다시 실행)</span>`;
-      return;
-    }
-    const parts = [`${r.fps}fps`, resName(r.dprCap, s), `별 ${Math.round(r.density * 100)}%`, r.pauseWhenDim ? '대화 중 멈춤' : '대화 중 계속'];
-    const cost = r.precise && r.chosenCost != null ? ` · 추가 부담 CPU ${r.chosenCost}%(예산 ${r.budget}%, 한 코어=100)` : r.failed ? ' · 측정이 중간에 끊겨 이전 값 유지(창을 다시 연 뒤 다시 측정)' : r.precise ? '' : ' · 대략(정밀 측정 전)';
-    const same = Math.abs((cfg.density || 0) - r.density) < 0.05 && !!cfg.pauseWhenDim === !!r.pauseWhenDim;
-    // 프로필 칩(2026-09-13 사용자 "부드럽게 하면 부담인가?"): 후보마다 실측 추가 부담을 보이고 직접 고를 수 있다. ★ = 추천, 테두리 강조 = 지금 값.
-    const list = r.precise && r.costs.length ? r.costs : [{ fps: 60, dprCap: 1 }, { fps: 30, dprCap: 1 }, { fps: 20, dprCap: 1 }];
-    const chips = list.map(c => { const cur = c.fps === s.fps && c.dprCap === s.dprCap, isRec = c.fps === r.fps && c.dprCap === r.dprCap; const label = `${c.fps}fps · ${resName(c.dprCap, s)}${c.cost != null ? ` +${c.cost}%` : ''}`; return `<button class="st-chip${cur ? ' cur' : ''}${c.cost != null && c.cost > r.budget ? ' heavy' : ''}" type="button" data-fps="${c.fps}" data-dpr="${c.dprCap}" title="${esc(c.cost != null ? `이 컴퓨터에서 이 프로필의 추가 부담: CPU ${c.cost}% (GPU 프로세스+화면, 한 코어=100). 예산 ${r.budget}%` : '실측 전 — 직접 고르기')}">${isRec ? '★ ' : ''}${esc(label)}</button>`; }).join('');
-    el.hidden = false;
-    el.innerHTML = `<span class="st-sub">이 컴퓨터 추천: ${parts.join(' · ')}${cost}</span>` + (same ? `<span class="st-sub st-ok">✓ 추천대로예요</span>` : `<button id="st-rec-apply" class="text-btn accent" type="button" title="별의 양과 '대화를 보는 동안 멈춤'을 추천값으로 바꿉니다(프레임·해상도는 이미 적용됨)">추천 적용</button>`)
-      + `<div class="st-chips"><span class="st-sub">직접 고르기:</span>${chips}</div>`;
-  }
-  document.addEventListener('iris:stage', (e) => { if (open) renderCap(e.detail); });
+  document.addEventListener('iris:stage', (e) => { if (open) renderStage(e.detail); });
   function applyAll() { applyTheme(); applyMark(); applyFont(); applyName(); applyStage(); }
 
   // ---- 배터리 = 현재 우선(왕관) 계정의 **남은 주간 잔량**(100 − 사용률) ----
@@ -100,7 +87,7 @@ window.Settings = (() => {
     for (const c of $('#st-stages').querySelectorAll('canvas.stage-pv')) previews.push(IrisStars.preview(c, { style: c.dataset.pv, colors }));
     $('#st-name').value = cfg.name || ''; $('#st-name').placeholder = health?.rootName || 'IRIS';
     $('#st-density').value = cfg.density; $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%';
-    renderCap(IrisStars.status());
+    renderStage(IrisStars.status());
     $('#st-pause').checked = !!cfg.pauseWhenDim;
     $('#st-speed').value = cfg.markSpeed; $('#st-speed-v').textContent = cfg.markSpeed + '×';
     $('#st-root').textContent = health?.root || '';
@@ -192,11 +179,8 @@ window.Settings = (() => {
     $('#st-name-reset').onclick = () => pick({ name: '' });
     $('#st-density').addEventListener('input', (e) => { cfg.density = Number(e.target.value); $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%'; applyStage(); });
     $('#st-density').addEventListener('change', save);
-    $('#st-remeasure').addEventListener('click', () => { IrisStars.calibrate().then((s) => { if (open) renderCap(s); }); renderCap(IrisStars.status()); });
-    $('#st-rec').addEventListener('click', (e) => {
-      const chip = e.target.closest('.st-chip[data-fps]'); if (chip) { IrisStars.configure({ profile: { fps: Number(chip.dataset.fps), dprCap: Number(chip.dataset.dpr) } }); renderCap(IrisStars.status()); return; }
-      if (!e.target.closest('#st-rec-apply')) return; const r = IrisStars.status().rec; if (r) pick({ density: r.density, pauseWhenDim: !!r.pauseWhenDim });
-    });
+    $('#st-remeasure').addEventListener('click', () => { IrisStars.calibrate().then((st) => { if (open) renderStage(st); }); renderStage(IrisStars.status()); });
+    $('#st-fps').addEventListener('click', (e) => { const chip = e.target.closest('.st-chip[data-fps]'); if (!chip) return; IrisStars.configure({ profile: { fps: Number(chip.dataset.fps), dprCap: 1 } }); renderStage(IrisStars.status()); });
     $('#st-pause').addEventListener('change', (e) => pick({ pauseWhenDim: e.target.checked }));
     $('#st-speed').addEventListener('input', (e) => { cfg.markSpeed = Number(e.target.value); $('#st-speed-v').textContent = cfg.markSpeed + '×'; applyMark(); });
     $('#st-speed').addEventListener('change', save);

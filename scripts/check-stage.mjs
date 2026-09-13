@@ -24,13 +24,13 @@ const stars = fs.readFileSync(path.join(ROOT, 'app/stars.js'), 'utf8');
 const html = fs.readFileSync(path.join(ROOT, 'app/index.html'), 'utf8');
 ok('static: pauseWhenDim 기본 켬', /pauseWhenDim:\s*true/.test(settings.split('\n').find(l => l.includes('const DEF')) || ''));
 ok('static: stars.js API status/remeasure/simulate', ['status:', 'remeasure:', 'simulate:'].every(k => stars.includes(k)));
-ok('static: index.html st-cap/st-remeasure', html.includes('id="st-cap"') && html.includes('id="st-remeasure"'));
+ok('static: index.html st-fps/st-remeasure', html.includes('id="st-fps"') && html.includes('id="st-remeasure"'));
 ok('static: 반딧불 격자', stars.includes('grid = new Map()'));
 // v2.51(2026-09-13): 프레임·해상도 프로필 실측(calibrate) + 테두리 「다시 측정」 + 추천 줄 + Electron 지표 통로 + 빛무리 원 채우기
 const preload = fs.readFileSync(path.join(ROOT, 'app/electron/preload.cjs'), 'utf8'), main = fs.readFileSync(path.join(ROOT, 'app/electron/main.cjs'), 'utf8');
 ok('static: stars.js calibrate/profile', ['calibrate', 'PROFILES', 'dprCap', 'DIM_FPS'].every(k => stars.includes(k)));
 ok('static: 빛무리는 1.3R 원만 채운다(fillRect 전체 채우기 없음)', /function glow[\s\S]*?ctx\.arc\(cx, cy, R \* 1\.3/.test(stars) && !/function glow[\s\S]*?fillRect\(0, 0, W, H\)/.test(stars.split('function frame')[0]));
-ok('static: 「다시 측정」 테두리 버튼(accent) + 추천 줄 st-rec', /id="st-remeasure" class="text-btn accent"/.test(html) && html.includes('id="st-rec"'));
+ok('static: 「다시 측정」 테두리 버튼(accent) + fps 칩 자리(해상도·추천 문장 없음)', /id="st-remeasure" class="text-btn accent"/.test(html) && !html.includes('id="st-rec"') && !html.includes('id="st-cap"'));
 ok('static: 프로필 칩(직접 고르기) + 지표 실제 호출 확인(probeMetrics)', settings.includes('st-chip') && settings.includes('data-fps') && stars.includes('async function probeMetrics'));
 ok('static: preload metrics/gpu · main iris:metrics', preload.includes("invoke('iris:metrics')") && main.includes("ipcMain.handle('iris:metrics'") && main.includes('getAppMetrics'));
 
@@ -113,11 +113,11 @@ else {
   let seenCalib = false; await pg2.exposeFunction('__calibSeen', () => { seenCalib = true; });
   await pg2.evaluate(() => document.addEventListener('iris:stage', (e) => { if (e.detail.calib) window.__calibSeen(); }));
   s2 = await pg2.evaluate(() => IrisStars.calibrate());
-  ok('dynamic: calibrate(예산 15) → 20fps·100%·후보 5개 측정·측정 중 이벤트', s2.fps === 20 && s2.dprCap === 1 && s2.rec && s2.rec.costs.length === 5 && s2.rec.precise && s2.rec.pauseWhenDim === true && s2.calib === null && seenCalib, JSON.stringify(s2.rec));
+  ok('dynamic: calibrate(예산 15) → 20fps·후보 3개(60/30/20, 해상도 100% 고정) 측정·측정 중 이벤트', s2.fps === 20 && s2.dprCap === 1 && s2.rec && s2.rec.costs.length === 3 && s2.rec.costs.every(c => c.dprCap === 1) && s2.rec.precise && s2.calib === null && seenCalib, JSON.stringify(s2.rec));
   const saved2 = await pg2.evaluate(() => JSON.parse(localStorage.getItem('iris.stage.cap') || 'null'));
   ok('dynamic: 프로필·추천이 localStorage 에 저장', saved2 && saved2.fps === 20 && saved2.dprCap === 1 && saved2.rec && saved2.rec.fps === 20, JSON.stringify(saved2));
   await pg2.evaluate(() => IrisStars.configure({ gov: { calibBudget: 45 } })); s2 = await pg2.evaluate(() => IrisStars.calibrate());
-  ok('dynamic: calibrate(예산 45) → 60fps·100%(후보 5개 다 재고 예산 안 첫 후보)', s2.fps === 60 && s2.dprCap === 1 && s2.rec.costs.length === 5 && s2.rec.pauseWhenDim === false && s2.rec.chosenCost === 40, JSON.stringify(s2.rec));
+  ok('dynamic: calibrate(예산 45) → 60fps(후보 3개 다 재고 예산 안 첫 후보)', s2.fps === 60 && s2.dprCap === 1 && s2.rec.costs.length === 3 && s2.rec.chosenCost === 40, JSON.stringify(s2.rec));
   // 8b) 지표가 도중에 죽음(옛 메인 + 새 preload: invoke 거부) → 이전 프로필 유지 · precise=false · failed. 가장 가벼운 후보로 굳히지 않는다(2026-09-13 실증 버그)
   await pg2.evaluate(() => { let n = 0; window.irisHost = { metrics: async () => { if (++n > 2) throw new Error('No handler registered'); return [{ type: 'GPU', cpu: 1 }]; } }; });
   s2 = await pg2.evaluate(() => IrisStars.calibrate());
