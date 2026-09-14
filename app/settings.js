@@ -6,7 +6,8 @@ window.Settings = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const R = window.Registry;
   const BRAND = { name: 'IRIS', mark: 'cube', font: 'segoe-script', markSpeed: 2 }; // 고정 정체성 — 설정에서 바꿀 수 없다
-  const DEF = { theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: true, permission: '', approval: '', sandbox: '', notifyDone: true, notifyOs: true }; // pauseWhenDim 기본 켬(2026-09-12 발열 사건): 저장된 설정이 있으면 그 값이 우선
+  // 권한 기본값(2026-09-14 사용자 결정): 새 설치는 처음부터 최대 권한 — Claude 「전부 허용」, Codex 「묻지 않음」+「전체 접근」. 저장된 설정이 있으면 그 값이 우선.
+  const DEF = { theme: 'indigo', stage: 'sphere', density: 1, pauseWhenDim: true, permission: 'bypassPermissions', approval: 'never', sandbox: 'danger-full-access', notifyDone: true, notifyOs: true }; // pauseWhenDim 기본 켬(2026-09-12 발열 사건): 저장된 설정이 있으면 그 값이 우선
   let cfg = { ...DEF }, health = null, open = false, themeKeys = new Set(), agents = null, previews = [], opts = {};
   const destroyPreviews = () => { for (const p of previews) { try { p.destroy(); } catch {} } previews = []; };
 

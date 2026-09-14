@@ -109,7 +109,8 @@ if (firstSessionSpec) {
       const prompt = fs.readFileSync(spec.promptFile, 'utf8');
       const r = await fetch(`${URL_}api/sessions`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ cwd: spec.cwd, agent: spec.agent, model: spec.model, effort: spec.effort, prompt }),
+        // permission/approval/sandbox: 설치기가 첫 세팅 세션에 최대 권한을 명시한다(2026-09-14). 없으면 데몬이 설정 파일대로.
+        body: JSON.stringify({ cwd: spec.cwd, agent: spec.agent, model: spec.model, effort: spec.effort, permission: spec.permission || '', approval: spec.approval || '', sandbox: spec.sandbox || '', prompt }),
       });
       if (!r.ok) say(`[iris-face] --first-session: 세션 생성 실패 (${r.status})`, true);
       else { const rec = await r.json(); say(`[iris-face] --first-session: 세션 생성됨 id=${rec.id}`); }
