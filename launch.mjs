@@ -104,7 +104,14 @@ if (firstSessionSpec) {
       (r) => normCwd(r.cwd) === normCwd(spec.cwd) && r.status !== 'exited'
     );
     if (dup) {
-      say(`[iris-face] --first-session: ${spec.cwd} 에 이미 살아 있는 세션(${dup.id})이 있어 만들지 않음`);
+      // 이미 살아 있는 세션이 있으면 새로 만들지 않되, 요청문은 버리지 않는다(2026-09-14 재실행 검수): 설치 패키지를 다시 돌려
+      // 새 안내서가 들어왔을 때 그 세션이 옛 안내서로 계속 가면 안 되므로, 한가한 세션에는 새 요청문을 그대로 보낸다. 바쁜 세션이면 기록만.
+      if (dup.status === 'busy') say(`[iris-face] --first-session: ${spec.cwd} 의 세션(${dup.id})이 바쁘므로 요청문을 보내지 않음`);
+      else {
+        const prompt = fs.readFileSync(spec.promptFile, 'utf8');
+        const r = await fetch(`${URL_}api/sessions/${encodeURIComponent(dup.id)}/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: prompt }) });
+        say(r.ok ? `[iris-face] --first-session: 살아 있는 세션(${dup.id})에 요청문을 보냄` : `[iris-face] --first-session: 세션(${dup.id})에 보내기 실패 (${r.status})`, !r.ok);
+      }
     } else {
       const prompt = fs.readFileSync(spec.promptFile, 'utf8');
       const r = await fetch(`${URL_}api/sessions`, {
