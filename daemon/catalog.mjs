@@ -9,7 +9,11 @@ import { NAME_RE } from './modules.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CATALOG_FILE = process.env.IRIS_FACE_CATALOG || path.join(ROOT, 'daemon', 'catalog.json');
-export const ALLOWED_HOSTS = ['api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'];
+// 미러(2026-09-14): 일부 네트워크가 GitHub 릴리스 첨부 서버만 끊는다. 릴리스 도구가 같은 첨부를 Cloudflare R2 공개 버킷에도 올리므로,
+// GitHub 첨부 내려받기가 실패하면 <MIRROR_BASE>/<첨부 이름> 을 한 번 더 시도한다. sha256·서명 검사는 어느 쪽에서 받았든 똑같이 거친다.
+export const MIRROR_BASE = 'https://pub-6bb549660d7d4bd79ed07a7b6523f5c5.r2.dev';
+export const ALLOWED_HOSTS = ['api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com', new URL(MIRROR_BASE).hostname];
+export const mirrorUrl = (assetName) => `${MIRROR_BASE}/${encodeURIComponent(String(assetName))}`;
 export const MAX_ZIP_BYTES = 50 * 1024 * 1024;
 const MAX_HOPS = 5;
 
@@ -71,7 +75,9 @@ export async function fetchReleaseZip(entry, { fetchImpl = globalThis.fetch, max
   const asset = (Array.isArray(rel?.assets) ? rel.assets : []).find(a => re.test(String(a?.name || '')) && typeof a?.browser_download_url === 'string');
   if (!asset) throw new Error('release has no matching zip');
   if (Number(asset.size) > maxBytes) throw new Error(`too large (${asset.size}B > ${maxBytes}B)`);
-  const buf = await download(asset.browser_download_url, { fetchImpl, maxBytes, headers: { 'user-agent': 'IRIS-Face' } });
+  let buf;
+  try { buf = await download(asset.browser_download_url, { fetchImpl, maxBytes, headers: { 'user-agent': 'IRIS-Face' } }); }
+  catch (e) { buf = await download(mirrorUrl(asset.name), { fetchImpl, maxBytes, headers: { 'user-agent': 'IRIS-Face' } }).catch(() => { throw e; }); } // 미러도 안 되면 원래 오류
   const tag = String(rel.tag_name || ''); const version = (/v(\d+\.\d+\.\d+)$/.exec(tag) || [])[1] || tag;
   return { version, asset: String(asset.name), url: String(asset.browser_download_url), buf };
 }

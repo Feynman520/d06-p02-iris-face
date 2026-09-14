@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { zipRead, zipOpenFile, zipEntryDataFile } from './zip.mjs';
 import { verifyManifest, OFFICIAL_PUBLIC_KEYS } from './modsign.mjs';
 import { checkPaths, checkManifest } from './modinstall.mjs';
-import { ALLOWED_HOSTS, loadCatalog, CATALOG_FILE } from './catalog.mjs';
+import { ALLOWED_HOSTS, loadCatalog, CATALOG_FILE, mirrorUrl } from './catalog.mjs';
 import { soulRoot } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -309,16 +309,21 @@ export class Updater {
     this.applying = { part: name, index, count, received: 0, total: info.size || 0 };
     const file = path.join(dir, info.asset);
     mine.push(file);
-    const got = await this.downloadTo(info.url, file, {
+    const dlOpts = {
       maxBytes: lim.maxBytes, expectSize: info.size,
       onProgress: (received, total) => { this.applying = { part: name, index, count, received, total }; this.broadcast({ type: 'update', phase: 'download', part: name, received, total, index, count }); },
-    });
+    };
+    // 미러(2026-09-14): GitHub 첨부 서버가 막힌 네트워크에서는 같은 이름의 첨부를 R2 미러에서 받는다. 검증(sha256·서명)은 아래에서 똑같이 한다.
+    let got;
+    try { got = await this.downloadTo(info.url, file, dlOpts); }
+    catch (e) { this.log?.(`update: ${name} github download failed (${String(e.message).slice(0, 80)}) → mirror`); try { fs.rmSync(file, { force: true }); } catch {} got = await this.downloadTo(mirrorUrl(info.asset), file, dlOpts).catch(() => { throw e; }); }
     // ⓐ 릴리스 첨부 .sha256 과 대조(해시는 받으면서 흐름 중에 셌다)
     if (!info.sha256Url) throw new Error('.sha256 첨부가 없습니다');
-    const shaText = await this.text(info.sha256Url);
+    const shaText = await this.text(info.sha256Url).catch((e) => this.text(mirrorUrl(`${info.asset}.sha256`)).catch(() => { throw e; }));
     if (name === 'package') {
       // ⓑ 구조판: .sha256 텍스트가 zip 해시와 같고 그 텍스트가 공식 서명(.sha256.sig)돼야 한다 → zip 전체가 보호된다.
-      const v = verifySignedSha256(shaText, info.sigUrl ? await this.text(info.sigUrl) : '', got.sha256, { keys: this.keys });
+      const sigText = info.sigUrl ? await this.text(info.sigUrl).catch((e) => this.text(mirrorUrl(`${info.asset}.sha256.sig`)).catch(() => { throw e; })) : '';
+      const v = verifySignedSha256(shaText, sigText, got.sha256, { keys: this.keys });
       if (!v.ok) throw new Error(v.reason);
       this.broadcast({ type: 'update', phase: 'verify', part: name, received: got.bytes, total: got.bytes });
       // ⓓ 경로 탈출·중복은 푸는 자리에서. 수백 MB 라 파일에서 항목 하나씩 읽어 푼다(통째로 메모리에 올리지 않음).
