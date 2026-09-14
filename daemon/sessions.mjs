@@ -327,6 +327,14 @@ export class SessionManager {
     this.live.delete(id); this.sessions.delete(id); this.save(); this.hooks.onList?.();
     return rec;
   }
+  /** CLI 만 끝내고 카드는 남긴다(마무리 자동 실행, v2.60): 뒤에 resume() 으로 같은 카드에서 --resume. 자기 자식 PID 하나만 끝낸다. */
+  pause(id) {
+    const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
+    const st = this.live.get(id); clearTimeout(st?.timer);
+    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    this.live.delete(id); rec.pid = null; this.setStatus(id, 'exited'); this.save();
+    return rec;
+  }
   forget(id) {
     const rec = this.sessions.get(id); if (!rec) return null;
     if (this.live.has(id) || pidAlive(rec.pid)) throw new Error('session still alive; use close');

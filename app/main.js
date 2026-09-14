@@ -88,6 +88,12 @@
       const m = JSON.parse(ev.data);
       if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); render(); }
       else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
+      else if (m.type === 'finalize') {                                                                   // 세팅 마무리 자동 실행(v2.60): 시작·결과 토스트
+        if (m.phase === 'start') Notify.push({ title: '세팅 마무리를 시작합니다', sub: '세션을 잠시 닫고 마무리 절차를 돌린 뒤 같은 자리에서 이어 엽니다. 복구 문구 창이 뜨면 안내대로 적어 두세요.', status: 'busy', force: true });
+        else if (m.phase === 'ready') Notify.push({ title: '세팅 마무리 완료', sub: '세션을 이어 열었습니다. 비서가 나머지 검사와 보고를 계속합니다.', status: 'idle', force: true });
+        else if (m.phase === 'pending') Notify.push({ title: '세팅 마무리가 아직 남았습니다', sub: (m.result?.explanation || '') + ' — 10분 뒤 다시 시도합니다.', status: 'attention', force: true });
+        else if (m.phase === 'error' || m.phase === 'resume-failed') Notify.push({ title: '세팅 마무리 오류', sub: m.error || '', status: 'attention', force: true });
+      }
       else if (m.type === 'modules') setModules(m.list);                                                   // 모듈 콘센트: 상태·panel·배지
       else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)

@@ -23,6 +23,7 @@ import { ModuleHost, NAME_RE } from './modules.mjs';
 import { inspectZip, installZip, removeModule } from './modinstall.mjs';
 import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
 import { Updater } from './update.mjs';
+import { Finalizer } from './finalize.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,7 +45,7 @@ const broadcast = (obj) => { for (const c of clients) send(c, obj); };
 const publicList = () => sm.list().map(r => ({ ...r }));
 const sm = new SessionManager(STATE, {
   onOutput: (id, data) => { for (const c of clients) if (c.attached === id) send(c, { type: 'output', id, data }); },
-  onStatus: (id, status, extra) => broadcast({ type: 'status', id, status, ...(extra || {}) }), // extra.done = 작업 완료 전환(화면 알림, 2026-09-11)
+  onStatus: (id, status, extra) => { finalizer?.touch(); broadcast({ type: 'status', id, status, ...(extra || {}) }); }, // extra.done = 작업 완료 전환(화면 알림, 2026-09-11) · touch = 마무리 자동 실행의 "조용한 시간" 측정(v2.60)
   onActivity: (id, text) => { for (const c of clients) if (c.attached === id) send(c, { type: 'activity', id, text }); },
   onPrompt: (id, prompt) => broadcast({ type: 'prompt', id, prompt }), // 확인 카드(v2.43): 노란불의 질문·선택지, null = 카드 내림. 세션 목록(publicList)에도 rec.prompt 로 실린다.
   onList: () => broadcast({ type: 'sessions', list: publicList() }),
@@ -53,6 +54,8 @@ const sm = new SessionManager(STATE, {
 });
 const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
+// 세팅 마무리 자동 실행(v2.60): soul-state.json 이 pending-finalize 면 세션을 닫고 finalize-pipeline.ps1 을 돌린 뒤 이어 연다(finalize.mjs).
+var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadcast });
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
 // 잠든 에이전트 깨우기(installer Task 17): 영수증이 있고 잠든 에이전트가 있을 때만 15초마다 TeamClaude 설정을
 // 읽어 자동으로 깨운다. 영수증이 없는 PC(이 개발 PC 포함)에서는 sleepingAgents 가 항상 빈 배열이라 무동작.
@@ -450,7 +453,9 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
   try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
-  try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); } });
+  try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
+  // 세팅 마무리 자동 실행(v2.60): 가이드가 pending-finalize 를 남기면 창이 대신 마무리한다.
+  try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); } });
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });

@@ -27,7 +27,8 @@
     "verify:nomodule": "node scripts/check-nomodule.mjs",
     "verify:launcher": "node scripts/check-launcher.mjs",
     "verify:stage": "node scripts/check-stage.mjs",
-    "verify:update": "node scripts/check-update.mjs"
+    "verify:update": "node scripts/check-update.mjs",
+    "verify:finalize": "node scripts/check-finalize.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
