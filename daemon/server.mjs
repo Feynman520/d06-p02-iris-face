@@ -277,6 +277,20 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/update/check') { try { return json(res, 200, await updater.check()); } catch (e) { log(`502 update check: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: e.message }); } }
       if (p === '/api/update/settings') { const b = await readBody(req); return json(res, 200, updater.setEnabled(b.enabled !== false)); }
       if (p === '/api/update/apply') { const r = await updater.apply(); return json(res, r.ok ? 200 : 400, { ...r, info: updater.info() }); }
+      // 비밀 금고(v2.62): 보관된 복구 문구를 엔진의 화면 창으로만 보여 준다. 문구는 데몬·응답·로그를 거치지 않는다(STA PowerShell 5.1 필요).
+      if (p === '/api/vault/reveal') {
+        if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden origin' });
+        const script = path.join(WS_ROOT, '_agent', 'setup', 'secrets-vault.ps1');
+        if (!fs.existsSync(script)) return json(res, 404, { error: 'secrets-vault.ps1 없음(세팅 전이거나 가이드 v13 이전)' });
+        const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+        const r = await new Promise((resolve) => {
+          const child = spawn(ps, ['-STA', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', 'ShowRecovery', '-SoulRoot', WS_ROOT], { env: applyReceiptEnv({ ...process.env }), windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+          let err = ''; child.stderr.on('data', (d) => { err += d.toString('utf8'); if (err.length > 4000) err = err.slice(-2000); });
+          child.on('close', (code) => resolve({ code, err })); child.on('error', (e) => resolve({ code: -1, err: e.message }));
+        });
+        log(`vault reveal exit=${r.code}`);
+        return json(res, r.code === 0 ? 200 : 400, r.code === 0 ? { ok: true } : { error: (r.err.split(/\r?\n/).find((l) => /복구문구|봉투|STA|error/i.test(l)) || r.err.trim().split(/\r?\n/).pop() || `exit ${r.code}`).slice(0, 300) });
+      }
       if (p === '/api/update/apply-now') {
         const r = updater.applyNow();
         if (!r.ok) return json(res, 400, r);

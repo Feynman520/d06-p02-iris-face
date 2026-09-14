@@ -302,6 +302,13 @@ window.Settings = (() => {
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
     // 업데이트(v2.58): 절 머리 단추 하나 + 하루 1회 스위치. 상태는 데몬이 준다(웹소켓 방송은 main.js 가 onUpdate 로 넘긴다).
     $('#st-update-act').addEventListener('click', (e) => { const act = e.currentTarget.dataset.act; if (act) updAct(act); });
+    // 비밀 금고(v2.62): 보관된 복구 문구를 화면 창으로 보여 준다(데몬이 secrets-vault.ps1 -Action ShowRecovery 실행, 문구는 이 화면·로그에 오지 않음)
+    $('#st-recovery')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
+      try { const r = await fetch('/api/vault/reveal', { method: 'POST' }); const j = await r.json().catch(() => ({})); if (!r.ok) Dialog.alert(`복구 문구를 열지 못했습니다: ${j.error || r.status}`); }
+      catch (err) { Dialog.alert(`복구 문구를 열지 못했습니다: ${err.message}`); }
+      finally { btn.disabled = false; }
+    });
     $('#st-update-auto').addEventListener('change', async (e) => {
       const on = e.target.checked;
       try { const r = await fetch('/api/update/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: on }) }); if (r.ok) upd = await r.json(); }
