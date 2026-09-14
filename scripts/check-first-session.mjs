@@ -26,6 +26,8 @@ const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } 
   const parts = after.PATH.split(path.delimiter);
   ok(parts[0].toLowerCase().endsWith(path.join('_agent', 'shared', 'shims').toLowerCase()), 'PATH 맨 앞 = <root>\\_agent\\shared\\shims');
   ok(parts[1].toLowerCase().endsWith(path.join('_agent', 'shared', 'tools', 'node').toLowerCase()), '두 번째 = <tools>\\node');
+  ok(parts[2].toLowerCase().endsWith(path.join('_agent', 'shared', 'tools', 'git', 'cmd').toLowerCase()), '세 번째 = <tools>\\git\\cmd (2026-09-14: 시스템 Git 이 먼저 잡히던 결함)');
+  ok(parts[3].toLowerCase().endsWith(path.join('_agent', 'shared', 'tools', 'python').toLowerCase()), '네 번째 = <tools>\\python');
   ok(after.PATH.endsWith(before.PATH), '원래 PATH 는 뒤에 그대로 보존');
 }
 

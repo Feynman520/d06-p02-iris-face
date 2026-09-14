@@ -73,7 +73,9 @@ export function applyReceiptEnv(env, receipt = readReceipt()) {
   const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
   const cur = env[key] || '';
   const already = new Set(cur.split(path.delimiter).map((s) => s.trim().toLowerCase()).filter(Boolean));
-  const add = [shims, nodeDir].filter((p) => !already.has(p.toLowerCase()));
+  // shims → node → git → python 순으로 PATH 맨 앞에(2026-09-14 실기: 다른 PC 의 시스템 Git 2.51 이 먼저 잡혀 v7 기반 검사기가 WinGet 업그레이드를 시도하다 멈췄다.
+  // 동봉본이 정본(가이드 8-1)이므로 세션·마무리 파이프라인 모두 동봉 Git·Node·Python 을 먼저 본다).
+  const add = [shims, nodeDir, toolPath('git', 'cmd'), toolPath('python')].filter((p) => !already.has(p.toLowerCase()));
   if (add.length) env[key] = [...add, cur].filter(Boolean).join(path.delimiter);
   return env;
 }

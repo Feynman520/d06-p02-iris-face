@@ -46,6 +46,8 @@ const mk = (opts = {}) => {
   const runs = [];
   const f = new Finalizer({
     root, sm: opts.sm, stateDir, log: () => {}, broadcast: (e) => events.push(e), now: () => now,
+    envBuilder: (env) => ({ ...env, PATH: 'C:\\NOVA\\_agent\\shared\\shims;' + (env.PATH || '') }), // 영수증 env 흉내
+
     run: async (script, env) => { runs.push({ script, env }); return opts.run ? opts.run() : { code: 0, text: 'x\nFINALIZE-PIPELINE-RESULT: {"mode":"ready","machineReady":true,"explanation":"ok"}\n' }; },
   });
   return { f, events, runs, advance: (ms) => { now += ms; } };
@@ -67,6 +69,8 @@ const mk = (opts = {}) => {
   ok(sm.calls.pause.length === 1 && sm.calls.pause[0] === 's1', '실행: 살아 있던 세션을 pause(카드 유지)');
   ok(sm.calls.resume.length === 1 && /mode=ready/.test(sm.calls.resume[0].prompt), '실행: 같은 카드를 resume 하며 결과 문장을 첫 메시지로');
   ok(t.runs.length === 1 && t.runs[0].env.CLAUDE_CONFIG_DIR === path.join(root, '_agent', 'claude') && t.runs[0].env.CODEX_HOME === path.join(root, '_agent', 'codex'), '실행: 에이전트 홈 환경변수를 영혼 안으로 명시');
+  ok(t.runs[0].env.PATH.startsWith('C:\\NOVA\\_agent\\shared\\shims;'), '실행: 영수증 env(PATH 앞 동봉 도구)를 거쳐 파이프라인에 넘김 — 검사기가 동봉 Git/Node/Python 을 먼저 본다');
+  ok(/Still live/.test(resumeNote({ mode: 'failed', explanation: 'Finalize requires zero live Claude/Codex processes. Still live: claude:123' })) && /터미널만 닫아/.test(resumeNote({ mode: 'failed', explanation: 'Still live: x' })), '문장: 바깥 터미널이 살아 있으면 그것만 닫으라고 안내');
   ok(t.events.some((e) => e.type === 'finalize' && e.phase === 'start') && t.events.some((e) => e.type === 'finalize' && e.phase === 'ready'), '방송: start → ready');
   const rec = JSON.parse(fs.readFileSync(path.join(stateDir, 'finalize.json'), 'utf8'));
   ok(rec.result.mode === 'ready' && rec.generationId === 'g1' && rec.resumed.includes('s1'), '기록: state\\finalize.json 에 결과·세대·재개 목록');

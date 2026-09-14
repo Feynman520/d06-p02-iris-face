@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { applyReceiptEnv } from './sessions.mjs';
 
 export const POLL_MS = 5_000;
 export const QUIET_MS = 3_000;          // 마지막 상태 변화 뒤 이만큼 조용해야 "한가"로 본다
@@ -33,7 +34,8 @@ export function parseResult(text) { const m = RESULT_RE.exec(String(text || ''))
 export function resumeNote(result) {
   const mode = result?.mode || 'unknown';
   if (mode === 'ready') return 'IRIS 창이 세팅 마무리(finalize)를 대신 실행했습니다. 결과: mode=ready, machineReady=true. 사용자에게 세션을 닫거나 소환하기.cmd를 열라고 하지 말고, 가이드의 자동 검사와 완료 보고를 이어가세요.';
-  return `IRIS 창이 세팅 마무리(finalize)를 대신 실행했지만 아직 끝나지 않았습니다. 결과: mode=${mode}, machineReady=false, 설명: ${String(result?.explanation || '').slice(0, 400)}. 사용자에게 무엇이 남았는지 쉬운 말로 알려 주고(예: 복구 문구 창), 창이 10분 뒤 다시 시도한다는 것도 말해 주세요. 소환하기.cmd를 열라고 하지 마세요.`;
+  const live = /Still live:/i.test(String(result?.explanation || '')) ? ' 설명에 "Still live"가 있으면 IRIS 창 밖에서 따로 열린 Claude/Codex 터미널이 있다는 뜻이니, 그 터미널만 닫아 달라고 안내하세요(창이 강제로 끄지 않습니다).' : '';
+  return `IRIS 창이 세팅 마무리(finalize)를 대신 실행했지만 아직 끝나지 않았습니다. 결과: mode=${mode}, machineReady=false, 설명: ${String(result?.explanation || '').slice(0, 400)}. 사용자에게 무엇이 남았는지 쉬운 말로 알려 주고(예: 복구 문구 창), 창이 10분 뒤 다시 시도한다는 것도 말해 주세요.${live} 소환하기.cmd를 열라고 하지 마세요.`;
 }
 
 export class Finalizer {
@@ -42,6 +44,7 @@ export class Finalizer {
     this.root = o.root; this.sm = o.sm; this.stateDir = o.stateDir;
     this.log = o.log || (() => {}); this.broadcast = o.broadcast || (() => {});
     this.run = o.run || ((script, env) => runPipeline(script, env));   // 시험에서 바꿔 끼운다
+    this.envBuilder = o.envBuilder || ((env) => applyReceiptEnv(env)); // 영수증 env + PATH 맨 앞 shims·node·git·python(동봉본이 정본)
     this.now = o.now || (() => Date.now());
     this.running = false; this.timer = null; this.lastStatusAt = this.now(); this.attempts = new Map(); this.last = null;
   }
@@ -82,7 +85,10 @@ export class Finalizer {
       for (const r of live) { try { this.sm.pause(r.id); } catch (err) { this.log(`finalize: pause ${r.id} failed: ${err?.message || err}`); } }
       await sleep(1500);
       // ③ 파이프라인
-      const env = { ...process.env, CLAUDE_CONFIG_DIR: path.join(this.root, '_agent', 'claude'), CODEX_HOME: path.join(this.root, '_agent', 'codex') };
+      // 영수증 env(PATH 앞에 동봉 shims·node·git·python) 위에 에이전트 홈을 영혼 안으로 못 박는다. v7 기반 검사기(prepare-foundations-v7)는
+      // git/node/python 을 PATH 에서 찾으므로, 여기서 동봉본이 먼저 잡혀야 "정확히 그 판" 검사가 통과하고 WinGet 으로 가지 않는다.
+      const env = this.envBuilder({ ...process.env });
+      env.CLAUDE_CONFIG_DIR = path.join(this.root, '_agent', 'claude'); env.CODEX_HOME = path.join(this.root, '_agent', 'codex');
       const out = await this.run(pipelinePath(this.root), env);
       const result = parseResult(out.text) || { mode: 'failed', machineReady: false, explanation: `no result line (exit ${out.code})`, tail: String(out.text || '').slice(-600) };
       this.last = { at: new Date().toISOString(), generationId: e.generationId, exit: out.code, result, resumed: ids };
