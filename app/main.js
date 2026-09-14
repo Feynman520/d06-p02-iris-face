@@ -26,6 +26,23 @@
   Transcript.mount($('#chat'));
 
   // ---------- 조합 선택 상태(마지막 선택 기억) ----------
+  // 세팅 진행 막대(v2.65, 가이드 v14 0-6): 데몬이 _agent\setup\setup-progress.json 을 읽어 보낸다. 없으면 숨김, 전부 끝나면 잠시 보이고 숨김.
+  let setupHideTimer = null;
+  function renderSetup(p) {
+    const bar = document.getElementById('setup-bar'); if (!bar) return;
+    clearTimeout(setupHideTimer);
+    if (!p || !p.total) { bar.hidden = true; return; }
+    const st = { pending: '·', running: '▶', done: '✓', skipped: '–', blocked: '!' };
+    document.getElementById('sb-title').textContent = p.title || 'IRIS 세팅';
+    document.getElementById('sb-count').textContent = `${p.done}/${p.total} · ${p.pct}%`;
+    document.getElementById('sb-fill').style.width = `${p.pct}%`;
+    document.getElementById('sb-fill').className = 'sb-fill' + (p.blocked ? ' blocked' : p.complete ? ' complete' : '');
+    document.getElementById('sb-steps').innerHTML = p.stages.map((s) => `<span class="sb-step ${s.status}" title="${esc(s.note || '')}">${st[s.status] || '·'} ${esc(s.label)}</span>`).join('');
+    const now = document.getElementById('sb-now');
+    now.textContent = p.blocked ? `멈춤: ${p.blocked.label}${p.blocked.note ? ` — ${p.blocked.note}` : ''}` : p.complete ? '세팅이 모두 끝났습니다.' : p.current ? `지금: ${p.current.label}` : '다음 단계를 기다리는 중';
+    bar.hidden = false;
+    if (p.complete) setupHideTimer = setTimeout(() => { bar.hidden = true; }, 5 * 60 * 1000);
+  }
   function loadSel() { try { const s = JSON.parse(localStorage.getItem('iris.sel') || 'null'); if (s && s.model && s.effort) return { permission: '', approval: '', sandbox: '', ...s }; } catch {} return { agent: 'claude', model: { claude: 'opus', codex: 'gpt-5.6-terra' }, effort: { claude: 'high', codex: 'medium' }, permission: '', approval: '', sandbox: '' }; }
   function saveSel() { try { localStorage.setItem('iris.sel', JSON.stringify(sel)); } catch {} }
   // 권한 기본값은 설정(⚙ → 권한 기본값)에서 온다
@@ -86,7 +103,8 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); render(); }
+      else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
       else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
       else if (m.type === 'finalize') {                                                                   // 세팅 마무리 자동 실행(v2.60): 시작·결과 토스트
         if (m.phase === 'start') Notify.push({ title: '세팅 마무리를 시작합니다', sub: '세션을 잠시 닫고 마무리 절차를 돌린 뒤 같은 자리에서 이어 엽니다. 복구 문구 창이 뜨면 안내대로 적어 두세요.', status: 'busy', force: true });

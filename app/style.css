@@ -142,6 +142,20 @@ a { color: var(--iris); }
 .seg-btn { padding: 4px 11px; font-size: 12.5px; color: var(--ink-3); }
 .seg-btn.active { background: var(--raised); color: var(--ink); }
 #chat-wrap { position: relative; flex: 1; min-height: 0; }
+/* 세팅 진행 막대(v2.65, 가이드 v14 0-6): 대화 위에 얇게. 파일이 없으면 숨김 */
+#setup-bar { margin: 12px 24px 0; padding: 10px 14px 9px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.03); font-size: 12px; color: var(--ink-2); }
+#setup-bar .sb-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+#setup-bar #sb-title { color: var(--ink); font-weight: 600; letter-spacing: .02em; }
+#setup-bar .sb-track { height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
+#setup-bar .sb-fill { height: 100%; width: 0; border-radius: 3px; background: var(--ink-2); transition: width .6s ease; }
+#setup-bar .sb-fill.complete { background: var(--ok); }
+#setup-bar .sb-fill.blocked { background: var(--warn); }
+#setup-bar .sb-steps { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 7px; }
+#setup-bar .sb-step { color: var(--ink-3); white-space: nowrap; }
+#setup-bar .sb-step.done, #setup-bar .sb-step.skipped { color: var(--ok); }
+#setup-bar .sb-step.running { color: var(--ink); font-weight: 600; }
+#setup-bar .sb-step.blocked { color: var(--warn); font-weight: 600; }
+#setup-bar .sb-now { margin-top: 6px; color: var(--ink-2); }
 #chat { height: 100%; overflow-y: auto; padding: 22px 24px 18px; display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
 .chat-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 13px; pointer-events: none; }
 #term-wrap { flex: 1; min-height: 0; padding: 8px 0 8px 8px; background: #070910; }

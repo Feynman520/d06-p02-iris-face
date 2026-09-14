@@ -24,6 +24,7 @@ import { inspectZip, installZip, removeModule } from './modinstall.mjs';
 import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
 import { Updater } from './update.mjs';
 import { Finalizer } from './finalize.mjs';
+import { SetupProgress } from './progress.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,6 +57,8 @@ const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
 // 세팅 마무리 자동 실행(v2.60): soul-state.json 이 pending-finalize 면 세션을 닫고 finalize-pipeline.ps1 을 돌린 뒤 이어 연다(finalize.mjs).
 var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadcast });
+// 세팅 진행 막대(v2.65): 가이드가 기록하는 _agent\setup\setup-progress.json 을 읽어 화면 위에 그린다(progress.mjs).
+const setupProgress = new SetupProgress({ root: WS_ROOT, broadcast, log });
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
 // 잠든 에이전트 깨우기(installer Task 17): 영수증이 있고 잠든 에이전트가 있을 때만 15초마다 TeamClaude 설정을
 // 읽어 자동으로 깨운다. 영수증이 없는 PC(이 개발 PC 포함)에서는 sleepingAgents 가 항상 빈 배열이라 무동작.
@@ -434,7 +437,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
@@ -469,7 +472,8 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
   try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
   // 세팅 마무리 자동 실행(v2.60): 가이드가 pending-finalize 를 남기면 창이 대신 마무리한다.
-  try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); } });
+  try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); }
+  try { setupProgress.start(); } catch (e) { log(`setup progress init error: ${e?.message || e}`); } });
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });
