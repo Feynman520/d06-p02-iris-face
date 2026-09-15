@@ -118,6 +118,10 @@
       </div>
     </section>
 
+    <!-- 인수 안내 카드(설치 패키지 v2, app/handoff.js): 세팅이 덜 끝났으면 「설치 이어하기」, 끝났으면 메신저 로그인 안내 1회.
+         무대 위에 떠 있어 세션이 열려 있든 없든(= #view 가 덮고 있어도) 보인다. 1.x 영혼에서는 데몬이 카드를 주지 않아 영영 숨어 있다. -->
+    <div id="handoff" class="handoff" hidden></div>
+
     <footer id="dock">
       <div id="setup" class="setup">
         <button id="btn-folder" class="folder-btn" title="폴더 고르기 (Ctrl+O)">
@@ -177,6 +181,7 @@
 <script src="/app/voice.js"></script>
 <script src="/app/notify.js"></script>
 <script src="/app/approval.js"></script>
+<script src="/app/handoff.js"></script>
 <script src="/app/main.js"></script>
 </body>
 </html>

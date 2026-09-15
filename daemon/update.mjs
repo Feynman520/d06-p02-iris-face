@@ -44,6 +44,21 @@ const RECHECK_MS = 5 * 60 * 1000;         // 적용 직전 확인 결과가 이�
 const SWEEP_MS = 7 * 24 * 60 * 60 * 1000; // 다 쓴 내려받기 폴더는 7일 뒤 치운다
 export const DEV_REASON = '개발 폴더에서 실행 중 — git pull로 갱신';
 
+// ---- 1.x → 2.0 은 자동 적용하지 않는다(P03 Task 21, 구현계획-v2 D2-24) ----
+// 2.0 부터 설치 방식(구조·영수증 schema)이 통째로 바뀌어 부품만 갈아 끼울 수 없다. 그래서 구조판이 2.x 인데
+// 이 영혼의 영수증이 1.x(schema<2 또는 영수증 없음)이면 **구조판 내려받기를 아예 하지 않고** 글과 홈페이지 링크만 보인다.
+// IRIS 창·메신저 부품은 그대로 업데이트된다(그 둘은 판이 바뀌어도 자리가 같다).
+export const REINSTALL_NOTE = '2.0은 설치 방식이 바뀌어 새로 설치합니다. 기존 자료는 그대로 두고 설치기를 실행하면 됩니다.';
+export const REINSTALL_URL = 'https://iris-workspace.com/install.html';
+export const RECEIPT_SCHEMA_V2 = 2;
+/** 구조판 최신 판이 2.x 이상인데 영수증 schema 가 2 미만(또는 영수증 없음)이면 true. */
+export function needsReinstall({ latestPackageVersion, receipt } = {}) {
+  const major = Number(String(latestPackageVersion || '').split('.')[0]);
+  if (!Number.isInteger(major) || major < 2) return false;
+  const schema = Number(receipt?.schema);
+  return !(Number.isInteger(schema) && schema >= RECEIPT_SCHEMA_V2);
+}
+
 // ---- 작은 도구 ----
 export const versionFromTag = (tag) => (/--v(\d+\.\d+\.\d+)$/.exec(String(tag || '')) || /v?(\d+\.\d+\.\d+)$/.exec(String(tag || '')) || [])[1] || null;
 /** semver(X.Y.Z) 비교: a > b 면 양수. 숫자 셋이 아니면 0(비교하지 않음). */
@@ -182,20 +197,36 @@ export class Updater {
     const ins = this.installed(), latest = this.state.latest || {};
     return PART_NAMES.filter(n => isNewer(latest[n]?.version, ins[n]));
   }
+  /** 1.x 영혼인데 구조판 최신 판이 2.x — 자동 적용 대신 "새로 설치" 안내만(Task 21). */
+  get reinstall() { return needsReinstall({ latestPackageVersion: this.state.latest?.package?.version, receipt: this.receipt() }); }
+  /** 그 안내에 화면이 쓸 값. 해당 없으면 null. */
+  reinstallInfo() {
+    if (!this.reinstall) return null;
+    const p = this.state.latest?.package || null;
+    return { note: REINSTALL_NOTE, url: REINSTALL_URL, version: p?.version || null, asset: p?.asset || null, download: p?.url || null };
+  }
   /** 실제로 받아 적용할 부품(설계 1절: 구조판이 있으면 그 안에 최신 IRIS 창이 들어 있으므로 face 는 건너뛴다). */
   applyParts() {
     const nw = new Set(this.newParts());
-    if (nw.has('package')) nw.delete('face');
+    // 새로 설치가 필요한 판 차이면 구조판은 아예 빼고 IRIS 창·메신저만 간다(창을 빼는 규칙도 이때는 쓰지 않는다).
+    if (this.reinstall) nw.delete('package');
+    else if (nw.has('package')) nw.delete('face');
     return APPLY_ORDER.filter(n => nw.has(n));
   }
-  /** 단추에 적을 대표 판 — IRIS 창이 있으면 그 판, 없으면 적용 차례의 첫 부품. */
-  headline() { const nw = this.newParts(); const n = nw.includes('face') ? 'face' : nw[0]; return n ? { part: n, version: this.state.latest?.[n]?.version || null, more: nw.length - 1 } : null; }
+  /** 단추에 적을 대표 판 — IRIS 창이 있으면 그 판, 없으면 적용 차례의 첫 부품. 새로 설치 안내 중인 구조판은 단추에 올리지 않는다. */
+  headline() {
+    const re = this.reinstall;
+    const nw = this.newParts().filter(n => !(re && n === 'package'));
+    const n = nw.includes('face') ? 'face' : nw[0];
+    return n ? { part: n, version: this.state.latest?.[n]?.version || null, more: nw.length - 1 } : null;
+  }
 
   info() {
     return {
       mode: this.mode, enabled: this.enabled, lastCheck: this.state.lastCheck || null, checkError: this.state.checkError || null,
       installed: this.installed(), latest: this.state.latest || { face: null, messenger: null, package: null },
       available: this.newParts(), applyParts: this.applyParts(), headline: this.headline(),
+      reinstall: this.reinstallInfo(),
       applying: this.applying || false, plan: this.state.plan || null, lastResult: this.state.lastResult || null,
     };
   }
@@ -364,7 +395,8 @@ export class Updater {
     const age = this.state.lastCheck ? this.now() - Date.parse(this.state.lastCheck) : Infinity;
     if (!(age >= 0 && age < RECHECK_MS)) await this.check();
     const parts = this.applyParts();
-    if (!parts.length) return { ok: false, reason: '새 판이 없습니다.' };
+    // 구조판만 새 판인데 그것이 1.x→2.0 이면 받지 않는다 — 화면이 "새로 설치" 글과 홈페이지 링크를 대신 보인다.
+    if (!parts.length) return this.reinstall ? { ok: false, reason: REINSTALL_NOTE, reinstall: this.reinstallInfo() } : { ok: false, reason: '새 판이 없습니다.' };
     const dir = path.join(this.downloadsDir(), `update-${stamp(this.now())}`);
     fs.mkdirSync(dir, { recursive: true });
     const items = [], installed = [], results = [];

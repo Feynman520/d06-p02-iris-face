@@ -204,6 +204,27 @@ a { color: var(--iris); }
 .ap-free input { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--base); color: var(--ink); font: 13px var(--mono); }
 .approval.sending .ap-hint::after { content: ' 보내는 중…'; color: var(--warn); }
 
+/* ---- 인수 안내 카드(설치 패키지 v2, app/handoff.js): 확인 카드의 .ap-* 부품을 그대로 쓰고 자리만 무대 위 떠 있는 카드로 ---- */
+.handoff { position: absolute; left: 50%; transform: translateX(-50%); bottom: 20px; z-index: 4;
+  width: min(560px, calc(100% - 48px)); display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 16px 13px; border-radius: 14px; border: 1px solid var(--line-2);
+  background: color-mix(in srgb, var(--overlay) 92%, transparent); backdrop-filter: blur(12px);
+  box-shadow: 0 18px 44px rgba(0,0,0,.45); }
+.handoff .ap-badge[data-kind="setup-status"] { background: var(--warn); }
+.handoff .ap-badge[data-kind="messenger-prompt"] { background: var(--iris); }
+.handoff .ap-kind { color: var(--ink-2); }
+.handoff .ap-title { white-space: normal; font-size: 14.5px; }
+.handoff .hf-lines { display: flex; flex-direction: column; gap: 5px; }
+.handoff .hf-lines p { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+.handoff .ap-act { border-color: var(--line-2); background: var(--raised); }
+.handoff .ap-act:hover { background: var(--overlay); }
+.handoff .ap-act.accent { border-color: color-mix(in srgb, var(--iris) 55%, transparent); background: var(--iris-soft); color: var(--ink); font-weight: 600; }
+.handoff .ap-act.accent:hover { background: color-mix(in srgb, var(--iris) 28%, transparent); }
+
+/* 1.x → 2.0: 자동 적용 대신 안내만(설정 → 업데이트) */
+.upd-reinstall { margin: 8px 0 2px; padding: 9px 11px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent); background: rgba(242,200,121,.08); color: var(--ink-2); font-size: 12.5px; line-height: 1.6; }
+.upd-reinstall a { color: var(--iris); }
+
 /* ---- 말풍선(읽기 폭 720px, 가운데 열) ---- */
 .msg { width: 100%; max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; align-items: flex-start; }
 .msg.user { align-items: flex-end; }

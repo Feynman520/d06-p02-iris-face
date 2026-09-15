@@ -103,8 +103,9 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); render(); }
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
+      else if (m.type === 'handoff') Handoff.apply(m);                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
       else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
       else if (m.type === 'finalize') {                                                                   // 세팅 마무리 자동 실행(v2.60): 시작·결과 토스트
         if (m.phase === 'start') Notify.push({ title: '세팅 마무리를 시작합니다', sub: '세션을 잠시 닫고 마무리 절차를 돌린 뒤 같은 자리에서 이어 엽니다. 복구 문구 창이 뜨면 안내대로 적어 두세요.', status: 'busy', force: true });
@@ -531,6 +532,8 @@
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------
   // v2.40: 실행 중인 보조 수가 바뀌면 겉보기 상태(보조 작업 중)도 바뀌고, 보류해 둔 완료 알림의 해소 여부를 Notify가 판단한다.
   Approval.init({ send, current: () => current, onTerm: () => setMode('term') }); // 확인 카드(v2.43)
+  // 인수 안내 카드(설치 패키지 v2, Task 21): 메신저 안내 카드는 그 모듈 서랍을 함께 펼친다.
+  Handoff.init({ onOpenModule: (name) => { if (!drawerOpenFor(`mod:${name}`)) openModule(name); } });
   SubPanel.init({ send, current: () => current, onChange: (id) => { render(); if (id) Notify.onSubs(id, SubPanel.alive(id), SubPanel.list(id).length, sessions.find(x => x.id === id)); } });
 
   // ---------- 각인(2026-09-10): 첫 실행 1회 `by SEJUN HAM` + 워드마크 두 번 클릭(Ctrl+Alt+I) = 별이 SEJUN HAM 으로 모임 ----------

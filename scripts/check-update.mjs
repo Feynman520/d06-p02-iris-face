@@ -10,6 +10,7 @@ import { buildManifest, signManifest, generateKeyPair, sha256 } from '../daemon/
 import {
   Updater, versionFromTag, cmpSemver, isNewer, parseSha256File, stamp, detectMode, readInstalled,
   verifyFaceZip, verifySignedSha256, extractZipFile, PART_NAMES, APPLY_ORDER, PART_SOURCE, DEV_REASON,
+  needsReinstall, REINSTALL_NOTE, REINSTALL_URL,
 } from '../daemon/update.mjs';
 
 let pass = 0, fail = 0;
@@ -411,6 +412,47 @@ let planFile = null;
   ok(/sameOrigin\(req\)[\s\S]{0,200}update/.test(server) || /startsWith\('\/api\/update\/'\)/.test(server), '데몬: 업데이트 POST 라우트는 같은 출처만');
   ok(/update: \{ mode: updater\.mode, enabled: updater\.enabled \}/.test(server), '데몬: /api/health.features.update = { mode, enabled }');
   ok(!/rmSync\(\s*ROOT/.test(fs.readFileSync('daemon/update.mjs', 'utf8')), '데몬: 자기 폴더를 지우거나 바꾸는 코드가 없다(교체는 적용기 몫)');
+}
+
+// ---- 16) 1.x → 2.0 은 자동 적용하지 않는다(P03 Task 21) ----
+// 구조판 최신 판이 2.x 인데 이 영혼의 영수증이 1.x(schema<2 또는 영수증 없음)면 구조판은 받지 않고 안내 글 + 홈페이지 링크만.
+// IRIS 창·메신저는 그대로 업데이트된다.
+{
+  const stDir = fs.mkdtempSync(path.join(tmp, 'st-re-'));
+  const re = new Updater({
+    root, faceRoot: faceHome, stateDir: stDir, modulesDir, keys: KEYS, now: () => nowMs, log: () => {}, broadcast: () => {},
+    fetchImpl: fakeFetch,
+  });
+  // 영수증은 schema 1(1.x 영혼), 구조판 최신은 2.0.0 으로 손으로 세팅
+  writeReceipt({ ...receipt, schema: 1, package: { name: 'IRIS', version: '1.4.5' } });
+  re.state.latest = {
+    face: { version: '2.60.0', url: 'x', asset: 'iris-face-v2.60.0.zip' },
+    messenger: { version: '0.5.0', url: 'x', asset: 'iris-messenger-v0.5.0.zip' },
+    package: { version: '2.0.0', url: 'x', asset: 'IRIS-Setup_v2.0.0_2026-09-20.zip' },
+  };
+  re.state.lastCheck = new Date(nowMs).toISOString();
+  ok(re.reinstall === true, 'reinstall: 구조판 2.0 + 영수증 schema 1 → 새로 설치가 필요');
+  const info = re.info();
+  ok(info.available.includes('package'), 'reinstall: 새 판이 있다는 사실은 그대로 보인다');
+  ok(!info.applyParts.includes('package'), 'reinstall: 구조판은 받지 않는다');
+  ok(info.applyParts.includes('face') && info.applyParts.includes('messenger'), 'reinstall: IRIS 창·메신저는 그대로 업데이트');
+  ok(info.headline?.part === 'face', 'reinstall: 단추의 대표 판은 창(구조판을 올리지 않는다)');
+  ok(info.reinstall?.note === REINSTALL_NOTE && info.reinstall.url === REINSTALL_URL && info.reinstall.version === '2.0.0', 'reinstall: 화면에 줄 안내 문구·홈페이지 링크·새 판');
+  // 구조판만 새 판인 경우 → apply 는 받지 않고 안내를 돌려준다
+  const only = new Updater({ root, faceRoot: faceHome, stateDir: fs.mkdtempSync(path.join(tmp, 'st-re2-')), modulesDir, keys: KEYS, now: () => nowMs, log: () => {}, broadcast: () => {}, fetchImpl: fakeFetch });
+  only.state.latest = { face: null, messenger: null, package: { version: '2.0.0', url: 'x', asset: 'IRIS-Setup_v2.0.0_2026-09-20.zip' } };
+  only.state.lastCheck = new Date(nowMs).toISOString();
+  const r = await only.apply();
+  ok(r.ok === false && r.reason === REINSTALL_NOTE && r.reinstall?.url === REINSTALL_URL, 'reinstall: apply 는 받지 않고 "새로 설치" 안내를 돌려준다');
+  ok(!fs.existsSync(path.join(root, '_agent', 'shared', 'downloads')) || fs.readdirSync(path.join(root, '_agent', 'shared', 'downloads')).every(n => !/2\.0\.0/.test(n)), 'reinstall: 구조판 zip 을 내려받지 않았다');
+  // 영수증이 schema 2 로 바뀌면 평소 흐름으로 돌아온다
+  writeReceipt({ ...receipt, schema: 2, package: { name: 'IRIS', version: '2.0.0' } });
+  ok(re.reinstall === false, 'reinstall: 영수증 schema 2 면 해당 없음(평소 업데이트)');
+  writeReceipt({ ...receipt, package: { name: 'IRIS', version: '1.3.0' } });
+  // 화면 쪽 연결
+  const js = fs.readFileSync('app/settings.js', 'utf8');
+  ok(/upd\.reinstall/.test(js) && /upd-reinstall/.test(js), '화면: 설정 → 업데이트가 reinstall 안내를 그린다');
+  ok(/r\.reinstall/.test(js), '화면: apply 가 돌려준 안내는 "실패" 문구로 감싸지 않는다');
 }
 
 // ---- 끝 ----

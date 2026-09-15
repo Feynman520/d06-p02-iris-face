@@ -25,6 +25,7 @@ import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
 import { Updater } from './update.mjs';
 import { Finalizer } from './finalize.mjs';
 import { SetupProgress } from './progress.mjs';
+import { HandoffFlow } from './handoff.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,6 +60,9 @@ const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
 var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadcast });
 // 세팅 진행 막대(v2.65): 가이드가 기록하는 _agent\setup\setup-progress.json 을 읽어 화면 위에 그린다(progress.mjs).
 const setupProgress = new SetupProgress({ root: WS_ROOT, broadcast, log });
+// 인수 문서(설치 패키지 v2, P03 Task 21): `_agent\setup\handoff.json` 이 있으면 첫 실행을 여기서 가른다 —
+// ready 면 주도 에이전트에 firstMessage 를 그대로 보내고, 아니면 안내 카드 + 「설치 이어하기」. 없으면(1.x) 아무 일도 하지 않는다.
+const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broadcast });
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
 // 잠든 에이전트 깨우기(installer Task 17): 영수증이 있고 잠든 에이전트가 있을 때만 15초마다 TeamClaude 설정을
 // 읽어 자동으로 깨운다. 영수증이 없는 PC(이 개발 PC 포함)에서는 sleepingAgents 가 항상 빈 배열이라 무동작.
@@ -273,6 +277,14 @@ const server = http.createServer(async (req, res) => {
       const r = await installFromBuffer(z.buf, { allow: false, via: `catalog ${z.asset}` });
       return json(res, r.status, r.body);
     }
+    // ---- 인수 문서(설치 패키지 v2, Task 21): 상태·카드 읽기 / 「설치 이어하기」 / 「나중에」. POST 는 같은 출처만. ----
+    if (req.method === 'GET' && p === '/api/handoff') return json(res, 200, handoff.info());
+    if (req.method === 'POST' && (p === '/api/handoff/resume' || p === '/api/handoff/dismiss')) {
+      if (!sameOrigin(req)) { log(`403 handoff ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      if (p === '/api/handoff/dismiss') { handoff.dismiss(); return json(res, 200, { ok: true, ...handoff.info() }); }
+      const r = handoff.resume();
+      return json(res, r.ok ? 200 : 400, r);
+    }
     // ---- 업데이트(v2.58): 확인·설정·내려받기·적용. 전부 같은 출처만(화면에서만 부른다). ----
     if (req.method === 'GET' && p === '/api/update') return json(res, 200, updater.info());
     if (p.startsWith('/api/update/') && req.method === 'POST') {
@@ -437,7 +449,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
@@ -473,7 +485,10 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
   // 세팅 마무리 자동 실행(v2.60): 가이드가 pending-finalize 를 남기면 창이 대신 마무리한다.
   try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); }
-  try { setupProgress.start(); } catch (e) { log(`setup progress init error: ${e?.message || e}`); } });
+  try { setupProgress.start(); } catch (e) { log(`setup progress init error: ${e?.message || e}`); }
+  // 인수 문서 첫 실행 분기(Task 21) — 잃은 세션 자동 재개가 끝난 뒤 한 번만. 인수 문서가 없으면(1.x·손 설치) 조용히 아무 일도 하지 않는다.
+  try { const r = handoff.runOnce(); if (r.state !== 'none') log(`handoff: first run state=${r.state} action=${r.action}${r.reason ? ` (${r.reason})` : ''}`); }
+  catch (e) { log(`handoff init error: ${e?.stack || e}`); } });
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });
