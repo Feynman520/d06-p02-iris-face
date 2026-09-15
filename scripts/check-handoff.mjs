@@ -12,6 +12,7 @@ import path from 'node:path';
 import {
   HANDOFF_SCHEMA, SETUP_STAGES, handoffFile, receiptFile, handoffExists, readHandoff,
   receiptSetupOk, receiptLoginOk, handoffLoginOk, resolveState, markMessengerPrompted, resumeTarget, HandoffFlow,
+  CONTRACT_INSTALLER_PATH,
 } from '../daemon/handoff.mjs';
 import { SetupProgress, progressFile } from '../daemon/progress.mjs';
 import { Finalizer } from '../daemon/finalize.mjs';
@@ -129,16 +130,59 @@ ok(handoffLoginOk({ login: { claude: 'failed' } }) === false && handoffLoginOk({
   ok(!fs.existsSync(`${handoffFile(r)}.tmp`), '원자 쓰기 임시 파일이 남지 않는다');
 }
 
-// ---------- 4) resumeTarget — 영혼 밖으로 나가지 않는다 ----------
+// ---------- 4) resumeTarget — 영혼 밖으로도, 셸 재해석으로도 새지 않는다 ----------
 {
   const r = makeSoul('RESUME');
   const t = resumeTarget(r, handoffDoc());
   ok(t.ok && t.file === path.join(r, '_agent', 'setup', 'installer', 'IRIS-설치.cmd') && t.args.join(' ') === '--resume', 'resumeTarget: 영혼 상대경로 → 절대경로 + --resume');
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent\\setup\\installer\\IRIS-설치.cmd' } })).ok === true, 'resumeTarget: 슬래시 방향은 너그럽게(역슬래시도 같은 경로)');
   ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '../밖/IRIS-설치.cmd' } })).ok === false, 'resumeTarget: 영혼 밖 경로 거부');
   ok(resumeTarget(r, handoffDoc({ resume: { installerPath: 'C:/Windows/system32/cmd.exe' } })).ok === false, 'resumeTarget: 절대경로 거부');
   ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/없는파일.cmd' } })).ok === false, 'resumeTarget: 사본이 없으면 거부');
   const bad = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/IRIS-설치.cmd', args: ['& del /q *', '--resume'] } }));
   ok(bad.ok && bad.args.length === 1 && bad.args[0] === '--resume', 'resumeTarget: 이상한 인자는 걸러낸다');
+
+  // ⓐ 계약이 정한 그 경로 하나만 — 영혼 안에 실제로 있는 다른 파일도 받지 않는다(검토 1회차 Important).
+  //    이것이 없으면 인수 문서가 "이름에 셸 글자가 든 영혼 안 파일"을 가리켜 cmd 재해석을 노릴 수 있다.
+  const other = path.join(r, '_agent', 'setup', 'installer', '다른것.cmd');
+  fs.writeFileSync(other, '@echo off\r\n', 'utf8');
+  const nonContract = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/다른것.cmd' } }));
+  ok(nonContract.ok === false && /계약과 다릅니다/.test(nonContract.reason), 'resumeTarget: 영혼 안에 실제로 있어도 계약 밖 경로면 거부');
+  ok(CONTRACT_INSTALLER_PATH === '_agent/setup/installer/IRIS-설치.cmd', '계약이 정한 설치기 사본 자리는 하나뿐');
+  // 셸 글자가 든 이름은 계약 검사에서 이미 걸린다(같은 폴더에 실제로 만들어 두고 확인)
+  const meta = path.join(r, '_agent', 'setup', 'installer', 'IRIS-설치.cmd&calc.cmd');
+  fs.writeFileSync(meta, '@echo off\r\n', 'utf8');
+  const metaRel = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/IRIS-설치.cmd&calc.cmd' } }));
+  ok(metaRel.ok === false, 'resumeTarget: 이름에 셸 글자(&)가 든 실제 파일도 거부');
+}
+{
+  // ⓑ 영혼 루트 자체에 셸 글자가 있으면(계약 경로라도) 실행하지 않는다 — 풀어 본 절대경로를 다시 본다.
+  const r = makeSoul('META(&)WRAP');
+  const t = resumeTarget(r, handoffDoc());
+  ok(t.ok === false && /셸이 다르게 읽는 글자/.test(t.reason), 'resumeTarget: 풀어 본 절대경로에 & ( ) 가 있으면 거부');
+  const f = flowOfLate(r);
+  const rr = f.resume();
+  ok(rr.ok === false && f.spawns.length === 0, 'resume(): 거부되면 cmd.exe 를 아예 띄우지 않는다');
+}
+/** 위 한 곳에서만 쓰는 작은 흐름(아래 flowOf 와 같은 모양, spawn 호출을 들여다볼 수 있게) */
+function flowOfLate(root) {
+  const spawns = [];
+  const f = new HandoffFlow({
+    root, stateDir: path.join(root, '_state'), sm: null, log: () => {}, broadcast: () => {},
+    spawnImpl: (cmd, args, o) => { spawns.push({ cmd, args, o }); return { pid: 4242, unref() {} }; },
+  });
+  f.spawns = spawns; return f;
+}
+{
+  // ⓒ 실제로 넘기는 명령줄: 경로를 따옴표로 감싸고 verbatim 으로 그대로 보낸다(Node 의 배열 조립에 맡기지 않는다).
+  const r = makeSoul('RESUME-LINE');
+  const f = flowOfLate(r);
+  const rr = f.resume();
+  ok(rr.ok && f.spawns.length === 1 && f.spawns[0].cmd === 'cmd.exe', 'resume(): cmd.exe 하나만 띄운다');
+  const args = f.spawns[0].args;
+  ok(args.length === 2 && args[0] === '/c' && args[1] === `start "" "${path.join(r, '_agent', 'setup', 'installer', 'IRIS-설치.cmd')}" --resume`, 'resume(): 경로를 따옴표로 감싼 명령줄 한 덩어리');
+  ok(f.spawns[0].o.windowsVerbatimArguments === true, 'resume(): windowsVerbatimArguments — Node 가 다시 조립하지 않는다');
+  ok(f.spawns[0].o.detached === true && f.spawns[0].o.cwd === r, 'resume(): 분리 실행 · cwd = 영혼 루트(창은 그대로 산다)');
 }
 
 // ---------- 5) HandoffFlow 첫 실행(가짜 SessionManager — CLI·pty 접촉 0) ----------
@@ -163,6 +207,7 @@ const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.j
   ok(f.card?.kind === 'messenger-prompt' && f.card.openModule === 'messenger', 'ready: 메신저 안내 카드 1회');
   ok(JSON.parse(fs.readFileSync(handoffFile(r), 'utf8')).messenger.prompted === true, 'ready: 표시하자마자 prompted=true 기록');
   ok(f.card.later === true && f.card.resume === false, '메신저 카드에는 「나중에」만');
+  ok(!/TeamClaude/i.test([f.card.title, ...f.card.lines].join(' ')), '메신저 안내 카드 글에도 "TeamClaude" 0회');
   // 두 번째 데몬 시작 — 새 흐름 객체로 다시 불러도 인사·안내를 되풀이하지 않는다
   const f2 = flowOf(r, fakeSm());
   const out2 = f2.runOnce();

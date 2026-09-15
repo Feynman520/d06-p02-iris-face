@@ -110,20 +110,37 @@ export function markMessengerPrompted(root) {
 
 // ---- 「설치 이어하기」 ----
 const ARG_RE = /^--[a-z][a-z0-9-]{0,20}$/;
+/** 계약(P03 `docs\인수문서-handoff-v2.md`)이 정한 **단 하나의** 설치기 사본 자리. 다른 값은 받지 않는다. */
+export const CONTRACT_INSTALLER_PATH = '_agent/setup/installer/IRIS-설치.cmd';
 /**
- * 인수 문서 `resume` → 실제로 실행할 것. 경로는 **영혼 루트 상대**여야 하고 루트 밖으로 나가면 거부한다(휴대성 + 안전).
+ * cmd.exe 가 명령줄을 **다시 읽으면서** 뜻을 갖는 글자들. `&`·`|` 는 명령을 하나 더 붙일 수 있고 `%` 는 따옴표 안에서도 환경변수로 바뀐다.
+ * 우리는 따옴표로 감싸고 그대로 넘기지만(아래 `resume()`), 그래도 이런 글자가 든 경로는 아예 실행하지 않는다(겹겹 방어).
+ */
+const CMD_META_RE = /[&|^<>()%!]/;
+const normRel = (s) => String(s).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+/**
+ * 인수 문서 `resume` → 실제로 실행할 것. 네 겹으로 막는다:
+ *   ⓐ 값이 **계약의 그 경로 하나**여야 한다(슬래시 방향·대소문자만 너그럽게) — 인수 문서가 아무 파일이나 가리킬 수 없다.
+ *   ⓑ 절대경로·UNC 금지, 풀어 본 경로가 영혼 루트 밖이면 거부.
+ *   ⓒ 그 자리에 파일이 실제로 있어야 한다.
+ *   ⓓ 풀어 본 절대경로에 cmd 가 다르게 읽는 글자(`& | ^ < > ( ) % !`)가 하나라도 있으면 거부.
+ * 인자도 `--소문자` 형태만 통과시킨다.
  * @returns {{ok:true, file:string, args:string[]}|{ok:false, reason:string}}
  */
 export function resumeTarget(root, handoff) {
   const rel = String(handoff?.resume?.installerPath || '').trim();
   if (!rel) return { ok: false, reason: '인수 문서에 설치기 경로가 없습니다' };
   if (/^[A-Za-z]:|^\\\\/.test(rel)) return { ok: false, reason: '설치기 경로는 영혼 폴더 안 상대경로여야 합니다' };
+  if (normRel(rel) !== normRel(CONTRACT_INSTALLER_PATH)) {
+    return { ok: false, reason: `설치기 경로가 계약과 다릅니다(${CONTRACT_INSTALLER_PATH} 만 허용): ${rel.slice(0, 120)}` };
+  }
   const base = path.resolve(root);
   const file = path.resolve(base, rel.replace(/\//g, path.sep));
   if (!(file.toLowerCase() === base.toLowerCase() || file.toLowerCase().startsWith(base.toLowerCase() + path.sep))) {
     return { ok: false, reason: '설치기 경로가 영혼 폴더 밖을 가리킵니다' };
   }
   if (!fs.existsSync(file)) return { ok: false, reason: `설치기 사본이 없습니다: ${rel}` };
+  if (CMD_META_RE.test(file)) return { ok: false, reason: '설치기 경로에 셸이 다르게 읽는 글자(& | ^ < > ( ) % !)가 있어 실행하지 않습니다' };
   const raw = Array.isArray(handoff?.resume?.args) && handoff.resume.args.length ? handoff.resume.args : ['--resume'];
   const args = raw.map((a) => String(a)).filter((a) => ARG_RE.test(a));
   if (!args.length) args.push('--resume');
@@ -276,7 +293,11 @@ export class HandoffFlow {
     const t = resumeTarget(this.root, h);
     if (!t.ok) { this.log(`handoff resume 거부: ${t.reason}`); return t; }
     try {
-      const child = this.spawnImpl('cmd.exe', ['/c', 'start', '', t.file, ...t.args], { detached: true, stdio: 'ignore', windowsHide: true, cwd: this.root });
+      // 명령줄을 **우리가 직접 만들어 그대로** 넘긴다(`windowsVerbatimArguments`). Node 가 배열을 조립할 때는 cmd 의 재해석을
+      // 염두에 두지 않아 경로 속 `&` 같은 글자가 명령 구분자가 될 수 있다 — 여기서 경로를 따옴표로 감싸 한 덩어리로 못 박는다.
+      // (그런 글자가 든 경로는 resumeTarget 이 이미 거부했다. 이것은 두 번째 자물쇠다.)
+      const line = `start "" "${t.file}"${t.args.length ? ` ${t.args.join(' ')}` : ''}`;
+      const child = this.spawnImpl('cmd.exe', ['/c', line], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true, cwd: this.root });
       child?.unref?.();
       this.log(`handoff resume: ${t.file} ${t.args.join(' ')} pid=${child?.pid ?? '?'}`);
       return { ok: true, file: t.file, args: t.args, pid: child?.pid ?? null };
