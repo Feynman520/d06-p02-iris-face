@@ -75,7 +75,7 @@ function createTranscript() {
   function embedsFor(text) {
     const out = []; const seen = new Set();
     const add = (kind, key, html) => { if (!seen.has(key)) { seen.add(key); out.push({ kind, html }); } };
-    for (const m of String(text || '').matchAll(IMG_RE)) { const p = normPath(m[0]); add('img', p.toLowerCase(), `<figure class="embed pic"><img src="${fileUrl(p)}" alt="" loading="lazy" onerror="this.closest('figure').classList.add('broken')"><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
+    for (const m of String(text || '').matchAll(IMG_RE)) { const p = normPath(m[0]); add('img', p.toLowerCase(), `<figure class="embed pic"><div class="pic-box"><img src="${fileUrl(p)}" alt="" loading="lazy" onload="if(this.naturalWidth<640)this.classList.add('small')" onerror="this.closest('figure').classList.add('broken')"></div><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
     for (const m of String(text || '').matchAll(HTML_RE)) { const p = normPath(m[0]); add('html', p.toLowerCase(), `<figure class="embed frame"><iframe src="${fileUrl(p)}" ${born()} loading="lazy" sandbox="allow-scripts allow-same-origin" title="${esc(p)}"></iframe><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
     for (const m of String(text || '').matchAll(DOC_RE)) {
       const p = normPath(m[0]); const isPdf = /\.pdf$/i.test(p);

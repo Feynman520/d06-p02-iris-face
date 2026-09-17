@@ -294,13 +294,15 @@ a { color: var(--iris); }
 .step-text p { margin: 0 0 6px; }
 
 /* ---- 삽입물(이미지·HTML·로컬 주소) ---- */
-/* 두 갈래(2026-09-10): 틀(PDF·HTML·로컬 주소)은 대화 폭 전체(width:100% — .msg가 align-items:flex-start라 width가 없으면 iframe 기본 300px로 쪼그라듦),
-   사진(.pic)은 본래 비율·크기로 그리고 max-width·max-height만 상한. */
+/* 틀(PDF·HTML·로컬 주소)은 대화 폭 전체(width:100% — .msg가 align-items:flex-start라 width가 없으면 iframe 기본 300px로 쪼그라듦).
+   사진(.pic)도 대화 폭에 꽉 채운다(2026-09-17 사용자 결정 — 전에는 max-height:520px 상한 때문에 세로로 긴 캡처가 폭까지 쪼그라들어 "창이 좁다"가 반복됨).
+   세로가 화면보다 길면 .pic-box 안에서만 스크롤. 원본이 작은 사진(폭 640px 미만, img.small)은 늘리지 않고 본래 크기. */
 .embed { margin: 6px 0 0; width: 100%; display: flex; flex-direction: column; gap: 4px; }
-.embed.pic { width: auto; max-width: 92%; }
-.embed.pic img { display: block; align-self: flex-start; width: auto; height: auto; max-width: 100%; max-height: 520px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--base); } /* align-self: flex-start = 세로 flex의 stretch로 가로가 늘어나 비율이 깨지는 것 방지 */
-.embed.pic figcaption { width: 0; min-width: 100%; } /* 긴 경로 캡션이 상자를 사진보다 넓히지 않게(내용 폭 기여 0, 표시 폭은 사진 폭) */
-.msg.user .embed.pic img { align-self: flex-end; }
+.embed.pic { width: 100%; }
+.embed.pic .pic-box { width: 100%; max-height: 85vh; overflow: auto; border-radius: 10px; border: 1px solid var(--line-2); background: var(--base); }
+.embed.pic img { display: block; width: 100%; height: auto; }
+.embed.pic img.small { width: auto; max-width: 100%; }
+.embed.pic figcaption { width: 0; min-width: 100%; } /* 긴 경로 캡션이 상자를 넓히지 않게(내용 폭 기여 0) */
 .embed.frame iframe { width: 100%; height: 480px; border: 1px solid var(--line-2); border-radius: 10px; background: #fff; }
 .embed.frame.doc iframe { height: 640px; }
 .embed figcaption { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-3); }
