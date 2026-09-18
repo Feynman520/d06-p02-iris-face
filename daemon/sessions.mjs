@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { buildCommand, normalize, CODEX_HOME } from './agents.mjs';
+import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR } from './agents.mjs';
+import { preTrust } from './trust.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
 import { generateTitle } from './titler.mjs';
@@ -61,6 +62,12 @@ function childEnv() {
 
 // 설치기 영수증(package-receipt.json, installer Task 16)이 있으면 그 값으로 env를 보강한다 — 이 PC(영수증 없음)는 무접촉·현행 그대로.
 // receipt 인자는 시험용 주입 지점(check-first-session.mjs가 실제 파일을 건드리지 않고 가짜 영수증을 넣을 수 있게).
+/** "화살표(들) + Enter" 한 덩어리를 [화살표, Enter] 로 가른다(아니면 null). CLI 입력기가 한 청크를 한 키로 읽어 Enter 를 버리는 것을 막는다(2026-09-19). */
+export function splitArrowEnter(data) {
+  const m = /^((?:\x1b\[[ABCD])+)(\r)$/.exec(String(data ?? ''));
+  return m ? [m[1], m[2]] : null;
+}
+
 export function applyReceiptEnv(env, receipt = readReceipt()) {
   const r = receipt?.env;
   if (!r) return env;
@@ -149,7 +156,14 @@ export class SessionManager {
     this.save(); this.hooks.onList?.();
     return rec;
   }
-  spawn(cmd, cwd, cols, rows) { return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env: childEnv(), useConpty: true }); }
+  spawn(cmd, cwd, cols, rows) {
+    const env = childEnv();
+    // 폴더 신뢰 물음 선답(daemon/trust.mjs, 2026-09-19): CLI 가 이 폴더를 처음 볼 때 묻는 "Do you trust…" 를 미리 "예"로 적어 둔다.
+    const agent = /^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude';
+    const t = preTrust({ agent, cwd, env, fallback: { claudeConfigDir: CLAUDE_CONFIG_DIR, codexHome: CODEX_HOME } });
+    if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${agent} ${cwd} → ${t.result}`);
+    return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
+  }
 
   /** 모델·사고깊이 바꾸기 = 재개 재시작: 현 PID 종료 → 같은 카드로 --resume / codex resume. 에이전트는 못 바꾼다. */
   switchTo(id, { model, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
@@ -318,7 +332,14 @@ export class SessionManager {
     if (next === prev) return;
     rec.prompt = prompt || null; this.hooks.onPrompt?.(id, rec.prompt);
   }
-  write(id, data) { const st = this.live.get(id); if (!st) throw new Error(`session not live: ${id}`); if (/[\r\n]/.test(data)) st.worked = true; st.pty.write(data); } // 터미널 보기에서 Enter를 친 것도 요청으로 본다
+  write(id, data) {
+    const st = this.live.get(id); if (!st) throw new Error(`session not live: ${id}`); if (/[\r\n]/.test(data)) st.worked = true; // 터미널 보기에서 Enter를 친 것도 요청으로 본다
+    // 화살표 뒤에 바로 Enter 가 붙은 한 덩어리(확인 카드의 "↓ + Enter" — 폴더 신뢰 물음·코덱스 샌드박스 물음)는 CLI 의 입력기가
+    // 한 청크를 한 키로 읽어 Enter 를 버린다(2026-09-19 실제 사용자 실측: 눌러도 선택이 안 됨). 화살표를 먼저 보내고 Enter 는 잠깐 뒤에.
+    const parts = splitArrowEnter(data);
+    if (parts) { st.pty.write(parts[0]); setTimeout(() => { try { st.pty.write(parts[1]); } catch {} }, 160); return; }
+    st.pty.write(data);
+  }
   resize(id, cols, rows) { const st = this.live.get(id); if (st && cols > 0 && rows > 0) { st.pty.resize(Math.floor(cols), Math.floor(rows)); st.screen.resize(Math.floor(cols), Math.floor(rows)); } }
 
   /** 명시적 닫기: 그 세션의 cmd.exe PID 트리 하나만 종료하고 목록에서 제거 */

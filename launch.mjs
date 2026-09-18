@@ -135,9 +135,15 @@ const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.e
 if (process.argv.includes('--no-open')) { /* 데몬만 */ }
 else if (!process.argv.includes('--browser') && fs.existsSync(ELECTRON)) {
   const out = fs.openSync(path.join(STATE, 'app.out.log'), 'a');
-  spawn(ELECTRON, [path.join(ROOT, 'app', 'electron', 'main.cjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: false }).unref();
+  // 포트는 환경으로 넘긴다(창의 main.cjs 가 같은 순서로 읽는다) — 옛 창은 3458 고정이라 --port 실행에서 빈 창이 떴다(2026-09-19).
+  const child = spawn(ELECTRON, [path.join(ROOT, 'app', 'electron', 'main.cjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: false, env: { ...process.env, IRIS_FACE_PORT: String(PORT) } });
+  // 창이 5초 안에 죽으면(SAC·백신이 electron.exe 를 막음, 그래픽 드라이버 문제 등) 기본 브라우저로 대신 연다 — 사용자가 빈손이 되지 않게.
+  let gone = false;
+  child.once('exit', (code) => { gone = true; if (code !== 0) { say(`[iris-face] electron window exited early (code ${code}) — opening the browser instead`, true); spawn('cmd.exe', ['/c', 'start', '', URL_], { windowsHide: true, detached: true, stdio: 'ignore' }).unref(); } });
+  setTimeout(() => { if (!gone) child.unref(); }, 5000).unref?.();
   say('[iris-face] electron window launched');
 } else {
+  if (!process.argv.includes('--browser')) say('[iris-face] electron.exe not found — opening the browser instead', true);
   spawn('cmd.exe', ['/c', 'start', '', URL_], { windowsHide: true, detached: true, stdio: 'ignore' }).unref();
 }
 say(`[iris-face] ${URL_}`);

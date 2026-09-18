@@ -8,7 +8,9 @@ const { spawn } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const URL_ = 'http://127.0.0.1:3458/';
+// 포트 단일 소스(launch.mjs 와 같은 순서): --port > IRIS_FACE_PORT > 3458. 예전엔 3458 고정이라 다른 포트에서 빈 창이 떴다(2026-09-19).
+const PORT = Number((process.argv.find((a) => a.startsWith('--port=')) || '').slice(7)) || Number(process.env.IRIS_FACE_PORT) || 3458;
+const URL_ = `http://127.0.0.1:${PORT}/`;
 const STATE = path.join(ROOT, 'state');
 const TIP = `IRIS · by ${String(PKG.author || '').replace(/\s*\(.*\)$/, '') || 'Sejun Ham'}`; // 트레이 툴팁의 각인(원천 = package.json author)
 // IRIS 아이콘(2026-09-13, v2.57.1): app/iris.ico 한 파일이 창·작업표시줄·트레이·설치기 바탕화면 바로가기의 공통 원천.

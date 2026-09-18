@@ -221,7 +221,9 @@ function makeStarEngine() {
         const [x, y] = bl(p, gather === 1 ? ix : ix + p.sx * W * 0.5 * (1 - gather), gather === 1 ? iy : iy + p.sy * H * 0.5 * (1 - gather));
         const near = (z2 + 1.2) / 2.4, tw = reduce ? 0.85 : 0.65 + 0.35 * Math.sin(t * p.tw + p.ph);
         ctx.fillStyle = col(p, Math.max((0.12 + 0.75 * near) * tw, 0.8 * sigK) * alphaMul * (0.5 + 0.5 * gather));
-        ctx.beginPath(); ctx.arc(x, y, p.size * (0.55 + 0.75 * depth), 0, 6.283); ctx.fill();
+        // 반지름 상한 1.5 — 앞쪽 큰 별(size 2.6 × depth 1.6 ≈ 4.6px)이 100% 해상도 캔버스를 화면 배율로 늘리면 흐릿한 "구형 빛"으로
+        // 보였다(2026-09-19 실제 사용자 실측, 검정 테마에서 두드러짐). 원근감은 밝기(near)로 남는다.
+        ctx.beginPath(); ctx.arc(x, y, Math.min(1.5, p.size * (0.55 + 0.75 * depth)), 0, 6.283); ctx.fill();
       }
     } else if (style === 'iris') {
       const Ri = Math.min(W, H) * 0.27; glow(cx, cy, Ri, k);

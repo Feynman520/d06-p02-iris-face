@@ -217,10 +217,11 @@ export class HandoffFlow {
       title: '메신저에 로그인해 보세요',
       lines: [
         '메신저가 함께 설치되어 있습니다.',
-        '오른쪽에 열린 서랍에 이메일을 적고 받은 번호를 넣으면 로그인이 끝납니다.',
+        '「메신저 열기」를 누르면 오른쪽 서랍이 열립니다. 이메일을 적고 받은 번호를 넣으면 로그인이 끝납니다.',
         '지금 하지 않아도 됩니다. 나중에 위쪽 메신저 단추로 언제든 다시 열 수 있습니다.',
       ],
-      resume: false, later: true, openModule: 'messenger',
+      // 첫 화면은 홈이다(2026-09-19 사용자 결정) — 서랍은 카드의 단추를 눌렀을 때만 연다(openModule 은 단추 행동).
+      resume: false, later: true, openModule: 'messenger', openLabel: '메신저 열기',
     };
   }
 

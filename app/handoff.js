@@ -34,6 +34,7 @@ window.Handoff = (() => {
     const lines = (Array.isArray(c.lines) ? c.lines : []).map(t => `<p>${esc(t)}</p>`).join('');
     const acts = [
       c.resume ? '<button class="ap-act accent" type="button" data-act="resume">설치 이어하기</button>' : '',
+      c.openModule ? '<button class="ap-act accent" type="button" data-act="open">' + esc(c.openLabel || '열기') + '</button>' : '',
       c.later ? '<button class="ap-act" type="button" data-act="later">나중에</button>' : '',
     ].filter(Boolean).join('');
     box.innerHTML = `
@@ -42,13 +43,13 @@ window.Handoff = (() => {
       <div class="ap-actions">${acts}</div>`;
     for (const b of box.querySelectorAll('.ap-act')) b.onclick = () => act(b.dataset.act, c);
     box.hidden = false;
-    // 메신저 안내는 서랍을 함께 펼친다(사용자가 바로 로그인 화면을 본다). 모듈이 아직 안 떴으면 조용히 넘어간다.
-    if (c.openModule) { try { opts.onOpenModule(c.openModule); } catch {} }
+    // 첫 화면은 홈 그대로(2026-09-19 사용자 결정: 메신저 서랍이 먼저 뜨지 않게). 서랍은 카드의 「메신저 열기」를 눌렀을 때만 연다.
   }
 
   async function act(what, card) {
     if (busy) return;
     if (what === 'later') { busy = true; close(); try { await fetch('/api/handoff/dismiss', { method: 'POST' }); } catch {} busy = false; return; }
+    if (what === 'open') { busy = true; const name = card && card.openModule; close(); try { if (name) opts.onOpenModule(name); } catch {} try { await fetch('/api/handoff/dismiss', { method: 'POST' }); } catch {} busy = false; return; }
     if (what !== 'resume') return;
     busy = true;
     const btn = el()?.querySelector('[data-act="resume"]');

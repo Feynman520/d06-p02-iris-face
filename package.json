@@ -30,7 +30,8 @@
     "verify:update": "node scripts/check-update.mjs",
     "verify:finalize": "node scripts/check-finalize.mjs",
     "verify:progress": "node scripts/check-progress.mjs",
-    "verify:handoff": "node scripts/check-handoff.mjs"
+    "verify:handoff": "node scripts/check-handoff.mjs",
+    "verify:trust": "node scripts/check-trust.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
