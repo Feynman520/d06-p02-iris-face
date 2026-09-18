@@ -30,12 +30,20 @@ const AGENT_SHIMS = {
 function crlf(lines) {
   return lines.join('\r\n') + '\r\n';
 }
+// 코덱스 전용 3줄(P03 shims.mjs CODEX_PROXY_LINES 그대로): TeamClaude 는 코덱스를
+// 전달 프록시(MITM) 방식으로만 중계하므로 심 안에서만 HTTPS_PROXY + CA 번들을 준다.
+const CODEX_PROXY_LINES = [
+  'set "HTTPS_PROXY=http://127.0.0.1:3456"',
+  'set "NO_PROXY=localhost,127.0.0.1,::1"',
+  'set "SSL_CERT_FILE=%~dp0..\\portable-state\\teamclaude\\codex-ca-bundle.pem"',
+];
 export function agentShimText(agent) {
   const { envName, envDir, tool } = AGENT_SHIMS[agent];
   return crlf([
     '@echo off',
     'setlocal',
     'set "ANTHROPIC_BASE_URL=http://127.0.0.1:3456"',
+    ...(agent === 'codex' ? CODEX_PROXY_LINES : []),
     `set "${envName}=%~dp0..\\..\\${envDir}"`,
     'set "PATH=%~dp0..\\tools\\node;%PATH%"',
     `call "%~dp0..\\tools\\${tool}\\${tool}.cmd" %*`,
