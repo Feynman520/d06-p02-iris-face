@@ -52,7 +52,15 @@ ok(preTrust({ agent: 'claude', cwd, env: {}, fallback: {} }).result === 'skipped
 // ---- 키 나누기 ----
 ok(JSON.stringify(splitArrowEnter('\x1b[B\r')) === JSON.stringify(['\x1b[B', '\r']), '↓+Enter → 두 조각');
 ok(JSON.stringify(splitArrowEnter('\x1b[A\x1b[A\r')) === JSON.stringify(['\x1b[A\x1b[A', '\r']), '↑↑+Enter → 두 조각');
-ok(splitArrowEnter('\r') === null && splitArrowEnter('2\r') === null && splitArrowEnter('\x1b[B') === null && splitArrowEnter('\x1b') === null, '그 밖의 입력은 그대로');
+ok(JSON.stringify(splitArrowEnter('2\r')) === JSON.stringify(['2', '\r']) && JSON.stringify(splitArrowEnter('y\r')) === JSON.stringify(['y', '\r']), '한 글자+Enter(코덱스 번호 선택) → 두 조각');
+ok(splitArrowEnter('\r') === null && splitArrowEnter('22\r') === null && splitArrowEnter('\x1b[B') === null && splitArrowEnter('\x1b') === null, '그 밖의 입력은 그대로');
+{
+  const { codexKeys } = await import('../daemon/sessions.mjs');
+  const p = { kind: 'choice', options: [{ key: '1', label: 'a' }, { key: '2', label: 'b' }, { key: '\x1b[B\r', label: 'c' }], actions: [{ key: '\x1b', label: 'Esc' }] };
+  const q = codexKeys(p);
+  ok(q.options[0].key === '1\r' && q.options[1].key === '2\r' && q.options[2].key === '\x1b[B\r' && q.actions[0].key === '\x1b', '코덱스 대화상자: 숫자 키에만 Enter 를 붙인다');
+  ok(p.options[0].key === '1', '원본은 손대지 않는다');
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -64,8 +64,16 @@ function childEnv() {
 // receipt 인자는 시험용 주입 지점(check-first-session.mjs가 실제 파일을 건드리지 않고 가짜 영수증을 넣을 수 있게).
 /** "화살표(들) + Enter" 한 덩어리를 [화살표, Enter] 로 가른다(아니면 null). CLI 입력기가 한 청크를 한 키로 읽어 Enter 를 버리는 것을 막는다(2026-09-19). */
 export function splitArrowEnter(data) {
-  const m = /^((?:\x1b\[[ABCD])+)(\r)$/.exec(String(data ?? ''));
+  const m = /^((?:\x1b\[[ABCD])+|[0-9a-z])(\r)$/i.exec(String(data ?? ''));
   return m ? [m[1], m[2]] : null;
+}
+
+/** 코덱스 대화상자(번호·글자 선택지)는 숫자만 눌러서는 확정되지 않고 Enter 가 따라야 한다("Update available" 자동 응답과 같은 규칙,
+ *  2026-09-19 데스크탑 실측: 훅 신뢰 물음의 「2」 클릭 무반응). 코덱스 세션의 한 글자 키에 Enter 를 붙인다(write 가 160ms 뒤에 나눠 보냄). */
+export function codexKeys(prompt) {
+  if (!prompt || !Array.isArray(prompt.options)) return prompt;
+  const fix = (k) => (/^[0-9a-z]$/i.test(String(k ?? '')) ? `${k}\r` : k);
+  return { ...prompt, options: prompt.options.map((o) => ({ ...o, key: fix(o.key) })), actions: Array.isArray(prompt.actions) ? prompt.actions : prompt.actions };
 }
 
 export function applyReceiptEnv(env, receipt = readReceipt()) {
@@ -276,7 +284,7 @@ export class SessionManager {
       return;
     }
     // 확인 카드(v2.43): 노란불이면 화면 글자에서 질문·선택지를 뽑아 rec.prompt 에 두고 방송한다(같은 내용이면 조용). 꺼지면 setStatus 가 비운다.
-    if (status === 'attention') this.setPrompt(id, parseApproval(this.screenText(id, 40))); // v2.50: 대화상자가 14줄보다 길 수 있어(계획 승인·질문 5개+설명) 40줄을 읽힌다
+    if (status === 'attention') { const p = parseApproval(this.screenText(id, 40)); this.setPrompt(id, rec.agent === 'codex' ? codexKeys(p) : p); } // v2.50: 대화상자가 14줄보다 길 수 있어(계획 승인·질문 5개+설명) 40줄을 읽힌다
     // 진행 문구: 스피너 줄의 동사("Propagating…")를 우선 쓰고, 없으면 옛 형식(스피너와 안내가 한 줄)에서 뽑는다
     const actLine = status === 'busy' ? (lines.find(l => WORKING_RE.test(l)) || '') : '';
     // 스피너 문구만 남긴다: 상태줄(⏵⏵ bypass permissions…, ← for agents, shift+tab to cycle)과 스피너 글리프 제거

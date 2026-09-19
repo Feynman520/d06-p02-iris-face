@@ -98,7 +98,10 @@ export function buildCommand(sel, cwd, { resumeId } = {}) {
     const recordPath = path.join(CLAUDE_CONFIG_DIR, 'projects', claudeProjectSlug(cwd), `${sessionId}.jsonl`);
     return { file: 'cmd.exe', args: ['/c', ...args], sessionId, recordPath, resumeCmd: `claude --resume ${sessionId}`, cmdline: args.join(' ') };
   }
-  const base = ['codex', '-m', s.model, '-c', `model_reasoning_effort=${s.effort}`, '-c', 'service_tier=fast', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
+  // --dangerously-bypass-hook-trust(2026-09-19, v2.70): 코덱스 0.154+ 는 hooks.json 이 새것이면 첫 실행에 "Hooks need review" 를 띄운다.
+  // 설치기가 config.toml 에 bypass_hook_trust=true 를 적어도 TUI 는 이 물음을 냈다(데스크탑 실측) → 세션 인수로 확실히 건너뛴다.
+  // IRIS 세션은 최대 권한(approval never · danger-full-access)이 사용자 결정이고 훅은 설치기가 쓴 것이라 같은 결정의 연장.
+  const base = ['codex', '-m', s.model, '-c', `model_reasoning_effort=${s.effort}`, '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
   const args = resumeId ? [...base, 'resume', resumeId] : base;
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
 }
