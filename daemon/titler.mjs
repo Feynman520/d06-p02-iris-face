@@ -65,21 +65,41 @@ export function cleanTitle(out) {
  * @param {string} prompt 첫 요청문(Face 안내문 포함 가능)
  * @param {{ log?: (m:string)=>void, exe?: string|null }} [opt]
  */
-export function generateTitle(prompt, { log = () => {}, exe = findClaudeExe() } = {}) {
+export function generateTitle(prompt, { log = () => {}, exe = undefined, agent = 'claude', model = null } = {}) {
   const src = titleSource(prompt);
   if (!src) return Promise.resolve('');
-  if (!exe) { log('title gen skipped: claude.exe not found'); return Promise.resolve(''); }
-  const args = ['-p', '--model', TITLE_MODEL, '--effort', 'low', '--system-prompt', SYSTEM, '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--output-format', 'text', '--', wrap(src)];
+  // 세션의 에이전트로 제목을 짓는다(2026-09-19, v2.68): 코덱스 세션인데 헤드리스 클로드(Haiku)를 부르면
+  // 클로드 계정이 없는 PC(코덱스만 로그인)에서 세션마다 중계기 429 가 쌓였다(대시보드 "Claude — (none available) 429").
+  const useCodex = agent === 'codex';
+  let file, args, stdinText = null;
+  if (useCodex) {
+    // codex.cmd(심)는 PATH 로 찾는다 — cmd.exe /c 를 거치므로 요청문은 인수가 아니라 표준 입력으로 넘긴다(따옴표·한글 안전).
+    file = 'cmd.exe';
+    args = ['/c', 'codex', 'exec', '--skip-git-repo-check', '-m', model || CODEX_TITLE_MODEL, '-c', 'model_reasoning_effort=low', '-c', 'bypass_hook_trust=true', '-'];
+    stdinText = `${SYSTEM}\n\n${wrap(src)}\n`;
+  } else {
+    file = exe === undefined ? findClaudeExe() : exe;
+    if (!file) { log('title gen skipped: claude.exe not found'); return Promise.resolve(''); }
+    args = ['-p', '--model', TITLE_MODEL, '--effort', 'low', '--system-prompt', SYSTEM, '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--output-format', 'text', '--', wrap(src)];
+  }
   return new Promise((resolve) => {
     const t0 = Date.now(); let out = '', err = '', done = false;
-    const finish = (v, why) => { if (done) return; done = true; clearTimeout(timer); log(`title gen ${why} ${((Date.now() - t0) / 1000).toFixed(1)}s${v ? ` "${v}"` : ''}${err.trim() ? ` stderr=${err.trim().slice(0, 160)}` : ''}`); resolve(v); };
+    const finish = (v, why) => { if (done) return; done = true; clearTimeout(timer); log(`title gen(${useCodex ? 'codex' : 'claude'}) ${why} ${((Date.now() - t0) / 1000).toFixed(1)}s${v ? ` "${v}"` : ''}${err.trim() ? ` stderr=${err.trim().slice(0, 160)}` : ''}`); resolve(v); };
     let proc;
-    try { proc = spawn(exe, args, { env: childEnv(), cwd: os.tmpdir(), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { proc = spawn(file, args, { env: childEnv(), cwd: os.tmpdir(), windowsHide: true, stdio: [stdinText == null ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
     catch (e) { return finish('', `spawn failed: ${e.message}`); }
     const timer = setTimeout(() => { try { proc.kill(); } catch {} finish('', 'timeout'); }, TIMEOUT_MS);
+    if (stdinText != null) { try { proc.stdin.end(stdinText); } catch {} }
     proc.stdout.on('data', (d) => { out += d; });
     proc.stderr.on('data', (d) => { err += d; });
     proc.on('error', (e) => finish('', `error: ${e.message}`));
-    proc.on('exit', (code) => { const t = cleanTitle(out); finish(t, code === 0 && t ? 'ok' : `exit=${code} out="${String(out).trim().slice(0, 80)}"`); });
+    proc.on('exit', (code) => { const t = cleanTitle(useCodex ? lastAnswer(out) : out); finish(t, code === 0 && t ? 'ok' : `exit=${code} out="${String(out).trim().slice(0, 80)}"`); });
   });
+}
+
+export const CODEX_TITLE_MODEL = 'gpt-5.6-terra';
+/** codex exec 의 표준 출력에서 답 부분만: 마지막 비어 있지 않은 줄(앞에 "tokens used" 같은 진행 줄이 섞인다). */
+export function lastAnswer(out) {
+  const lines = String(out ?? '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !/^tokens used$/i.test(s) && !/^[\d,]+$/.test(s));
+  return lines.length ? lines[lines.length - 1] : '';
 }

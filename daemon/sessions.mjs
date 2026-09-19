@@ -298,7 +298,8 @@ export class SessionManager {
   /** 새 세션 이름 짓기(비동기): 헤드리스 Haiku → 실패하면 첫 요청문 한 줄. 끝나면 titlePending을 내린다. */
   nameSession(id, prompt) {
     const log = (m) => this.hooks.onLog?.(`${id} ${m}`);
-    generateTitle(prompt, { log }).then((t) => {
+    const rec0 = this.sessions.get(id);
+    generateTitle(prompt, { log, agent: rec0?.agent, model: rec0?.model }).then((t) => {
       const rec = this.sessions.get(id); if (!rec) return;
       rec.titlePending = false;
       const changed = this.setTitle(id, t, 'gen') || (!rec.title && this.setTitle(id, titleFromPrompt(prompt), 'first'));

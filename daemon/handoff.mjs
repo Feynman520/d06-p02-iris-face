@@ -180,6 +180,8 @@ export class HandoffFlow {
     return {
       state: r.state,
       packageVersion: r.handoff?.packageVersion || null,
+      // 주도 에이전트(설치기가 고른 것) — 화면의 새 세션 기본값이 코덱스만 있는 PC 에서 클로드로 서지 않게(2026-09-19).
+      leadAgent: r.handoff?.leadAgent === 'chatgpt' ? 'codex' : (r.handoff?.leadAgent === 'codex' ? 'codex' : (r.handoff?.leadAgent ? 'claude' : null)),
       card: this.card,
       greeted: this.readSeen().greetedFor === this.key(r.handoff) && !!r.handoff,
     };
@@ -258,7 +260,8 @@ export class HandoffFlow {
     else if (!text) { out = { state: 'ready', action: 'skip', reason: 'firstMessage 가 비어 있음' }; this.log('handoff: firstMessage 가 비어 있어 첫 인사를 건너뜁니다'); }
     else if (!this.sm) out = { state: 'ready', action: 'skip', reason: 'session manager 없음' };
     else {
-      const agent = r.handoff.leadAgent === 'codex' ? 'codex' : 'claude';
+      // 설치기 2.0.24 까지는 구독 id 'chatgpt' 가 그대로 왔다(코덱스만 고른 설치의 첫 세션이 클로드로 열린 원인, 2026-09-19).
+      const agent = (r.handoff.leadAgent === 'codex' || r.handoff.leadAgent === 'chatgpt') ? 'codex' : 'claude';
       const dup = this.liveInRoot();
       try {
         if (dup && dup.status === 'busy') { out = { state: 'ready', action: 'busy-skip', reason: `세션 ${dup.id} 이 바쁨` }; }
