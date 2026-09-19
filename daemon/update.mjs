@@ -233,9 +233,26 @@ export class Updater {
   setEnabled(on) { this.state.enabled = !!on; this.persist(); this.log(`update: daily check ${this.state.enabled ? 'on' : 'off'}`); return this.info(); }
 
   // ---- 확인(하루 1회 + 즉시) ----
-  async fetchLatest(src) {
-    const rel = await this.json(src.api);
-    const assets = Array.isArray(rel?.assets) ? rel.assets : [];
+  async fetchLatest(src, name = null) {
+    let rel, ghErr = null;
+    try { rel = await this.json(src.api); }
+    catch (e) { rel = null; ghErr = e; this.log?.(`update: ${name || src.api} github api failed (${String(e.message).slice(0, 80)}) → mirror latest.json`); }
+    let assets = Array.isArray(rel?.assets) ? rel.assets : [];
+    // GitHub API 가 403(익명 rate limit·망 차단 — 2026-09-19 데스크탑 실측 "update check … HTTP 403")이거나 첨부가 없으면
+    // 미러의 latest.json(릴리스 도구·mirror-upload 가 부품별로 적음)에서 같은 모양을 만든다. 내려받기·sha256·서명도 미러 주소.
+    if (!assets.length && name) {
+      const latest = await this.json(mirrorUrl('latest.json')).catch(() => null);
+      const m = latest && latest[name];
+      if (m && m.version && m.asset && m.url) {
+        this.log?.(`update: ${name} using mirror latest.json → ${m.version}`);
+        return {
+          version: String(m.version), tag: String(m.tag || ''), asset: String(m.asset), url: String(m.url), size: Number(m.size) || 0,
+          sha256Url: m.sha256Url || mirrorUrl(`${m.asset}.sha256`), sigUrl: m.sigUrl || mirrorUrl(`${m.asset}.sha256.sig`),
+          publishedAt: m.publishedAt || null, notes: '', viaMirror: true,
+        };
+      }
+      if (!rel) throw new Error(`${ghErr?.message || 'github api unreachable'} (mirror latest.json has no ${name} entry either)`);
+    }
     let re; try { re = new RegExp(src.asset); } catch { re = /\.zip$/; }
     const zip = assets.find(a => re.test(String(a?.name || '')) && typeof a?.browser_download_url === 'string');
     if (!zip) throw new Error('release has no matching zip');
@@ -252,7 +269,7 @@ export class Updater {
     for (const name of PART_NAMES) {
       const s = src[name];
       if (!s) { latest[name] = null; continue; }
-      try { latest[name] = await this.fetchLatest(s); }
+      try { latest[name] = await this.fetchLatest(s, name); }
       catch (e) { errors.push(`${PART_LABEL[name]}: ${e.message}`); }
     }
     this.state.latest = latest;
