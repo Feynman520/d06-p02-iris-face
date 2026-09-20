@@ -3,7 +3,7 @@
 // 정규화 항목: { i, t, kind, text?, name?, detail?, n? }
 //   kind: user | assistant | thinking | tool | tool_result | ask | command | compact | usage | subagent | unknown
 import fs from 'node:fs';
-import { stripFaceNote } from './facenote.mjs';
+import { stripFaceNote, stripPasteMarks } from './facenote.mjs';
 
 const MAX_ITEMS = 5000;
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + `\n… (+${s.length - n}자)` : s || '');
@@ -125,6 +125,9 @@ export class TranscriptTail {
     if (/^\s*<(system-reminder|local-command-stdout|local-command-caveat|command-message|task-notification)/.test(s)) return [];
     // 본문 뒤에 붙는 system-reminder 는 잘라낸다
     let body = s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+    // 괄호 붙여넣기 표식(v2.72): Face 는 요청을 CLI 입력창에 붙여넣기로 넣는데(sessions.mjs send), 클로드코드 2.1.27x 는
+    // 붙여넣은 글을 `<pasted_content id="…">…</pasted_content id="…">` 로 감싸 기록한다. 화면엔 글만 보인다.
+    body = stripPasteMarks(body);
     // Face가 첫 요청 앞에 붙인 안내문은 화면에서 지운다
     body = stripFaceNote(body).trim();
     // Face가 앞에 붙인 위임 정책 단락은 표식만 남긴다
@@ -159,7 +162,7 @@ export class TranscriptTail {
           if (p.role === 'user') {
             if (kinds.some(k => /environment_context|instructions|skills/.test(k))) return [];
             if (/^\s*<(environment_context|permissions|collaboration_mode|user_instructions|turn_aborted)/.test(text) || /^# AGENTS\.md/.test(text)) return [];
-            const clean = stripFaceNote(text).trim(); // Face 안내문은 화면에서 지운다
+            const clean = stripFaceNote(stripPasteMarks(text)).trim(); // Face 안내문·붙여넣기 표식은 화면에서 지운다
             return clean ? [{ t, kind: 'user', text: clean }] : [];
           }
           if (p.role === 'assistant') return text ? [{ t, kind: 'assistant', text, phase: p.phase || null }] : [];

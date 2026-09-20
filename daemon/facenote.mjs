@@ -29,3 +29,12 @@ const NOTE_RE = /\[IRIS-Face 안내\][\s\S]*?아래가 실제 요청이다\.\s*/
 export function stripFaceNote(s) {
   return typeof s === 'string' ? s.replace(NOTE_RE, '') : s;
 }
+
+// 괄호 붙여넣기 표식(v2.72, 2026-09-20 사용자 실측): Face 는 요청을 CLI 입력창에 괄호 붙여넣기(ESC[200~ … ESC[201~)로
+// 넣는데(sessions.mjs send), 클로드코드 2.1.27x 는 붙여넣은 글을 `<pasted_content id="b774">\n…\n</pasted_content id="b774">`
+// 로 감싸 기록파일에 적는다(닫는 표식에도 id 가 붙는다). 대화 화면에는 글만 보여야 한다. 원문 기록파일은 그대로 둔다.
+const PASTE_OPEN_RE = /<pasted_content\b[^>]*>\r?\n?/g;
+const PASTE_CLOSE_RE = /\r?\n?<\/pasted_content\b[^>]*>/g;
+export function stripPasteMarks(s) {
+  return typeof s === 'string' ? s.replace(PASTE_OPEN_RE, '').replace(PASTE_CLOSE_RE, '') : s;
+}
