@@ -6,8 +6,16 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dashDir, soulRoot } from './daemon/paths.mjs';
+import { dashDir, soulRoot, readReceipt } from './daemon/paths.mjs';
 import { handoffExists } from './daemon/handoff.mjs';
+
+// 영수증 env(2026-09-20, v2.71): 설치기가 등록한 사용자 환경변수(TEAMCLAUDE_CONFIG·CLAUDE_CONFIG_DIR·CODEX_HOME)가 이 실행기의
+// env 에 없으면(환경변수 등록 직후의 같은 로그온 세션, 다른 사용자 계정의 바로가기 등) 영수증 값으로 채운다 — 없으면 ensure-proxy 가
+// 중계기를 ~\.config 의 빈 설정으로 띄워 계정 0 → 곧바로 종료 → 대시보드 "프록시에 연결할 수 없음".
+try {
+  const r = readReceipt()?.env;
+  if (r) for (const k of ['TEAMCLAUDE_CONFIG', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME']) if (r[k] && !process.env[k]) process.env[k] = r[k];
+} catch {}
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ARGV = process.argv.slice(2);
