@@ -74,11 +74,13 @@ else {
   await wait(4500);
   s = await st();
   ok('dynamic: CPU 4배 느림 → 상한 < 1.6', s.cap < 1.6, JSON.stringify(s));
+  const capAt4s = s.cap;
   await wait(8000); s = await st(); // 계속 무거우면 별 50%에서 30fps로 내려간다(그다음 별 30%까지)
-  // 내려가는 속도는 기계·부하에 따라 다르다(v2.67 별 반지름 상한으로 프레임이 싸져 같은 시간에 덜 내려간다: 2026-09-19 실측 0.6~0.9).
-  // 그래서 "12.5초 안에 0.5 + 30fps" 를 못 박지 않고, 상한이 계속 내려가고 있는지(≤0.8)만 본다 — 0.5 에 닿았으면 30fps 도 켜져야 한다.
-  const descended = s.cap <= 0.8 && (s.cap > 0.5 || (s.slow && s.fpsCap === 30));
-  ok('dynamic: 계속 느림 → 상한이 계속 내려감(≤0.8; 0.5 에 닿으면 30fps)', descended, JSON.stringify(s));
+  // 내려가는 속도는 기계·부하에 따라 다르다(v2.67 별 반지름 상한으로 프레임이 싸져 같은 시간에 덜 내려간다: 2026-09-19 실측 0.6~0.9,
+  // 2026-09-20 Face 창 2개가 도는 채로 0.9 — 절대값 ≤0.8 은 경계에 걸린다). 그래서 값을 못 박지 않고 "4.5초 시점보다 더 내려갔는가"만 본다.
+  // 0.5(바닥)에 닿았으면 더 못 내려가는 대신 30fps 가 켜져야 한다.
+  const descended = (s.cap < capAt4s) || (s.cap <= 0.5 && s.slow && s.fpsCap === 30);
+  ok('dynamic: 계속 느림 → 상한이 계속 내려감(4.5초보다 더 낮음; 바닥 0.5 면 30fps)', descended, `${capAt4s} → ${s.cap} ${JSON.stringify(s)}`);
   // 4) 느림 해제 → 상승. 낮은 상한(0.3)이 저장된 컴퓨터를 재현(다시 mount)하고, 가벼운 밀도·짧은 대기에서 상한이 오르는지 본다
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
   await pg.evaluate(() => { localStorage.setItem('iris.stage.cap', JSON.stringify({ cap: 0.3 })); document.getElementById('c').remove(); const c = document.createElement('canvas'); c.id = 'c'; c.style.cssText = 'width:1600px;height:900px;display:block'; document.body.appendChild(c); IrisStars.mount(c, { autoCalibrate: false }); IrisStars.configure({ style: 'drift', density: 0.4, gov: { windowMs: 400, upAfterMs: 1200, budgetMs: 40 } }); });
