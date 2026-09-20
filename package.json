@@ -1,6 +1,6 @@
 {
   "name": "iris-face",
-  "version": "2.72.0",
+  "version": "2.72.1",
   "private": true,
   "description": "IRIS-Face: multi-session desk for Claude Code / Codex (beta)",
   "author": "Sejun Ham (함세준)",
