@@ -39,4 +39,22 @@ for (const [name, input, want] of pasteCases) {
   if (!ok) fail++;
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : ' -> ' + JSON.stringify(out.slice(0, 80))}`);
 }
+// 화면 쪽 두 번째 겹(v2.72.1, 2026-09-20 실측): 데몬이 옛 판(2.66)으로 켜진 채 파일만 2.72 이면 표식이 그대로 화면에 보였다.
+// app/transcript.js 의 paste-strip-begin/end 사이 함수를 꺼내 같은 사례로 시험한다(브라우저 파일이라 import 대신 본문 추출).
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const APP_JS = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../app/transcript.js'), 'utf8');
+const seg = APP_JS.match(/\/\/ paste-strip-begin\n([\s\S]*?)\/\/ paste-strip-end/);
+if (!seg) { fail++; console.log('FAIL app-paste-strip-present -> app/transcript.js 에 paste-strip-begin/end 구간이 없다'); }
+else {
+  console.log('PASS app-paste-strip-present');
+  const clientStrip = new Function(`${seg[1]}; return stripPasteMarks;`)();
+  for (const [name, input, want] of pasteCases) {
+    const out = stripFaceNote(clientStrip(input)).trim();
+    const ok = out === want;
+    if (!ok) fail++;
+    console.log(`${ok ? 'PASS' : 'FAIL'} app-${name}${ok ? '' : ' -> ' + JSON.stringify(out.slice(0, 80))}`);
+  }
+}
 process.exit(fail ? 1 : 0);

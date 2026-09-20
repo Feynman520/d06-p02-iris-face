@@ -22,6 +22,12 @@ function createTranscript() {
 
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fileUrl = (p) => `/api/file?path=${encodeURIComponent(p)}`;
+  // 괄호 붙여넣기 표식 `<pasted_content id="…">…</pasted_content id="…">` (클로드코드 2.1.27x) 는 데몬이 지운다(daemon/facenote.mjs stripPasteMarks).
+  // 화면에도 같은 처리를 한 겹 더 둔다(v2.72.1, 2026-09-20 실측): 데몬은 켜진 채 파일만 새 판이면 옛 데몬이 표식을 그대로 내보내는데,
+  // 화면 파일은 요청마다 디스크에서 읽히므로 F5 만으로 깨끗해진다. 정규식은 facenote.mjs 와 같아야 한다(시험 = scripts/check-facenote.mjs).
+  // paste-strip-begin
+  function stripPasteMarks(s) { return String(s ?? '').replace(/<pasted_content\b[^>]*>\r?\n?/g, '').replace(/\r?\n?<\/pasted_content\b[^>]*>/g, ''); }
+  // paste-strip-end
 
   // ---- 최소 마크다운 ----
   function md(src) {
@@ -139,8 +145,9 @@ function createTranscript() {
   // ---- 노드 ----
   function bubble(it, cls) {
     const el = document.createElement('div'); el.className = `msg ${cls}`; el.dataset.i = it.i;
-    const att = cls === 'user' ? it.text.match(/\n\n\[첨부 파일\]\n([\s\S]+)$/) : null;
-    const body = att ? it.text.slice(0, att.index) : it.text;
+    const text = cls === 'user' ? stripPasteMarks(it.text).trim() : it.text; // 요청문은 붙여넣기 표식을 걷어낸 뒤 그린다
+    const att = cls === 'user' ? text.match(/\n\n\[첨부 파일\]\n([\s\S]+)$/) : null;
+    const body = att ? text.slice(0, att.index) : text;
     el.innerHTML = `<div class="bubble">${md(body)}${att ? `<div class="attach-block">${att[1].split('\n').filter(Boolean).map(p => /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(p) ? `<img src="${fileUrl(p.trim())}" alt="" class="attach-thumb">` : `<code>${esc(p)}</code>`).join('')}</div>` : ''}</div>${embedsFor(body)}<span class="ts">${it.policy ? '<span class="pill">도구 세트 안내 포함</span> ' : ''}${timeOf(it.t)}${copyBtnHtml()}</span>`;
     return bindCopy(el, body); // 요청문은 내가 쓴 글만(첨부 목록 제외), 답변은 전문
   }
