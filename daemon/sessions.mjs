@@ -274,7 +274,12 @@ export class SessionManager {
     // 화면 맨 아래 4줄 안에 "빈 입력 프롬프트"(❯ › > 만 있는 줄; 입력틀 테두리·상태줄이 그 아래 1~3줄)가 보이면 대기가 우선 —
     // 승인 대화상자는 입력틀을 통째로 덮으므로 빈 프롬프트가 보이면 확인 요청이 아니다. 사용자가 보낸 글의 메아리("> 좋아 …")는 빈 줄이 아니라 안 걸린다.
     const promptNear = lines.slice(-4).some(l => /^\s*(❯|›|>)\s*$/.test(l));
-    const status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : (ATTENTION_RE.test(tail) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
+    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : (ATTENTION_RE.test(tail) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
+    // v2.73(2026-09-21): 화면 글자로는 '대기'라도 대화 기록의 차례가 아직 열려 있으면(도구 결과 대기·요청 직후) 바쁨으로 둔다.
+    // 도구 출력에 섞인 `>` 줄·빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 알린 사건(2026-09-20 사용자 실측)의 교차 확인.
+    // 기록이 답 글로 끝나 있으면(null) 화면 판정을 그대로 믿는다 — 기록이 잠시 뒤처져도 다음 폴링에서 따라잡는다.
+    if (status === 'idle' && rec.status === 'busy' && this.hooks.turnOpen?.(id) === true) { status = 'busy'; st.turnHold = (st.turnHold || 0) + 1; }
+    else st.turnHold = 0;
     this.setStatus(id, status);
     // 코덱스 시작 시 "Update available … 1. Update now / 2. Skip / 3. Skip until next version" 물음 → 2(이번만 건너뜀)로 자동 응답.
     // 실제 업데이트는 코덱스 SessionStart 훅(_agent\claude\scripts\codex-autoupdate.ps1)이 같은 세션에서 배경 설치한다(사용자 규칙 2026-09-10).
@@ -330,6 +335,8 @@ export class SessionManager {
     const rec = this.sessions.get(id); if (!rec || rec.status === status) return;
     const st = this.live.get(id);
     const done = rec.status === 'busy' && status !== 'busy' && !!st?.worked;
+    // v2.73: 전환마다 화면 마지막 줄들을 로그에 남긴다 — 오판의 원인을 나중에 되짚을 수 있게(2026-09-20 사건 때는 근거가 없었다).
+    if (st) { let tail = ''; try { tail = this.screenText(id, 4).split('\n').map(l => l.trim()).filter(Boolean).slice(-3).join(' ⏎ ').slice(0, 160); } catch {} this.hooks.onLog?.(`${id} status ${rec.status}→${status}${done ? ' (done)' : ''}${st.turnHold ? ` hold=${st.turnHold}` : ''} | ${tail}`); }
     rec.status = status; this.hooks.onStatus?.(id, status, done ? { done: true } : undefined);
     if (status !== 'attention') this.setPrompt(id, null);
   }

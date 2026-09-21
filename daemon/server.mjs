@@ -52,7 +52,8 @@ const sm = new SessionManager(STATE, {
   onPrompt: (id, prompt) => broadcast({ type: 'prompt', id, prompt }), // 확인 카드(v2.43): 노란불의 질문·선택지, null = 카드 내림. 세션 목록(publicList)에도 rec.prompt 로 실린다.
   onList: () => broadcast({ type: 'sessions', list: publicList() }),
   onLog: (msg) => log(msg),
-
+  // v2.73: 대화 기록의 차례가 열려 있는가(transcript.mjs turnState) — 화면 글자 판정의 교차 확인(sessions.mjs idleCheck). 기록이 없으면 null.
+  turnOpen: (id) => { const tl = tails.get(id); if (!tl) return null; const s = tl.turnState(); return s == null ? null : s === 'open'; },
 });
 const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);

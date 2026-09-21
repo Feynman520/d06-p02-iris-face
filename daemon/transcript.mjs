@@ -29,6 +29,23 @@ export class TranscriptTail {
     //   tools    = 이 기록 안의 도구 호출 수 · firstT/lastT = 첫·마지막 항목 시각 · turnOpen = 코덱스 task_started~task_complete 사이면 true
     this.calls = new Map(); this.finished = new Map(); this.finishedByTask = new Map(); this.tools = 0; this.firstT = null; this.lastT = null; this.turnOpen = null; this.turnDoneAt = null;
   }
+  /** 이 차례가 아직 열려 있는가(v2.73, 2026-09-21). 화면 글자만 보는 sessions.mjs idleCheck 의 교차 확인 재료 — 도구 출력에 섞인
+   *  `>` 줄이나 빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 잘못 알린 사건(2026-09-20 사용자 실측)의 대책.
+   *    코덱스 = task_started~task_complete 사이면 'open', 끝났으면 'closed', 아직 모르면 null.
+   *    클로드 = 마지막 항목(생각·압축 제외)이 요청·명령·도구 호출·도구 결과·보조 호출이면 'open'(모델이 아직 답할 차례),
+   *             질문 카드(ask)면 'closed'(사람 차례), 답 글이면 null(다음 도구 호출 전 생각 중일 수 있어 단정하지 않는다).
+   *  @returns {'open'|'closed'|null} */
+  turnState() {
+    if (this.agent === 'codex') return this.turnOpen == null ? null : (this.turnOpen ? 'open' : 'closed');
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const k = this.items[i].kind;
+      if (k === 'thinking' || k === 'compact') continue;
+      if (k === 'user' || k === 'command' || k === 'tool' || k === 'tool_result' || k === 'subagent') return 'open';
+      if (k === 'ask') return 'closed';
+      return null;
+    }
+    return null;
+  }
   /** 컨텍스트 창 크기: 코덱스는 기록에 있음, 클로드는 모델로 추정(Claude 5 계열 1M, Haiku 200k) */
   contextWindow() {
     if (this.window) return this.window;
