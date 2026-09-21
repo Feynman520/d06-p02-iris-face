@@ -46,6 +46,7 @@ export function agentShimText(agent) {
     ...(agent === 'codex' ? CODEX_PROXY_LINES : []),
     `set "${envName}=%~dp0..\\..\\${envDir}"`,
     'set "PATH=%~dp0..\\tools\\node;%PATH%"',
+    'if exist "%~dp0relay-ensure.cmd" call "%~dp0relay-ensure.cmd"',
     `call "%~dp0..\\tools\\${tool}\\${tool}.cmd" %*`,
     'exit /b %errorlevel%',
   ]);
