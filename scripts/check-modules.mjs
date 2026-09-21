@@ -112,6 +112,12 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-modules-'));
   ok(/unreadable/.test(readModuleJson(path.join(tmp, 'mods', 'weird')).error), 'readModuleJson: 읽기 오류와 JSON 오류 구분(읽기)');
   const none = new ModuleHost({ dir: path.join(tmp, 'no-such-dir'), faceVersion: FACE, log: () => {} }); none.scan();
   ok(none.list().length === 0, 'scan: modules 폴더 없음 → 빈 목록(오류 없음)');
+  // v2.73.1(2026-09-21 실측): 설치기 ≤2.0.33 이 남긴 `messenger.prev(-N)` — 이름 규칙 밖 폴더는 모듈로 읽지 않는다(두 번째 "맞지 않음" 모듈 방지). 로그는 1회.
+  const skipLogs = [];
+  for (const d of ['messenger', 'messenger.prev', 'messenger.prev-2']) { fs.mkdirSync(path.join(tmp, 'mods5', d), { recursive: true }); fs.writeFileSync(path.join(tmp, 'mods5', d, 'module.json'), JSON.stringify({ name: 'messenger', contract: 1, grade: 0, version: '0.4.3', entry: 'index.mjs' })); fs.writeFileSync(path.join(tmp, 'mods5', d, 'index.mjs'), ''); }
+  const h5 = new ModuleHost({ dir: path.join(tmp, 'mods5'), faceVersion: FACE, log: (m) => skipLogs.push(m) }); h5.scan(); h5.scan();
+  ok(h5.list().map(m => m.name).join(',') === 'messenger', 'scan: 이름 규칙 밖 폴더(messenger.prev·.prev-2)는 목록에 없다 — 모듈은 하나');
+  ok(skipLogs.filter(l => /module skip "messenger\.prev"/.test(l)).length === 1 && skipLogs.filter(l => /module skip "messenger\.prev-2"/.test(l)).length === 1, 'scan: 건너뛴 폴더는 폴더마다 로그 1회(두 번 scan 해도)');
 }
 
 // ---- 4) 프로세스·계약 v1 ----

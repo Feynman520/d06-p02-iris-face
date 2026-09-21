@@ -39,12 +39,16 @@ export class ModuleHost {
   constructor({ dir, faceVersion, log = () => {}, onChange = () => {}, onNotify = () => {}, theme = () => ({ id: 'indigo', mode: 'dark' }), lang = 'ko', restartMax = 3, restartDelayMs = 1000, healthyMs = 60000, denyPorts = [] }) {
     Object.assign(this, { dir, faceVersion, log, onChange, onNotify, theme, lang, restartMax, restartDelayMs, healthyMs, denyPorts: new Set(denyPorts.map(Number)) });
     this.mods = new Map(); // name → { name, dir, info, status, reason, panel, badge, official, proc, pid, restarts, stopping, restartTimer, startedAt }
+    this.skipped = new Set(); // 이름 규칙 밖이라 건너뛴 폴더(로그 1회용)
   }
   scan() {
     const seen = new Set();
     if (fs.existsSync(this.dir)) for (const f of fs.readdirSync(this.dir).sort()) {
       try {
         const d = path.join(this.dir, f); if (!fs.statSync(d).isDirectory() || /\.(installing|old)$/.test(f)) continue;
+        // v2.73.1(2026-09-21 사용자 실측): 이름 규칙(NAME_RE) 밖 폴더 — 설치기 ≤2.0.33 이 남긴 `messenger.prev(-N)` 같은 것 — 는 모듈로 읽지 않는다.
+        // 읽으면 "맞지 않음" 두 번째 모듈로 보이는데, 제거 창구는 규칙 안 이름만 받아 지울 수도 없었다. 한 번만 로그에 남기고 건너뛴다.
+        if (!NAME_RE.test(f)) { if (!this.skipped.has(f)) { this.skipped.add(f); this.log(`module skip "${f}": folder name outside the module name rule (not listed)`); } continue; }
         seen.add(f);
         const prev = this.mods.get(f);
         const m = prev || { name: f, restarts: 0, panel: null, badge: 0, proc: null, pid: null, stopping: false, restartTimer: null };
