@@ -43,7 +43,7 @@
     bar.hidden = false;
     if (p.complete) setupHideTimer = setTimeout(() => { bar.hidden = true; }, 5 * 60 * 1000);
   }
-  function loadSel() { try { const s = JSON.parse(localStorage.getItem('iris.sel') || 'null'); if (s && s.model && s.effort) return { permission: '', approval: '', sandbox: '', ...s }; } catch {} return { agent: 'claude', model: { claude: 'opus', codex: 'gpt-5.6-terra' }, effort: { claude: 'high', codex: 'medium' }, permission: '', approval: '', sandbox: '' }; }
+  function loadSel() { try { const s = JSON.parse(localStorage.getItem('iris.sel') || 'null'); if (s && s.model && s.effort) return { permission: '', approval: '', sandbox: '', ...s }; } catch {} return { agent: 'claude', model: { claude: 'opus', codex: 'gpt-6-sol' }, effort: { claude: 'high', codex: 'medium' }, permission: '', approval: '', sandbox: '' }; }
   function saveSel() { try { localStorage.setItem('iris.sel', JSON.stringify(sel)); } catch {} }
   // 새 세션 기본 에이전트 = 설치기가 고른 주도 에이전트(사용자가 한 번이라도 고르기 전까지만). 코덱스만 로그인한 PC 가 클로드로 서지 않게(2026-09-19).
   function applyLeadAgent(h) {

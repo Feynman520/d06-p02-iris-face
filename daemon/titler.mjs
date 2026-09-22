@@ -75,7 +75,8 @@ export function generateTitle(prompt, { log = () => {}, exe = undefined, agent =
   if (useCodex) {
     // codex.cmd(심)는 PATH 로 찾는다 — cmd.exe /c 를 거치므로 요청문은 인수가 아니라 표준 입력으로 넘긴다(따옴표·한글 안전).
     file = 'cmd.exe';
-    args = ['/c', 'codex', 'exec', '--skip-git-repo-check', '-m', model || CODEX_TITLE_MODEL, '-c', 'model_reasoning_effort=low', '-c', 'bypass_hook_trust=true', '-'];
+    // --dangerously-bypass-hook-trust: 코덱스 0.156.0 부터 설정 키 bypass_hook_trust 는 무시("unrecognized configuration setting")되고 이 깃발만 통한다(2026-09-23 실측; TUI 세션과 같은 깃발).
+    args = ['/c', 'codex', 'exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-m', model || CODEX_TITLE_MODEL, '-c', 'model_reasoning_effort=low', '-'];
     stdinText = `${SYSTEM}\n\n${wrap(src)}\n`;
   } else {
     file = exe === undefined ? findClaudeExe() : exe;
@@ -97,7 +98,8 @@ export function generateTitle(prompt, { log = () => {}, exe = undefined, agent =
   });
 }
 
-export const CODEX_TITLE_MODEL = 'gpt-5.6-terra';
+// 제목 한 줄 뽑기 = 가장 싸고 빠른 모델(2026-09-23 gpt-5.6-terra → gpt-6-luna, $0.10/$0.50 MTok).
+export const CODEX_TITLE_MODEL = 'gpt-6-luna';
 /** codex exec 의 표준 출력에서 답 부분만: 마지막 비어 있지 않은 줄(앞에 "tokens used" 같은 진행 줄이 섞인다). */
 export function lastAnswer(out) {
   const lines = String(out ?? '').split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !/^tokens used$/i.test(s) && !/^[\d,]+$/.test(s));

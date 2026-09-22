@@ -32,7 +32,8 @@
     "verify:progress": "node scripts/check-progress.mjs",
     "verify:handoff": "node scripts/check-handoff.mjs",
     "verify:trust": "node scripts/check-trust.mjs",
-    "verify:turnstate": "node scripts/check-turnstate.mjs"
+    "verify:turnstate": "node scripts/check-turnstate.mjs",
+    "verify:models": "node scripts/check-models.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
