@@ -11,7 +11,7 @@
   const viewStatus = (s) => (s.status !== 'idle' ? s.status : SubPanel.running(s.id) ? 'delegated' : SubPanel.alive(s.id) ? 'waiting' : 'idle');
   const statusText = (s) => { const v = viewStatus(s); return (v === 'delegated' || v === 'waiting') ? `${STATUS_KO[v]} ⁺${SubPanel.alive(s.id)}` : (STATUS_KO[v] || v); };
   const AGENT_KO = { claude: 'Claude', codex: 'Codex' };
-  let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null;
+  let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null, SLEEPING = [];
   let folder = null;                 // 새 요청 모드에서 고른 폴더
   let setupMode = 'new';             // 'new' = 새 세션 조합 / 'switch' = 열린 세션의 조합 바꾸기
   const sel = loadSel();             // { agent, model:{claude,codex}, effort:{claude,codex}, readOnly }
@@ -55,11 +55,18 @@
   // 권한 기본값은 설정(⚙ → 권한 기본값)에서 온다
   function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: sel.effort[sel.agent], permission: sel.agent === 'claude' ? (st.permission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
   const fill = (el, list, val) => { el.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join(''); el.value = val ?? ''; };
+  const AGENT_NAME = { claude: 'Claude', codex: 'Codex' };
+  const sleepyText = (names) => `${names.join('·')} 잠들어 있음 — 대시보드 「＋ ${names[0]} 계정」 로그인하면 나타납니다`;
   function renderSetup() {
     if (!AGENTS) return;
     // 잠든 에이전트 깨우기(installer Task 17): AGENTS 는 영수증이 있으면 활성 에이전트만 담겨 온다.
     // 그 목록에 없는 버튼은 숨기고, 지금 고른 에이전트가 잠들었으면 남아 있는 첫 에이전트로 넘어간다.
     for (const b of document.querySelectorAll('.seg-agent .seg-btn')) b.hidden = !AGENTS[b.dataset.agent];
+    // 잠든 에이전트는 버튼 대신 한 줄 안내(2026-09-23): 없는 게 고장이 아니라 로그인 전이라는 것, 어디서 깨우는지.
+    const sleepy = SLEEPING.filter(k => !AGENTS[k]).map(k => AGENT_NAME[k] || k);
+    const hint = $('#agent-sleep');
+    hint.hidden = !sleepy.length || setupMode === 'switch';
+    if (sleepy.length) { hint.textContent = sleepyText(sleepy); hint.title = '대시보드에서 계정을 로그인하면 이 자리에 버튼이 나타납니다'; }
     if (!AGENTS[sel.agent]) { sel.agent = Object.keys(AGENTS)[0]; saveSel(); }
     const a = AGENTS[sel.agent];
     const model = a.models.find(m => m.id === sel.model[sel.agent]) || a.models.find(m => m.id === a.default.model);
@@ -131,7 +138,7 @@
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
       else if (m.type === 'activity') { if (m.id === current) { const s = cur(); if (s?.status === 'busy') Transcript.setBusy(true, m.text); } }
       else if (m.type === 'prompt') { const s = sessions.find(x => x.id === m.id); if (s) { s.prompt = m.prompt; if (m.id === current) Approval.render(s); } } // 확인 카드(v2.43): 노란불의 질문·선택지
-      else if (m.type === 'agents') { AGENTS = m.agents; renderSetup(); } // 잠든 에이전트 깨우기(installer Task 17): 활성 목록이 바뀜 → 조합 선택 다시 그림
+      else if (m.type === 'agents') { AGENTS = m.agents; if (Array.isArray(m.sleeping)) SLEEPING = m.sleeping; renderSetup(); } // 잠든 에이전트 깨우기(installer Task 17): 활성 목록이 바뀜 → 조합 선택 다시 그림
     };
   }
   const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -398,7 +405,7 @@
     catch (e) { Dialog.alert(`설치 실패: ${e.message}`); return false; }
   }
   window.addEventListener('iris:mod-installing', renderModules); // 설정 화면에서 설치를 시작·끝냈을 때도 헤더 고리를 맞춘다
-  $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
+  $('#limits').onclick = () => toggleDash(); $('#agent-sleep').onclick = () => toggleDash(true); $('#dash-close').onclick = () => closeDrawer();
   $('#dash-reload').onclick = () => { if (drawerKey === 'dash') loadDash(true); else if (drawerKey) { const u = fr.src; fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = u; }); } };
   $('#dash-ext').onclick = () => { if (drawerKey === 'dash') window.open(fr.src || DASH_URL, '_blank'); };
 
@@ -576,6 +583,7 @@
   if (qs.get('preview')) fetch(`/api/transcript-preview?path=${encodeURIComponent(qs.get('preview'))}&agent=${qs.get('agent') || 'claude'}`).then(r => r.json()).then((j) => { current = 'preview'; $('#view').hidden = false; IrisStars.setDim(true); $('#vh-title').textContent = '미리보기'; Transcript.render(j.items || [], j.meta); afterTranscript(j.meta); });
 
   fetch('/api/agents').then(r => r.json()).then((a) => { AGENTS = a; renderSetup(); });
+  fetch('/api/agents/sleeping').then(r => r.json()).then((j) => { SLEEPING = Array.isArray(j?.sleeping) ? j.sleeping : []; renderSetup(); }).catch(() => {});
   connect(); autoGrow();
 
   // ---------- 키 입력 자가 복구(2026-09-10) ----------

@@ -75,8 +75,9 @@ function activeListFromReceipt(receipt) {
   return known.filter((a) => receipt.installed[a].active !== false);
 }
 
-/** receipt.installed 에 존재하지만 active:false 인 에이전트들(= 잠든 에이전트). */
-function sleepingAgents(receipt) {
+/** receipt.installed 에 존재하지만 active:false 인 에이전트들(= 잠든 에이전트). 영수증이 없으면 빈 목록.
+ *  GET /api/agents/sleeping · 'agents' 방송이 싣는다 — Face 가 "Codex 는 잠들어 있음" 안내를 그린다(2026-09-23). */
+export function sleepingAgents(receipt = readReceipt()) {
   if (!receipt?.installed) return [];
   return KNOWN_AGENTS.filter((a) => receipt.installed[a] && receipt.installed[a].active === false);
 }

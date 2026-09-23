@@ -18,7 +18,7 @@ import { findRoot, rootName, Settings } from './workspace.mjs';
 import { dashDir, dashPort } from './paths.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
-import { activeAgentsMap, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
+import { activeAgentsMap, sleepingAgents, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
 import { ModuleHost, NAME_RE } from './modules.mjs';
 import { inspectZip, installZip, removeModule } from './modinstall.mjs';
 import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
@@ -69,7 +69,7 @@ const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커
 // 읽어 자동으로 깨운다. 영수증이 없는 PC(이 개발 PC 포함)에서는 sleepingAgents 가 항상 빈 배열이라 무동작.
 const sleepWatcher = new SleepWatcher({
   log: (m) => log(`wake: ${m}`),
-  onWake: () => broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS) }),
+  onWake: () => broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS), sleeping: sleepingAgents() }),
 });
 sleepWatcher.start();
 // ---- 모듈 콘센트(계약 v1, 2026-09-11): modules\<이름>\ 을 별 프로세스로. 모듈이 없으면 아무것도 하지 않는다(바깥 연결 0 = verify:nomodule). ----
@@ -240,6 +240,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
     if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
     if (req.method === 'GET' && p === '/api/agents') return json(res, 200, activeAgentsMap(AGENTS));
+    // 잠든 에이전트 목록(2026-09-23 다른 선생님 PC: Codex 버튼이 없어 고장으로 보였다) — /api/agents 모양은 그대로 두고 따로 준다.
+    if (req.method === 'GET' && p === '/api/agents/sleeping') return json(res, 200, { sleeping: sleepingAgents() });
     if (req.method === 'GET' && p === '/api/limits') return json(res, 200, await readLimits());
     if (req.method === 'POST' && p === '/api/dash/ensure') { const d = await ensureDash(); log(`dash ensure: ${d.message}`); return json(res, d.alive ? 200 : 503, d); }
     if (req.method === 'POST' && p === '/api/wake') {
@@ -248,7 +250,7 @@ const server = http.createServer(async (req, res) => {
       const agent = String(b.agent || '');
       if (!KNOWN_AGENTS.includes(agent)) return json(res, 400, { error: `알 수 없는 에이전트: ${agent}` });
       const { active } = wake(agent, { log: (m) => log(`wake: ${m}`) });
-      broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS) });
+      broadcast({ type: 'agents', agents: activeAgentsMap(AGENTS), sleeping: sleepingAgents() });
       return json(res, 200, { ok: true, active });
     }
     // ---- 모듈(계약 v1): 목록 · zip 설치 · 제거 · 재시작. 본체는 모듈 이름을 모른다 — 전부 module.json 에서 온다. ----

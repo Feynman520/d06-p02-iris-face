@@ -72,6 +72,9 @@ async function main() {
       const a1 = await (await fetch(`${base}/api/agents`)).json();
       ok('claude' in a1, '깨우기 전: /api/agents 에 claude 있음(항상 활성)');
       ok(!('codex' in a1), '깨우기 전: /api/agents 에 codex 없음(잠든 상태, 영수증 반영)');
+      // 2026-09-23: 버튼이 사라지기만 하면 고장으로 보인다 — 화면이 "잠들어 있음" 안내를 그릴 목록을 따로 준다.
+      const s1 = await (await fetch(`${base}/api/agents/sleeping`)).json();
+      ok(Array.isArray(s1.sleeping) && s1.sleeping.length === 1 && s1.sleeping[0] === 'codex', '깨우기 전: /api/agents/sleeping = [codex]');
 
       const bad = await fetch(`${base}/api/wake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agent: 'nova' }) });
       ok(bad.status === 400, "알 수 없는 에이전트 'nova' → 400");
@@ -93,6 +96,8 @@ async function main() {
 
       const a2 = await (await fetch(`${base}/api/agents`)).json();
       ok('codex' in a2, '깨운 뒤: /api/agents 에 codex 포함');
+      const s2 = await (await fetch(`${base}/api/agents/sleeping`)).json();
+      ok(Array.isArray(s2.sleeping) && s2.sleeping.length === 0, '깨운 뒤: /api/agents/sleeping = [] (안내 사라짐)');
 
       // 멱등성: 다시 깨워도 에러 없이 같은 결과
       const res2 = await fetch(`${base}/api/wake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agent: 'codex' }) });
