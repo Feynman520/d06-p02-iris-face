@@ -1,6 +1,7 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // 모델 표(daemon/agents.mjs) 무접촉 검사 — 2026-09-23 새 모델(Claude Opus 5.5 · Codex GPT-6 Sol/Luna) 반영.
 //   1) 클로드: `opus` 별칭은 CLI 2.1.280부터 Opus 5.5 → 표시 이름 "Opus 5.5", 이전 판은 전체 ID `claude-opus-5`로 따로 고른다
+//      2026-09-29: `sonnet` 별칭은 CLI 2.1.284부터 Sonnet 5.5 → 표시 이름 "Sonnet 5.5", 이전 판은 `claude-sonnet-5`
 //   2) 코덱스: gpt-6-astra · gpt-6-sol(기본) · gpt-6-luna 가 앞, 5.6 계열은 "(구)" 표시로 남긴다(저장된 선택 호환)
 //   3) normalize(): 기본값·모르는 모델·그 모델이 못 쓰는 사고깊이의 한 단계 아래 조정(luna: ultra → max; sol·astra 는 ultra 지원)
 //   4) buildCommand(): fast 설정은 opus·claude-opus-5 둘 다, 코덱스는 service_tier=fast
@@ -23,6 +24,8 @@ const label = (a, id) => AGENTS[a].models.find(m => m.id === id)?.label;
 ok(label('claude', 'opus') === 'Opus 5.5', 'claude: opus 별칭 표시 = Opus 5.5');
 ok(label('claude', 'claude-opus-5') === 'Opus 5 (이전)', 'claude: 이전 Opus 5 는 전체 ID 항목');
 ok(['sonnet', 'fable', 'haiku'].every(id => ids('claude').includes(id)), 'claude: sonnet·fable·haiku 유지');
+ok(label('claude', 'sonnet') === 'Sonnet 5.5', 'claude: sonnet 별칭 표시 = Sonnet 5.5(CLI 2.1.284)');
+ok(label('claude', 'claude-sonnet-5') === 'Sonnet 5 (이전)' && ids('claude').indexOf('claude-sonnet-5') === ids('claude').indexOf('sonnet') + 1, 'claude: 이전 Sonnet 5 는 전체 ID 항목(sonnet 바로 뒤)');
 ok(ids('claude')[0] === 'opus' && AGENTS.claude.default.model === 'opus' && AGENTS.claude.default.effort === 'high', 'claude: 기본 opus·high 유지');
 
 // 2) 코덱스 표
@@ -50,6 +53,8 @@ n = normalize({ agent: 'claude', model: 'claude-opus-5', effort: 'high' });
 ok(n.model === 'claude-opus-5' && n.modelLabel === 'Opus 5 (이전)', 'normalize: claude-opus-5 선택 유지·표시');
 n = normalize({ agent: 'claude', model: 'opus', effort: 'high' });
 ok(n.modelLabel === 'Opus 5.5', 'normalize: opus → 표시 Opus 5.5');
+n = normalize({ agent: 'claude', model: 'claude-sonnet-5', effort: 'max' });
+ok(n.model === 'claude-sonnet-5' && n.effort === 'max' && n.modelLabel === 'Sonnet 5 (이전)', 'normalize: claude-sonnet-5 선택 유지·표시');
 
 // 4) buildCommand
 const cwd = process.cwd();
@@ -57,7 +62,8 @@ const has = (cmd, s) => cmd.args.includes(s);
 ok(has(buildCommand({ agent: 'claude', model: 'opus', effort: 'high' }, cwd), '--settings'), 'buildCommand: opus 에 fast 설정');
 ok(has(buildCommand({ agent: 'claude', model: 'claude-opus-5', effort: 'high' }, cwd), '--settings'), 'buildCommand: claude-opus-5 에도 fast 설정');
 ok(!has(buildCommand({ agent: 'claude', model: 'sonnet', effort: 'low' }, cwd), '--settings'), 'buildCommand: sonnet 은 fast 설정 없음');
-ok(isFastModel('claude', 'claude-opus-5') && isFastModel('claude', 'opus') && !isFastModel('claude', 'fable'), 'isFastModel: opus·claude-opus-5 만');
+ok(!has(buildCommand({ agent: 'claude', model: 'claude-sonnet-5', effort: 'low' }, cwd), '--settings'), 'buildCommand: claude-sonnet-5 도 fast 설정 없음');
+ok(isFastModel('claude', 'claude-opus-5') && isFastModel('claude', 'opus') && !isFastModel('claude', 'fable') && !isFastModel('claude', 'sonnet'), 'isFastModel: opus·claude-opus-5 만(Sonnet 5.5 는 CLI 카탈로그에 fast_mode 없음)');
 const cx = buildCommand({ agent: 'codex', model: 'gpt-6-luna', effort: 'low' }, cwd);
 ok(/^codex -m gpt-6-luna -c model_reasoning_effort=low -c service_tier=fast /.test(cx.cmdline), 'buildCommand: codex -m gpt-6-luna … service_tier=fast');
 ok(fs.existsSync(path.join(process.env.IRIS_FACE_STATE, 'fast-mode.json')), 'fast-mode.json 은 IRIS_FACE_STATE 에만 생김(실 state 무접촉)');

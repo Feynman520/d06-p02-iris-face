@@ -33,14 +33,16 @@ export const CODEX_HOME = process.env.CODEX_HOME || path.join(soulRoot(), '_agen
 export const AGENTS = {
   claude: {
     label: 'Claude',
-    // 별칭(opus·sonnet·fable·haiku)은 CLI 가 최신 판으로 푼다(2.1.280: opus→Opus 5.5, sonnet→5, fable→5.1, haiku→4.5).
-    // 표시 이름은 손으로 맞춘다 — Sonnet 5.5·Haiku 5.5(Anthropic 예고, 2026-09-22)가 나오면 여기 이름만 고친다.
+    // 별칭(opus·sonnet·fable·haiku)은 CLI 가 최신 판으로 푼다(2.1.284: opus→Opus 5.5, sonnet→5.5, fable→5.1, haiku→4.5).
+    // 표시 이름은 손으로 맞춘다 — Haiku 5.5(Anthropic 예고, 2026-09-22)가 나오면 여기 이름만 고친다.
+    // 2026-09-29: Sonnet 5.5 출시 — 이전 Sonnet 5 는 전체 ID 항목. Sonnet 5.5 는 CLI 카탈로그에 fast_mode 가 없어 FAST_MODELS 에 넣지 않는다.
     models: [
-      { id: 'opus',          label: 'Opus 5.5' },
-      { id: 'claude-opus-5', label: 'Opus 5 (이전)' },
-      { id: 'sonnet',        label: 'Sonnet 5' },
-      { id: 'fable',         label: 'Fable 5.1' },
-      { id: 'haiku',         label: 'Haiku 4.5' },
+      { id: 'opus',            label: 'Opus 5.5' },
+      { id: 'claude-opus-5',   label: 'Opus 5 (이전)' },
+      { id: 'sonnet',          label: 'Sonnet 5.5' },
+      { id: 'claude-sonnet-5', label: 'Sonnet 5 (이전)' },
+      { id: 'fable',           label: 'Fable 5.1' },
+      { id: 'haiku',           label: 'Haiku 4.5' },
     ],
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     default: { model: 'opus', effort: 'high' },
