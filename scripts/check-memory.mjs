@@ -47,13 +47,15 @@ ok(levelOf({ ru: 28, rt: 32, cu: null, cl: null }) === 'warn', '2 커밋 모름 
     P(500, 501, 'loop-a.exe', 0.1), P(501, 500, 'loop-b.exe', 0.1), // 부모가 서로를 가리키는 고리(PID 재사용)
     P(0, 0, 'System Idle Process', 0),
   ];
-  const sessions = [{ id: 'A', title: '보고서 쓰기', pid: 100 }, { id: 'B', title: '', pid: 200 }, { id: 'C', title: '죽은 세션', pid: 999 }];
+  // D = 끝난 세션의 PID 를 윈도가 chrome 에 다시 준 경우(부모가 데몬이 아님) → 세션으로 묶지 않는다(검토 2번)
+  const sessions = [{ id: 'A', title: '보고서 쓰기', pid: 100 }, { id: 'B', title: '', pid: 200 }, { id: 'C', title: '죽은 세션', pid: 999 }, { id: 'D', title: '재사용된 PID', pid: 300 }];
   const g = groupProcesses(procs, sessions, { selfPid: 50, limit: 20 });
   const find = (pred) => g.find(pred);
   const a = find(x => x.kind === 'session' && x.id === 'A');
   ok(a && a.count === 3 && Math.abs(a.priv - 2.5) < 0.01, `3 세션 A = 자기+자손 3개, 2.5GB (got ${a?.count}, ${a?.priv})`);
   ok(find(x => x.id === 'B')?.label === '이름 없는 세션', '3 제목 없는 세션 = "이름 없는 세션"');
   ok(!find(x => x.id === 'C'), '3 PID 가 없는 세션은 목록에 없음');
+  ok(!find(x => x.id === 'D'), '3 부모가 데몬이 아닌 세션 PID(재사용) = 세션으로 묶지 않음');
   const iris = find(x => x.kind === 'iris');
   ok(iris && iris.count === 2, `3 IRIS 데몬 = 데몬+OpenConsole(세션 나무 제외) 2개 (got ${iris?.count})`);
   const chrome = g.filter(x => x.label.toLowerCase() === 'chrome');
@@ -87,7 +89,7 @@ ok(levelOf({ ru: 28, rt: 32, cu: null, cl: null }) === 'warn', '2 커밋 모름 
   const spawned = [];
   const fakeSpawn = (exe, args) => {
     const c = new EventEmitter(); c.stdout = new EventEmitter(); c.killed = false; c.kill = () => { c.killed = true; };
-    spawned.push({ exe, args, c }); setTimeout(() => c.emit('exit', 1), 5); return c;   // 숫자 없이 바로 끝나는 고장 PC
+    spawned.push({ exe, args, c }); setTimeout(() => c.emit('close', 1), 5); return c;   // 숫자 없이 바로 끝나는 고장 PC
   };
   const execs = [];
   const fakeExec = (file, args, o, cb) => { execs.push({ file, args }); setTimeout(() => cb(null, '75000000 30000000\r\n'), 1); };
@@ -101,14 +103,38 @@ ok(levelOf({ ru: 28, rt: 32, cu: null, cl: null }) === 'warn', '2 커밋 모름 
   p.stop(); const n = execs.length; await sleep(120);
   ok(execs.length === n, '5 stop() 뒤 CIM 더 부르지 않음');
 
-  // 정상: 숫자를 한 번이라도 낸 typeperf 가 끝나면(1시간) 곧바로 다시 띄운다. stop() 은 지금 자식을 끝낸다.
+  // 정상: 숫자를 충분히(healthySamples) 낸 typeperf 가 끝나면(1시간) 곧바로 다시 띄운다. stop() 은 지금 자식을 끝낸다.
   const live = []; const okSpawn = () => { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.kill = () => { c.killed = true; }; live.push(c); return c; };
-  const q = new CommitProbe({ platform: 'win32', spawnImpl: okSpawn, retryMs: 10 });
-  q.start(); live[0].stdout.emit('data', Buffer.from('"(PDH-CSV 4.0)","a","b"\r\n"t","1000","2000"\r\n'));
-  ok(q.read()?.used === 1000, '5 stdout 줄 → read()');
-  live[0].emit('exit', 0);
-  ok(live.length === 2, '5 숫자를 낸 뒤 끝나면 곧바로 다시 띄움');
-  q.stop(); ok(live[1].killed === true, '5 stop() = 지금 자식 프로세스 끝냄');
+  const lines = (n) => Buffer.from('"(PDH-CSV 4.0)","a","b"\r\n' + Array.from({ length: n }, (_, i) => `"t","${1000 + i}","2000"\r\n`).join(''));
+  const q = new CommitProbe({ platform: 'win32', spawnImpl: okSpawn, retryMs: 30, healthySamples: 10 });
+  q.start(); live[0].stdout.emit('data', lines(12));
+  ok(q.read()?.used === 1011, '5 stdout 줄 → read()(마지막 값)');
+  live[0].emit('close', 0);
+  ok(live.length === 2, '5 숫자를 충분히 낸 뒤 끝나면 곧바로 다시 띄움');
+  // 숫자를 조금만 내고 끝나면 실패 — 대기 없이 계속 다시 띄우지 않는다(검토 3번)
+  live[1].stdout.emit('data', lines(1)); live[1].emit('close', 1);
+  ok(live.length === 2 && q.fails === 1, '5 숫자 1개 뒤 끝남 = 실패 1회, 곧바로 다시 띄우지 않음');
+  await sleep(60);
+  ok(live.length === 3, '5 retryMs 대기 뒤에야 다시 띄움');
+  // 이전 실행의 늦은 줄은 끝난 실행에 섞이지 않는다(검토 4번): 끝난 live[1] 에 줄이 와도 새 실행 횟수에 안 셈
+  live[1].stdout.emit('data', lines(20));
+  ok(q.run && q.run.samples === 0, '5 끝난 실행의 늦은 출력은 새 실행에 섞이지 않음');
+  q.stop(); ok(live[2].killed === true, '5 stop() = 지금 자식 프로세스 끝냄');
+  // 첫 숫자를 끝내 내지 않는 typeperf(카운터 하나가 없는 PC — 열 1개짜리 줄만 냄)는 firstSampleMs 뒤 끝내고 실패로 센다(검토 1번)
+  const silent = []; const silentSpawn = () => { const c = new EventEmitter(); c.stdout = new EventEmitter(); c.kill = () => { c.killed = true; setTimeout(() => c.emit('close', 1), 1); }; silent.push(c); return c; };
+  const w = new CommitProbe({ platform: 'win32', spawnImpl: silentSpawn, retryMs: 10, firstSampleMs: 20, execImpl: fakeExec, cimMs: 1000 });
+  w.start(); silent[0].stdout.emit('data', Buffer.from('"(PDH-CSV 4.0)","x"\r\n"t","123"\r\n'));
+  ok(w.waiting === true, '5 첫 숫자 전 = 측정 준비 중');
+  await sleep(40);
+  ok(silent[0].killed === true && w.fails === 1 && w.waiting === false, '5 firstSampleMs 안에 숫자 없음 → 끝내고 실패 1회, 이후 "측정 불가"');
+  await sleep(150);
+  ok(w.mode === 'cim', `5 3번 연속이면 CIM 으로 (mode=${w.mode}, spawned=${silent.length})`);
+  w.stop();
+  // CIM 실행 자체가 던져도 다음 차례를 건다(검토 5번)
+  let throws = 0; const throwExec = () => { throws++; throw new Error('boom'); };
+  const t5 = new CommitProbe({ platform: 'win32', execImpl: throwExec, cimMs: 10 }); t5.mode = 'cim'; t5.pollCim(); await sleep(45);
+  ok(throws >= 2, `5 CIM 실행이 던져도 다시 시도 (${throws}회)`);
+  t5.stop();
   const off = new CommitProbe({ platform: 'darwin', spawnImpl: () => { throw new Error('no'); } }); off.start();
   ok(off.mode === 'off' && off.read() === null, '5 윈도가 아니면 커밋 측정 안 함(off)');
 }
@@ -124,6 +150,14 @@ ok(levelOf({ ru: 28, rt: 32, cu: null, cl: null }) === 'warn', '2 커밋 모름 
   ok(r1.ok && /대상 1개/.test(r1.text) && calls[0].env.PYTHONUTF8 === '1', '6 결과 글 + 파이썬 UTF-8');
   const src = fs.readFileSync(path.join(ROOT, 'daemon', 'memory.mjs'), 'utf8');
   ok(!/['"]--apply['"]/.test(src), '6 memory.mjs 소스에 "--apply" 문자열 인자 없음');
+  // top·미리보기 실행이 던져도 약속이 거부된 채 남지 않고, 다음 요청은 다시 실행된다(검토 5번)
+  let n5 = 0;
+  const bad = new MemoryMonitor({ platform: 'win32', probe: { start() {}, stop() {}, read: () => null, mode: 'off' }, sweeper: 'x.py', python: () => 'py',
+    execImpl: (file, args, o, cb) => { n5++; if (n5 <= 2) throw new Error('spawn EPERM'); setTimeout(() => cb(null, file === 'powershell.exe' ? '1\t0\t10\t20\tfoo.exe\r\n' : 'ok'), 1); } });
+  const b1 = await bad.top(), b2 = await bad.sweepPreview();
+  ok(b1.error === 'failed' && b2.ok === false, '6 실행이 던지면 실패로 답함(거부 아님)');
+  const b3 = await bad.top(), b4 = await bad.sweepPreview();
+  ok(b3.groups?.length === 1 && b4.ok === true, '6 그다음 요청은 정상 실행');
   const none = new MemoryMonitor({ probe: { start() {}, stop() {}, read: () => null, mode: 'off' } });
   ok((await none.sweepPreview()).error === 'unavailable' && none.features().sweep === false, '6 청소기 없는 PC = unavailable');
 }

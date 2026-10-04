@@ -110,7 +110,8 @@ const updater = new Updater({
   installMessenger: (buf) => installFromBuffer(buf, { allow: false, via: 'update' }),
 });
 // ---- 메모리 계기판(v2.78, 2026-10-04): 실제 RAM·커밋 2초마다 → 최근 30분 → {type:'mem'} 방송. 시작은 listen 뒤(memory.mjs). ----
-const memory = new MemoryMonitor({ log, broadcast, sessions: () => sm.list().map(r => ({ id: r.id, title: r.title, pid: r.pid })), sweeper: sweeperPath(), python: () => pythonExe() });
+// 많이 차지하는 것의 세션 묶음에는 살아 있는 세션만 넘긴다 — 끝난 세션의 PID 는 윈도가 다른 프로그램에 다시 쓴다.
+const memory = new MemoryMonitor({ log, broadcast, sessions: () => sm.list().filter(r => sm.live.has(r.id)).map(r => ({ id: r.id, title: r.title, pid: r.pid })), sweeper: sweeperPath(), python: () => pythonExe() });
 let updateResult = null; // 적용기가 남긴 결과(첫 화면에 한 번만 토스트)
 
 // ---- transcript tails (기록파일 읽기 전용, 폴링) ----

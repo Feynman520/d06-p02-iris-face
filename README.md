@@ -38,6 +38,7 @@ It never touches your CLI configuration, subscriptions, or instruction files. De
 - **Inline previews** — images, HTML, PDF, localhost URLs, and (optional) Hangul/Office documents converted to PDF appear inside the conversation; ⧉ opens the original.
 - **Sub-agent chips** — background/sub agents show as chips (status, model, tool count, elapsed); click one for a read-only drawer of its transcript.
 - **Done notices** — a small toast (and an OS notification when the window is behind you) when a request finishes.
+- **Memory gauge** — a two-ring header gauge (outer = physical RAM, inner = commit charge) that fills as memory is taken. Click for a 30-minute graph, the top consumers (grouped per session) and a warning line; one notice when free commit drops below 6 GB. Measured by a single built-in Windows `typeperf` (~10 MB).
 - **Raw terminal** — Ctrl+T flips any session to the real terminal view; Esc interrupts.
 - **Voice input** (optional) — 🎤 / Ctrl+M records, a local faster-whisper worker transcribes, the text lands at the cursor. Nothing leaves your PC.
 - **Looks** — header mark ×21, fonts, 9 themes, star-sphere / other stage animations, all in ⚙ settings.
@@ -59,6 +60,7 @@ Optional (auto-detected; the feature simply stays off when missing):
 | Hangul / Office → PDF preview | Python with `pywin32` (Office) and a `pyhwpx` venv (Hangul). `IRIS_FACE_PY`, `IRIS_FACE_HWP_PY`. |
 | Usage batteries + Ctrl+D dashboard | The TeamClaude dashboard tool. `TEAMCLAUDE_DASH_DIR`, `TEAMCLAUDE_DASH_PORT`. Without it the header battery and the drawer are hidden. |
 | Folder picker tree | An IRIS workspace (`_ontology/graph.json`). Otherwise you type/paste a folder path. |
+| "Leftover preview" in the memory gauge | The IRIS orphan sweeper `orphan-sweeper.py` + Python. `IRIS_FACE_SWEEPER`. Preview only — nothing is terminated. Hidden when missing. |
 
 ## Install
 

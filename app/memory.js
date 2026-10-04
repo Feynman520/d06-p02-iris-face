@@ -28,18 +28,24 @@ const MemGauge = (() => {
   function setFeatures(f) { feat = f || null; if (!f) $('#mem').hidden = true; }
 
   // ---- 헤더 링 ----
-  function ring(s) {
-    const R1 = 9.5, R2 = 5, C1 = 2 * Math.PI * R1, C2 = 2 * Math.PI * R2;
-    const p1 = s.rt > 0 ? Math.min(1, s.ru / s.rt) : 0, p2 = s.cl > 0 && s.cu != null ? Math.min(1, s.cu / s.cl) : 0;
-    return `<svg class="mem-ring" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">`
-      + `<circle class="trk" cx="12" cy="12" r="${R1}" stroke-width="3"/><circle class="arc ${ramLvl(s)}" cx="12" cy="12" r="${R1}" stroke-width="3" stroke-dasharray="${(C1 * p1).toFixed(2)} ${C1.toFixed(2)}"/>`
-      + `<circle class="trk" cx="12" cy="12" r="${R2}" stroke-width="2.5"/><circle class="arc in ${comLvl(s)}" cx="12" cy="12" r="${R2}" stroke-width="2.5" stroke-dasharray="${(C2 * p2).toFixed(2)} ${C2.toFixed(2)}"/></svg>`;
+  // 링은 처음 한 번만 만들고 그 뒤로는 제자리에서 값만 바꾼다 — 2초마다 통째로 갈면 누르는 사이 요소가 사라져 클릭이 버려질 수 있고, 차오르는 전환도 안 보인다(2026-10-04 검토).
+  const R1 = 9.5, R2 = 5, C1 = 2 * Math.PI * R1, C2 = 2 * Math.PI * R2;
+  function buildButton(b) {
+    b.innerHTML = `<svg class="mem-ring" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">`
+      + `<circle class="trk" cx="12" cy="12" r="${R1}" stroke-width="3"/><circle class="arc ram" cx="12" cy="12" r="${R1}" stroke-width="3" stroke-dasharray="0 ${C1.toFixed(2)}"/>`
+      + `<circle class="trk" cx="12" cy="12" r="${R2}" stroke-width="2.5"/><circle class="arc in com" cx="12" cy="12" r="${R2}" stroke-width="2.5" stroke-dasharray="0 ${C2.toFixed(2)}"/></svg><span class="mem-pct"></span>`;
+    b.dataset.built = '1';
   }
   function renderButton(s) {
     const b = $('#mem'); if (!b || !feat) return;
     const f = free(s);
+    if (!b.dataset.built) buildButton(b);
     b.hidden = false; b.className = `mem ${s.lvl || 'ok'}${open ? ' active' : ''}`;
-    b.innerHTML = `${ring(s)}<span class="mem-pct">${pct(s)}%</span>`;
+    const p1 = s.rt > 0 ? Math.min(1, s.ru / s.rt) : 0, p2 = s.cl > 0 && s.cu != null ? Math.min(1, s.cu / s.cl) : 0;
+    const a1 = $('.arc.ram', b), a2 = $('.arc.com', b);
+    a1.setAttribute('class', `arc ram ${ramLvl(s)}`); a1.setAttribute('stroke-dasharray', `${(C1 * p1).toFixed(2)} ${C1.toFixed(2)}`);
+    a2.setAttribute('class', `arc in com ${comLvl(s)}`); a2.setAttribute('stroke-dasharray', `${(C2 * p2).toFixed(2)} ${C2.toFixed(2)}`);
+    $('.mem-pct', b).textContent = `${pct(s)}%`;
     b.title = `메모리 — 바깥 링: 실제 RAM ${gb(s.ru)}/${gb(s.rt)}GB (${pct(s)}%) · 안 링: 커밋 ${s.cu == null ? unk(s) : `${gb(s.cu)}/${gb(s.cl)}GB, 여유 ${gb(f)}GB`}  (누르면 30분 그래프)`;
   }
 

@@ -40,52 +40,62 @@ export function levelOf({ ru, rt, cu, cl }) {
 
 /** 커밋 측정기. read() = 최근 숫자 { used, limit } 또는 null. mode = 'typeperf' | 'cim' | 'off'. */
 export class CommitProbe {
-  constructor({ log = () => {}, platform = process.platform, spawnImpl = spawn, execImpl = execFile, now = Date.now, retryMs = 30000, cimMs = 15000 } = {}) {
-    Object.assign(this, { log, platform, spawnImpl, execImpl, now, retryMs, cimMs });
+  // 실행 한 번 = run { child, samples, ended }. 정상 = 숫자를 HEALTHY_SAMPLES 개 이상 낸 뒤 끝남(1시간 채움) → 곧바로 다시.
+  // 첫 숫자가 firstSampleMs 안에 안 나오면(카운터 하나가 없으면 typeperf 는 멈추지 않고 열 1개짜리 줄만 낸다 — 2026-10-04 검토 실측) 끝내고 실패로 센다.
+  // 숫자를 조금 내다 끝나도 실패(대기 뒤 재시도) — 첫 숫자 직후 계속 죽는 typeperf 를 2~4초마다 조용히 다시 띄우지 않게.
+  constructor({ log = () => {}, platform = process.platform, spawnImpl = spawn, execImpl = execFile, now = Date.now, retryMs = 30000, cimMs = 15000, firstSampleMs = 15000, healthySamples = 10 } = {}) {
+    Object.assign(this, { log, platform, spawnImpl, execImpl, now, retryMs, cimMs, firstSampleMs, healthySamples });
     this.mode = platform === 'win32' ? 'typeperf' : 'off';
-    this.last = null; this.child = null; this.fails = 0; this.gotSample = false; this.tried = false; this.stopped = false; this.timer = null;
+    this.last = null; this.run = null; this.fails = 0; this.tried = false; this.stopped = false; this.timer = null;
   }
+  get child() { return this.run?.child || null; }
   start() { if (this.mode === 'typeperf') this.spawnTypeperf(); }
   spawnTypeperf() {
     if (this.stopped) return;
     const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'typeperf.exe');
-    this.gotSample = false;
-    let child;
-    try { child = this.spawnImpl(exe, ['\\Memory\\Committed Bytes', '\\Memory\\Commit Limit', '-si', String(SAMPLE_MS / 1000), '-sc', '1800'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); }
-    catch (e) { this.onTypeperfEnd(`spawn ${e.message}`); return; }
-    this.child = child;
+    const run = { child: null, samples: 0, ended: false, watchdog: null };
+    const end = (why) => { if (run.ended) return; run.ended = true; clearTimeout(run.watchdog); if (this.run === run) this.run = null; this.onTypeperfEnd(run, why); };
+    try { run.child = this.spawnImpl(exe, ['\\Memory\\Committed Bytes', '\\Memory\\Commit Limit', '-si', String(SAMPLE_MS / 1000), '-sc', '1800'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); }
+    catch (e) { end(`spawn ${e.message}`); return; }
+    this.run = run;
     let buf = '';
-    child.stdout?.on('data', (d) => {
+    run.child.stdout?.on('data', (d) => {
       buf += d.toString('latin1');
-      let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); this.feed(line); }
+      let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (!run.ended) this.feed(line, run); }
     });
-    child.on('error', (e) => { if (this.child === child) { this.child = null; this.onTypeperfEnd(`error ${e.message}`); } });
-    child.on('exit', (code) => { if (this.child === child) { this.child = null; this.onTypeperfEnd(`exit ${code}`); } });
+    run.child.on('error', (e) => end(`error ${e.message}`));
+    run.child.on('close', (code) => end(`exit ${code}`));       // 'close' = 출력까지 다 비운 뒤 — 이전 실행의 늦은 줄이 새 실행에 섞이지 않는다
+    run.watchdog = setTimeout(() => { if (!run.samples && !run.ended) { this.log('memory: typeperf gave no numbers in time — stopping it'); try { run.child.kill(); } catch {} end('no numbers'); } }, this.firstSampleMs);
+    run.watchdog.unref?.();
   }
-  feed(line) { const v = parseTypeperfLine(line); if (v) { this.last = { ...v, at: this.now() }; this.gotSample = true; this.fails = 0; this.tried = true; } }
-  /** 아직 첫 숫자를 기다리는 중(typeperf 는 켜진 뒤 첫 숫자까지 약 4초) — 화면은 "측정 불가" 대신 "측정 준비 중"을 쓴다. */
+  feed(line, run = this.run) { const v = parseTypeperfLine(line); if (v) { this.last = { ...v, at: this.now() }; this.tried = true; if (run) run.samples++; } }
+  /** 아직 첫 숫자를 기다리는 중(typeperf 는 켜진 뒤 첫 숫자까지 약 4초) — 화면은 "측정 불가" 대신 "측정 준비 중"을 쓴다. 첫 실패 뒤로는 "측정 불가". */
   get waiting() { return this.mode !== 'off' && !this.tried; }
-  onTypeperfEnd(why) {
+  onTypeperfEnd(run, why) {
     if (this.stopped) return;
-    if (this.gotSample) { this.spawnTypeperf(); return; }            // 1시간 다 채우고 끝남 = 정상 → 곧바로 다시
-    this.fails++; this.log(`memory: typeperf ended without samples (${why}) fail ${this.fails}/3`);
+    if (run.samples >= this.healthySamples) { this.fails = 0; this.spawnTypeperf(); return; }   // 1시간 다 채우고 끝남 = 정상 → 곧바로 다시
+    this.fails++; this.tried = true;
+    this.log(`memory: typeperf ended after ${run.samples} sample(s) (${why}) fail ${this.fails}/3`);
     if (this.fails >= 3) { this.mode = 'cim'; this.log('memory: switching to CIM every 15s'); this.pollCim(); return; }
     this.timer = setTimeout(() => this.spawnTypeperf(), this.retryMs); this.timer.unref?.();
   }
   pollCim() {
     if (this.stopped) return;
+    const again = () => { if (!this.stopped) { this.timer = setTimeout(() => this.pollCim(), this.cimMs); this.timer.unref?.(); } };
     const ps = '$o = Get-CimInstance Win32_OperatingSystem -Property TotalVirtualMemorySize,FreeVirtualMemory; "$($o.TotalVirtualMemorySize) $($o.FreeVirtualMemory)"';
-    this.execImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 8000 }, (err, out) => {
-      this.tried = true;
-      const m = /(\d+)\s+(\d+)/.exec(String(out || ''));
-      if (!err && m) { const limit = Number(m[1]) * 1024, free = Number(m[2]) * 1024; if (limit > 0 && free >= 0 && free <= limit) this.last = { used: limit - free, limit, at: this.now() }; }
-      else if (err) this.log(`memory: CIM commit failed ${err.message}`);
-      if (!this.stopped) { this.timer = setTimeout(() => this.pollCim(), this.cimMs); this.timer.unref?.(); }
-    });
+    try {
+      this.execImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 8000 }, (err, out) => {
+        this.tried = true;
+        const m = /(\d+)\s+(\d+)/.exec(String(out || ''));
+        if (!err && m) { const limit = Number(m[1]) * 1024, free = Number(m[2]) * 1024; if (limit > 0 && free >= 0 && free <= limit) this.last = { used: limit - free, limit, at: this.now() }; }
+        else if (err) this.log(`memory: CIM commit failed ${err.message}`);
+        again();
+      });
+    } catch (e) { this.tried = true; this.log(`memory: CIM commit failed ${e.message}`); again(); }   // 실행 자체가 던져도 다음 차례는 건다
   }
   read() { return this.last && this.now() - this.last.at <= (this.mode === 'cim' ? 40000 : STALE_MS) ? this.last : null; }
   /** 화면에 보이는 측정 방식 — 'typeperf'·'cim' 이라도 숫자가 아직 없으면 그대로 두고, 화면이 cu=null 을 "측정 불가"로 그린다. */
-  stop() { this.stopped = true; clearTimeout(this.timer); const c = this.child; this.child = null; if (c) { try { c.kill(); } catch {} } }
+  stop() { this.stopped = true; clearTimeout(this.timer); const r = this.run; this.run = null; if (r) { clearTimeout(r.watchdog); r.ended = true; try { r.child?.kill(); } catch {} } }
 }
 
 /** CIM 프로세스 표 → 묶음 목록. procs = [{ pid, ppid, name, ws, priv }](바이트), sessions = [{ id, title, pid }].
@@ -104,6 +114,8 @@ export function groupProcesses(procs, sessions = [], { selfPid = process.pid, li
   const groups = [];
   for (const s of sessions) {
     if (!s?.pid) continue;
+    // 세션 프로세스는 데몬의 직속 자식이다(ConPTY, 2026-10-04 실측). 부모가 데몬이 아니면 끝난 세션의 PID 를 윈도가 다른 프로그램에 다시 준 것 — 묶지 않는다.
+    if (byPid.get(s.pid)?.ppid !== selfPid) continue;
     const list = walk(s.pid); if (!list.length) continue;
     groups.push({ kind: 'session', id: s.id, label: s.title || '이름 없는 세션', count: list.length, ...sum(list) });
   }
@@ -151,18 +163,26 @@ export class MemoryMonitor {
     if (this.topCache && this.now() - this.topCache.at < TOP_TTL_MS) return Promise.resolve(this.topCache);
     if (this.topBusy) return this.topBusy;
     const ps = 'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,WorkingSetSize,PrivatePageCount | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.WorkingSetSize)`t$($_.PrivatePageCount)`t$($_.Name)" }';
-    this.topBusy = new Promise((resolve) => {
-      this.execImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 10000, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, out) => {
-        this.topBusy = null;
-        if (err) { this.log(`memory: top failed ${err.message}`); resolve({ at: this.now(), groups: [], error: 'failed' }); return; }
-        const procs = String(out || '').split(/\r?\n/).map(l => l.split('\t')).filter(a => a.length >= 5)
-          .map(([pid, ppid, ws, priv, ...name]) => ({ pid: Number(pid), ppid: Number(ppid), ws: Number(ws) || 0, priv: Number(priv) || 0, name: name.join('\t') }))
-          .filter(p => Number.isFinite(p.pid));
-        this.topCache = { at: this.now(), groups: groupProcesses(procs, this.sessions()), procs: procs.length };
-        resolve(this.topCache);
-      });
+    // 실행이 던지든 결과 처리가 던지든 topBusy 를 비우고 반드시 답한다 — 거부된 약속이 남아 이후 요청이 전부 실패하지 않게(2026-10-04 검토).
+    // 실행이 곧바로 던지면 fail 이 아래 대입보다 먼저 돈다 → settled 로 알고 topBusy 에 끝난 약속을 남기지 않는다.
+    let settled = false;
+    const p = new Promise((resolve) => {
+      const fail = (msg) => { settled = true; this.topBusy = null; this.log(`memory: top failed ${msg}`); resolve({ at: this.now(), groups: [], error: 'failed' }); };
+      try {
+        this.execImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 10000, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, out) => {
+          if (err) { fail(err.message); return; }
+          try {
+            const procs = String(out || '').split(/\r?\n/).map(l => l.split('\t')).filter(a => a.length >= 5)
+              .map(([pid, ppid, ws, priv, ...name]) => ({ pid: Number(pid), ppid: Number(ppid), ws: Number(ws) || 0, priv: Number(priv) || 0, name: name.join('\t') }))
+              .filter(p => Number.isFinite(p.pid));
+            this.topCache = { at: this.now(), groups: groupProcesses(procs, this.sessions()), procs: procs.length };
+            this.topBusy = null; resolve(this.topCache);
+          } catch (e) { fail(e.message); }
+        });
+      } catch (e) { fail(e.message); }
     });
-    return this.topBusy;
+    this.topBusy = settled ? null : p;
+    return p;
   }
 
   /** 잔여물 청소기 미리보기(아무것도 종료하지 않음). 인자는 고정 — 화면이 무엇을 보내든 --apply 는 붙지 않는다. */
@@ -170,13 +190,17 @@ export class MemoryMonitor {
     const py = this.python();
     if (!this.sweeper || !py) return Promise.resolve({ ok: false, error: 'unavailable' });
     if (this.sweepBusy) return this.sweepBusy;
-    this.sweepBusy = new Promise((resolve) => {
-      this.execImpl(py, [this.sweeper], { windowsHide: true, timeout: 60000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }, (err, out, errOut) => {
-        this.sweepBusy = null;
-        if (err && !out) { this.log(`memory: sweep preview failed ${err.message}`); resolve({ ok: false, error: String(errOut || err.message).slice(-600) }); return; }
-        resolve({ ok: true, text: String(out || '').slice(-6000) });
-      });
+    let settled = false;
+    const p = new Promise((resolve) => {
+      const fail = (msg) => { settled = true; this.sweepBusy = null; this.log(`memory: sweep preview failed ${msg}`); resolve({ ok: false, error: String(msg).slice(-600) }); };
+      try {
+        this.execImpl(py, [this.sweeper], { windowsHide: true, timeout: 60000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }, (err, out, errOut) => {
+          if (err && !out) { fail(errOut || err.message); return; }
+          this.sweepBusy = null; resolve({ ok: true, text: String(out || '').slice(-6000) });
+        });
+      } catch (e) { fail(e.message); }
     });
-    return this.sweepBusy;
+    this.sweepBusy = settled ? null : p;
+    return p;
   }
 }
