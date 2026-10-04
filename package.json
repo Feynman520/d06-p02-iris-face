@@ -1,6 +1,6 @@
 {
   "name": "iris-face",
-  "version": "2.77.0",
+  "version": "2.78.0",
   "private": true,
   "description": "IRIS-Face: multi-session desk for Claude Code / Codex (beta)",
   "author": "Sejun Ham (함세준)",
@@ -33,7 +33,8 @@
     "verify:handoff": "node scripts/check-handoff.mjs",
     "verify:trust": "node scripts/check-trust.mjs",
     "verify:turnstate": "node scripts/check-turnstate.mjs",
-    "verify:models": "node scripts/check-models.mjs"
+    "verify:models": "node scripts/check-models.mjs",
+    "verify:memory": "node scripts/check-memory.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

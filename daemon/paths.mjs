@@ -58,6 +58,17 @@ export function pythonExe() {
   return pyCache;
 }
 
+/** IRIS 잔여물 청소기(orphan-sweeper.py) — 환경변수 IRIS_FACE_SWEEPER → CLAUDE_CONFIG_DIR\scripts → <root>\_agent\claude\scripts 순서로 첫 존재. 없으면 null(= 메모리 계기판의 「잔여물 미리보기」 숨김, v2.78). */
+export function sweeperPath() {
+  const candidates = [
+    process.env.IRIS_FACE_SWEEPER,
+    process.env.CLAUDE_CONFIG_DIR && path.join(process.env.CLAUDE_CONFIG_DIR, 'scripts', 'orphan-sweeper.py'),
+    path.join(soulRoot(), '_agent', 'claude', 'scripts', 'orphan-sweeper.py'),
+  ].filter(Boolean);
+  for (const c of candidates) { try { if (fs.existsSync(c)) return c; } catch {} }
+  return null;
+}
+
 /** 설치기가 남긴 영수증(package-receipt.json). 없으면 null. */
 export function readReceipt() {
   try {

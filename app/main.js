@@ -126,7 +126,8 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); if (m.mem) MemGauge.onSample(m.mem); render(); }
+      else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
       else if (m.type === 'handoff') Handoff.apply(m);                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
       else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
@@ -298,6 +299,7 @@
   const fr = $('#dash-frame');
   fetch('/api/health').then(r => r.json()).then((h) => {
     const f = h?.features; if (!f) return;
+    MemGauge.setFeatures(f.memory);
     if (f.dashPort) DASH_URL = `http://127.0.0.1:${f.dashPort}/`;
     if (f.dashboard === false) { dashEnabled = false; $('#limits').hidden = true; if (drawerKey === 'dash') closeDrawer(); }
     if (Array.isArray(f.modules)) setModules(f.modules);
@@ -529,6 +531,7 @@
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
     if (Settings.isOpen()) { Settings.hide(); return; }
+    if (MemGauge.isOpen()) { MemGauge.close(); return; } // 메모리 계기판 펼침 = Esc 로 닫기만(중단 아님)
     if (!$('#dash').hidden) { closeDrawer(); return; }
     if (SubPanel.isOpen()) { SubPanel.close(); ta.focus(); return; } // 보조 작업 서랍이 열려 있으면 Esc = 서랍만 닫힘(중단 아님)
     if (!$('#cam').hidden) { camStop(); return; }
@@ -551,6 +554,7 @@
   // ---------- 꾸미기 설정 + 사용량 배터리 (app/settings.js) ----------
   Settings.init({ sessionCount: () => sessions.length });
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
+  MemGauge.init({ notify: (n) => Notify.push(n), pick: (id) => { if (sessions.some(s => s.id === id)) select(id); } }); // 메모리 계기판(v2.78)
   Notify.init({ onPick: (id) => { if (String(id).startsWith('mod:')) { openModule(String(id).split(':')[1]); return; } if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------
   // v2.40: 실행 중인 보조 수가 바뀌면 겉보기 상태(보조 작업 중)도 바뀌고, 보류해 둔 완료 알림의 해소 여부를 Notify가 판단한다.

@@ -15,7 +15,8 @@ import { SubagentWatcher } from './subagents.mjs';
 import { listFolders, checkFresh, RecentFolders } from './folders.mjs';
 import { readLimits } from './limits.mjs';
 import { findRoot, rootName, Settings } from './workspace.mjs';
-import { dashDir, dashPort } from './paths.mjs';
+import { dashDir, dashPort, sweeperPath, pythonExe } from './paths.mjs';
+import { MemoryMonitor } from './memory.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
 import { activeAgentsMap, sleepingAgents, agentStatus, wake, SleepWatcher, KNOWN_AGENTS } from './wake.mjs';
@@ -99,7 +100,7 @@ async function ensureDash() {
 }
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
-const features = () => ({ dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
+const features = () => ({ memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
 
 // ---- 업데이트(설계 2·3·4절, v2.58): 하루 1회 릴리스 확인 → 사용자가 누르면 받기·검증 → 메신저는 이 자리, IRIS 창·구조판은 적용기에 넘김. ----
 // 데몬은 자기 파일을 바꾸지 않는다. 화면에 줄 진행은 웹소켓 {type:'update', …} 방송.
@@ -108,6 +109,8 @@ const updater = new Updater({
   log: (m) => log(m), broadcast: (o) => broadcast(o),
   installMessenger: (buf) => installFromBuffer(buf, { allow: false, via: 'update' }),
 });
+// ---- 메모리 계기판(v2.78, 2026-10-04): 실제 RAM·커밋 2초마다 → 최근 30분 → {type:'mem'} 방송. 시작은 listen 뒤(memory.mjs). ----
+const memory = new MemoryMonitor({ log, broadcast, sessions: () => sm.list().map(r => ({ id: r.id, title: r.title, pid: r.pid })), sweeper: sweeperPath(), python: () => pythonExe() });
 let updateResult = null; // 적용기가 남긴 결과(첫 화면에 한 번만 토스트)
 
 // ---- transcript tails (기록파일 읽기 전용, 폴링) ----
@@ -246,6 +249,13 @@ const server = http.createServer(async (req, res) => {
     // v2.76: 버튼 옆 안내의 재료 — 에이전트별 계정 수(null = 판단 안 함)·프로그램 없음·잠든 목록.
     if (req.method === 'GET' && p === '/api/agents/status') return json(res, 200, agentStatus());
     if (req.method === 'GET' && p === '/api/limits') return json(res, 200, await readLimits());
+    // 메모리 계기판(v2.78): 최근 30분 기록 · 많이 차지하는 것(펼쳤을 때만, 8초 캐시) · 잔여물 미리보기(종료 안 함, 같은 출처만)
+    if (req.method === 'GET' && p === '/api/memory') return json(res, 200, memory.history());
+    if (req.method === 'GET' && p === '/api/memory/top') return json(res, 200, await memory.top());
+    if (req.method === 'POST' && p === '/api/memory/sweep-preview') {
+      if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden origin' });
+      return json(res, 200, await memory.sweepPreview());
+    }
     if (req.method === 'POST' && p === '/api/dash/ensure') { const d = await ensureDash(); log(`dash ensure: ${d.message}`); return json(res, d.alive ? 200 : 503, d); }
     if (req.method === 'POST' && p === '/api/wake') {
       // 잠든 에이전트 수동으로 깨우기(installer Task 17) — 대시보드에서 relay 로그인 뒤 다시 시도할 때도 쓸 수 있는 멱등 경로.
@@ -455,7 +465,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
@@ -479,11 +489,13 @@ wss.on('connection', (ws) => {
 function shutdown() {
   // 모듈에 shutdown 을 먼저(최대 2.5초), 그다음 세션·음성·PID 파일. 모듈이 없으면 즉시 지나간다.
   Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => {
-    try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200);
+    try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { memory.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200);
   });
 }
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
+  // 메모리 계기판(v2.78): 포트를 잡은 뒤에만 측정기(typeperf)를 띄운다 — 두 번째 실행이 포트 충돌로 끝날 때 고아 측정기를 남기지 않게.
+  try { memory.start(); log(`memory: commit=${memory.features().commit} sweep=${memory.features().sweep ? 'on' : 'off'}`); } catch (e) { log(`memory init error: ${e?.message || e}`); }
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
   try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
@@ -498,4 +510,4 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
 // 데몬이 죽으면 ConPTY 세션도 죽으므로 예외로는 절대 죽지 않게 한다(기록만).
 process.on('uncaughtException', (e) => { log(`uncaughtException: ${e?.stack || e}`); });
 process.on('unhandledRejection', (e) => { log(`unhandledRejection: ${e?.stack || e}`); });
-process.on('SIGINT', () => { Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => { try { fs.unlinkSync(PID_FILE); } catch {} log('daemon interrupted (sessions left as-is)'); process.exit(0); }); });
+process.on('SIGINT', () => { try { memory.stop(); } catch {} Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => { try { fs.unlinkSync(PID_FILE); } catch {} log('daemon interrupted (sessions left as-is)'); process.exit(0); }); });
