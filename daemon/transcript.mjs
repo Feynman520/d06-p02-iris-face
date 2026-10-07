@@ -1,7 +1,8 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // 기록파일 꼬리 읽기 + 정규화 (읽기 전용). 클로드 projects\*.jsonl · 코덱스 sessions\rollout-*.jsonl
 // 정규화 항목: { i, t, kind, text?, name?, detail?, n? }
-//   kind: user | assistant | thinking | tool | tool_result | ask | command | compact | usage | subagent | unknown
+//   kind: user | assistant | thinking | tool | tool_result | ask | command | compact | usage | subagent | notice | unknown
+//   notice = 새 차례를 연 작업 알림(배경 명령·보조 작업·감시 끝남, v2.79) — text 는 알림 한 줄씩, n = 알림 수
 import fs from 'node:fs';
 import { stripFaceNote, stripPasteMarks } from './facenote.mjs';
 
@@ -39,7 +40,7 @@ export class TranscriptTail {
     if (this.agent === 'codex') return this.turnOpen == null ? null : (this.turnOpen ? 'open' : 'closed');
     for (let i = this.items.length - 1; i >= 0; i--) {
       const k = this.items[i].kind;
-      if (k === 'thinking' || k === 'compact') continue;
+      if (k === 'thinking' || k === 'compact' || k === 'notice') continue; // notice(v2.79)는 화면 경계용 — 판정은 예전처럼 알림이 없던 것과 같게
       if (k === 'user' || k === 'command' || k === 'tool' || k === 'tool_result' || k === 'subagent') return 'open';
       if (k === 'ask') return 'closed';
       return null;
@@ -138,8 +139,12 @@ export class TranscriptTail {
     const cmd = s.match(/<command-name>([^<]+)<\/command-name>/);
     if (cmd) { const args = s.match(/<command-args>([^<]*)<\/command-args>/); return [{ t, kind: 'command', text: `${cmd[1]}${args && args[1] ? ' ' + args[1] : ''}` }]; }
     this.noteTaskNotification(s, t);
-    // 시스템이 만든 사용자 차례(서브에이전트 완료 알림·리마인더·로컬 명령 출력)는 요청이 아니므로 숨긴다
-    if (/^\s*<(system-reminder|local-command-stdout|local-command-caveat|command-message|task-notification)/.test(s)) return [];
+    // 사용자 차례로 들어온 작업 알림(배경 명령·보조 작업·감시 끝남)은 요청은 아니지만 새 차례를 연다(v2.79, 2026-10-07 사용자 신고).
+    // 숨기기만 하면 화면이 차례 경계를 몰라 알림에 대한 답이 앞 결과를 "과정"으로 밀어낸다 → notice 항목으로 넘겨 경계로 쓴다.
+    // 작업 도중 흡수된 알림(queue-operation·attachment)은 새 차례를 열지 않으므로 위 fromClaude 에서처럼 계속 버린다.
+    if (/^\s*<task-notification>/.test(s)) { const notes = noticeLines(s); return notes.length ? [{ t, kind: 'notice', text: notes.join('\n'), n: notes.length }] : []; }
+    // 시스템이 만든 사용자 차례(리마인더·로컬 명령 출력)는 요청이 아니므로 숨긴다
+    if (/^\s*<(system-reminder|local-command-stdout|local-command-caveat|command-message)/.test(s)) return [];
     // 본문 뒤에 붙는 system-reminder 는 잘라낸다
     let body = s.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
     // 괄호 붙여넣기 표식(v2.72): Face 는 요청을 CLI 입력창에 붙여넣기로 넣는데(sessions.mjs send), 클로드코드 2.1.27x 는
@@ -209,6 +214,28 @@ export class TranscriptTail {
     this.unknown++;
     return [{ t: null, kind: 'unknown', name: type, n: this.unknown }];
   }
+}
+
+/** 작업 알림 글 → 화면용 한 줄씩(알림 하나당 한 줄, 한 메시지에 여러 개면 여러 줄). 모르는 요약은 원문 그대로. */
+export function noticeLines(s) {
+  const out = [];
+  for (const m of String(s).matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+    const body = m[1];
+    const status = (body.match(/<status>([^<]*)<\/status>/)?.[1] || '').trim();
+    const sum = (body.match(/<summary>([\s\S]*?)<\/summary>/)?.[1] || '').trim();
+    const q = sum.match(/"([\s\S]*)"/); const desc = q ? q[1].trim() : '';
+    const end = status === 'failed' ? '실패' : status === 'killed' ? '중단됨' : '끝남';
+    let label;
+    if (/^Background command/i.test(sum)) label = `배경 명령 ${end}`;
+    else if (/^Monitor event/i.test(sum)) label = '감시 알림';
+    else if (/^Monitor/i.test(sum)) label = `감시 ${end}`;
+    else if (/^(Background agent|Agent)\b/i.test(sum)) label = `보조 작업 ${end}`;
+    else if (/^Dynamic workflow/i.test(sum)) label = `워크플로 ${end}`;
+    else label = null;
+    const line = (label ? (desc ? `${label} · ${desc}` : label) : (sum || '작업 알림')).replace(/\s+/g, ' ');
+    out.push(line.length > 200 ? line.slice(0, 199) + '…' : line); // 한 줄 유지(clip 은 줄바꿈을 붙여 알림 줄이 쪼개진다)
+  }
+  return out;
 }
 
 function safeJson(s) { if (typeof s !== 'string') return s; try { return JSON.parse(s); } catch { return { raw: s }; } }

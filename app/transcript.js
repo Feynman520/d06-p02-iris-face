@@ -10,6 +10,9 @@ function createTranscript() {
   let turn = null; // 진행 중인 차례 { el, steps, stepsList, live, answer, count, chips }
   // 보조 작업 칩(2026-09-11): subsList = 데몬이 준 이 세션의 보조 목록 · callTurn = 부모 Agent 호출 id → 그 차례의 칩 상자 · lastChips = 가장 최근 칩 상자(연결 못 한 보조가 놓일 곳)
   let subsList = [], subPick = null, subActive = null, callTurn = new Map(), lastChips = null;
+  let lastNotice = null; // 합칠 수 있는 직전 작업 알림 줄(v2.79)
+  // 요청·명령·알림이 아닌 항목 = 모델이 실제로 응답했다는 신호(첫 답변 도착 판정용). 알림은 응답이 아니다(v2.79).
+  const isReply = (it) => it.kind !== 'user' && it.kind !== 'command' && it.kind !== 'notice';
   let primed = null; // 세션 기록파일이 생기기 전에 먼저 보여 주는 요청문(있으면 "세션 여는 중" 상태)
   let opening = false; // 새 세션의 첫 답변(생각·도구·답 중 첫 항목)이 오기 전까지 true — 이 동안의 진행 문구는 "세션 여는 중"
   const LOADING = '세션 여는 중 — 도구와 컨텍스트를 불러옵니다 (첫 답변은 최대 1분)';
@@ -199,7 +202,26 @@ function createTranscript() {
     turn.steps.classList.add('settled'); turn.all.open = false;
     if (turn.count === 0) { turn.steps.hidden = true; if (!turn.answer && !turn.el.children.length) turn.el.remove(); }
   }
+  // ---- 작업 알림(v2.79, 2026-10-07): 새 차례를 연 알림은 차례 경계다 — 앞 결과는 결과대로 두고 알림 한 줄을 놓는다.
+  //      답 없이 연달아 온 알림은 한 줄로 합친다(「알림 N건」, 눌러서 펼침). lastNotice = 합칠 수 있는 직전 알림 줄.
+  function placeNotice(it) {
+    settleTurn(); turn = null;
+    const lines = String(it.text || '작업 알림').split('\n').filter(Boolean);
+    let el = lastNotice;
+    if (!el || el.parentElement !== root) {
+      el = document.createElement('div'); el.className = 'msg notice'; el._lines = []; el._t = it.t;
+      root.appendChild(el); lastNotice = el;
+    }
+    el._lines.push(...lines);
+    const icon = window.Icons ? window.Icons.svg('bell', 13) : '';
+    const n = el._lines.length;
+    el.innerHTML = n === 1
+      ? `<div class="notice-line">${icon}<span class="notice-text">${esc(el._lines[0])}</span><span class="ts">${timeOf(el._t)}</span></div>`
+      : `<details class="notice-group"><summary class="notice-line">${icon}<span class="notice-text">알림 ${n}건 · ${esc(el._lines[n - 1])}</span><span class="ts">${timeOf(el._t)}</span></summary><ul>${el._lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>`;
+  }
   function place(it) {
+    if (it.kind === 'notice') { placeNotice(it); return; }
+    if (it.kind !== 'unknown') lastNotice = null;
     if (it.kind === 'user') { settleTurn(); turn = null; root.appendChild(bubble(it, 'user')); return; }
     if (it.kind === 'compact') { settleTurn(); turn = null; const d = document.createElement('div'); d.className = 'msg compact'; d.innerHTML = '<div class="rule"><span>이전 대화 요약됨</span></div>'; root.appendChild(d); return; }
     if (it.kind === 'command') { const d = document.createElement('div'); d.className = 'msg command'; d.innerHTML = `<span class="pill">명령 ${esc(it.text)}</span>`; root.appendChild(d); return; }
@@ -267,7 +289,7 @@ function createTranscript() {
       n.textContent = `열기 실패: ${err.message}`; setTimeout(() => n.remove(), 6000);
     } finally { btn.disabled = false; }
   }
-  function clear() { items = []; shown = 0; unknownCount = 0; turn = null; primed = null; opening = false; clearTimeout(pending?.timer); pending = null; awaiting = false; callTurn = new Map(); lastChips = null; if (root) root.innerHTML = ''; }
+  function clear() { items = []; shown = 0; unknownCount = 0; turn = null; lastNotice = null; primed = null; opening = false; clearTimeout(pending?.timer); pending = null; awaiting = false; callTurn = new Map(); lastChips = null; if (root) root.innerHTML = ''; }
   /** 새 세션 직후: 기록파일이 아직 없어도 내 요청문과 "세션 여는 중" 표시를 바로 그린다. 실제 기록이 오면 자연히 대체된다. */
   function prime(text) {
     clear(); primed = text; opening = true;
@@ -306,7 +328,7 @@ function createTranscript() {
     const wasOpening = opening;
     clear(); if (keep) { prime(keep); return; }
     items = all || [];
-    opening = wasOpening && !items.some(it => it.kind !== 'user' && it.kind !== 'command');
+    opening = wasOpening && !items.some(isReply);
     const start = Math.max(0, items.length - RENDER_WINDOW);
     for (let k = start; k < items.length; k++) place(items[k]);
     if (!busy) settleTurn();
@@ -318,8 +340,8 @@ function createTranscript() {
     if (primed) { const wasOpening = opening; clear(); opening = wasOpening; } // 진짜 기록이 도착 — 미리 그린 요청문은 치운다(중복 방지). "여는 중" 상태는 첫 답변 항목이 올 때까지 유지
     if (pending && more.some(it => it.kind === 'user')) dropPending(); // 기록의 요청문이 왔다 — 미리 그린 이어가기 요청문을 치우고 실제 기록으로 그린다
     items.push(...more); for (const it of more) place(it);
-    if (opening && more.some(it => it.kind !== 'user' && it.kind !== 'command')) opening = false;
-    if (awaiting && !pending && more.some(it => it.kind !== 'user' && it.kind !== 'command')) awaiting = false; // 첫 응답 항목 도착
+    if (opening && more.some(isReply)) opening = false;
+    if (awaiting && !pending && more.some(isReply)) awaiting = false; // 첫 응답 항목 도착
     shown += more.length; unknownBanner(meta);
     ensureLive(); applySubs();
     if (followBottom) root.scrollTop = root.scrollHeight;
@@ -327,10 +349,10 @@ function createTranscript() {
   function showMore() {
     if (shown >= items.length) return;
     const end = items.length - shown, start = Math.max(0, end - RENDER_WINDOW);
-    const frag = document.createDocumentFragment(); const saveTurn = turn; const saveChips = lastChips; turn = null;
+    const frag = document.createDocumentFragment(); const saveTurn = turn; const saveChips = lastChips; const saveNotice = lastNotice; turn = null; lastNotice = null;
     const tmp = document.createElement('div'); const saveRoot = root; root = tmp;
     for (let k = start; k < end; k++) place(items[k]); settleTurn();
-    root = saveRoot; turn = saveTurn; lastChips = saveChips; while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+    root = saveRoot; turn = saveTurn; lastChips = saveChips; lastNotice = saveNotice; while (tmp.firstChild) frag.appendChild(tmp.firstChild);
     const prevH = root.scrollHeight; root.prepend(frag); shown += end - start; root.scrollTop += root.scrollHeight - prevH;
   }
   function unknownBanner(meta) {

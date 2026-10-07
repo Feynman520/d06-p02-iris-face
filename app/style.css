@@ -264,6 +264,16 @@ a { color: var(--iris); }
 .card-ask .q { margin-top: 6px; color: var(--ink); font-size: 13px; }
 .pill { font-size: 12px; color: var(--ink-3); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
 .msg.compact { align-items: stretch; }
+/* 작업 알림(v2.79): 차례 경계에 놓이는 작은 한 줄 — 연달아 오면 「알림 N건」으로 접힌다 */
+.msg.notice { margin: 2px auto; }
+.notice-line { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font-size: 12px; color: var(--ink-3); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.notice-line svg { flex: none; opacity: .8; }
+.notice-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notice-line .ts { margin: 0; min-height: 0; font-size: 11px; opacity: .8; }
+.notice-group summary { cursor: pointer; list-style: none; }
+.notice-group summary::-webkit-details-marker { display: none; }
+.notice-group summary:hover { color: var(--ink-2); }
+.notice-group ul { margin: 6px 0 2px 14px; padding: 0 0 0 12px; font-size: 12px; color: var(--ink-3); }
 .rule { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12px; margin: 6px 0; }
 .rule::before, .rule::after { content: ''; flex: 1; border-top: 1px dashed var(--line-2); }
 .unknown-banner { align-self: center; font-size: 11px; color: var(--ink-3); }
