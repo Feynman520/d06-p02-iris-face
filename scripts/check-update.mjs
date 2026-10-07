@@ -383,6 +383,8 @@ let planFile = null;
   // 오래된 내려받기 폴더 치우기(plan 이 가리키는 폴더는 남긴다)
   const old = path.join(root, '_agent', 'shared', 'downloads', 'update-20260101-000000');
   fs.mkdirSync(old, { recursive: true });
+  // 폴더 시각을 가짜 시계에 맞춘다 — 실제 생성 시각(오늘)과 가짜 시계(9/14 + 30일)를 비교하면 실제 날짜가 10/7 을 넘는 순간 7일 미만이 되어 실패했다(2026-10-07 시한폭탄).
+  fs.utimesSync(old, new Date(nowMs), new Date(nowMs));
   const keepMine = path.join(root, '_agent', 'shared', 'downloads', 'not-ours');
   fs.mkdirSync(keepMine, { recursive: true });
   const sweeper = mkUpdater(); sweeper.state.plan = later.info().plan;
