@@ -162,6 +162,16 @@ a { color: var(--iris); }
 #term, .xterm { height: 100%; }
 .dead-bar { display: flex; gap: 12px; align-items: center; padding: 8px 16px; background: rgba(242,200,121,.08); border-top: 1px solid rgba(242,200,121,.25); color: var(--warn); font-size: 12.5px; }
 .dead-bar code { font: 12px var(--mono); color: var(--ink); background: var(--base); padding: 2px 8px; border-radius: 6px; }
+/* 배경 작업 띠(v2.81): 파란 도는 고리(delegated)와 같은 iris 톤 — "응답은 끝났고 무엇이 몇 분째 도는지" */
+.bg-bar { display: flex; gap: 10px; align-items: flex-start; padding: 8px 16px; background: var(--iris-soft); border-top: 1px solid rgba(143,168,255,.3); font-size: 12.5px; }
+.bg-bar[hidden] { display: none; }
+#view[data-mode="term"] .bg-bar { display: none; }
+.bg-ic { flex: none; width: 16px; height: 16px; color: var(--iris); margin-top: 1px; }
+.bg-ic svg { width: 16px; height: 16px; }
+.bg-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bg-head { color: var(--iris); font-weight: 600; }
+.bg-line { color: var(--ink); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bg-hint { color: var(--ink-3); font-size: 11.5px; }
 /* ---- 확인 카드(v2.43 → v2.50): 노란불일 때 터미널의 질문·선택지를 대화 아래에. dead-bar 와 같은 자리, 노란 계열 한 톤 ----
    구성: 머리(종류 배지 · 제목 · 힌트 · 터미널에서 보기) → 탭 칩(AskUserQuestion) → 본문(명령·설명·계획, 등폭) → 질문 → 선택지 세로 목록 → 행동(선택 완료 / 자유 입력) */
 .approval { display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 12px; background: rgba(242,200,121,.06); border-top: 1px solid rgba(242,200,121,.28); max-height: min(60vh, 560px); overflow: auto; }

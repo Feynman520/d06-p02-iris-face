@@ -88,6 +88,17 @@ try {
   ok('화면: 배경 작업이면 delegated(파란 도는 고리)', /\(SubPanel\.running\(s\.id\) \|\| bgN\(s\.id\)\) \? 'delegated'/.test(main));
   ok('화면: 완료 알림 보류에 배경 작업 포함', /Notify\.onStatus\(m, s, liveN\(m\.id\)\)/.test(main) && /m\.type === 'bg'[\s\S]{0,200}Notify\.onSubs\(m\.id, liveN\(m\.id\)/.test(main));
   ok('화면: hello 에서 배경 목록을 받는다', /bgMap\.clear\(\); if \(m\.bg\)/.test(main));
+  // v2.81: 무엇이 몇 분째 도는지 — 툴팁·대화 아래 띠(메인 idle 일 때만), 버튼 없음
+  const html = src('app/index.html'), css = src('app/style.css');
+  const bar = (main.match(/function renderBgBar[\s\S]*?\n  \}/) || [''])[0];
+  ok('v2.81: bgLines = 종류 · 설명(없으면 id) · N분째', /const bgLines = [\s\S]{0,300}'감시' : '배경 명령'[\s\S]{0,40}b\.desc \|\| b\.id[\s\S]{0,20}분째/.test(main));
+  ok('v2.81: 띠는 메인 idle 일 때만', /s && s\.status === 'idle' \? bgLines\(s\.id\) : \[\]/.test(bar));
+  ok('v2.81: 띠에 버튼·종료 호출 없음', bar && !/<button|TaskStop|kill|api\(/i.test(bar), bar.slice(0, 80));
+  ok('v2.81: 띠 글은 esc 를 거친다', /esc\(l\)/.test(bar));
+  ok('v2.81: renderHead·render 가 띠를 갱신(미리보기면 숨김)', /renderBgBar\(s\);/.test(main) && /else renderBgBar\(null\)/.test(main));
+  ok('v2.81: 30초마다 N분째 갱신', /setInterval\(\(\) => \{ const s = cur\(\); if \(s && bgN\(s\.id\)\)/.test(main));
+  ok('v2.81: 툴팁에 배경 줄', /\.\.\.bgLines\(s\.id\)\]\.join\('\\n'\)\)/.test(main) && /\.\.\.bgLines\(s\.id\)\]\.join\('\\n'\);/.test(main));
+  ok('v2.81: index #bg-bar · 터미널 모드에서 숨김', /id="bg-bar" class="bg-bar" hidden/.test(html) && /#view\[data-mode="term"\] \.bg-bar \{ display: none; \}/.test(css));
 
   // 4) 화면
   const req = createRequire(import.meta.url);

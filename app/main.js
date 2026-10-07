@@ -13,6 +13,11 @@
   const bgMap = new Map();
   const bgN = (id) => (bgMap.get(id) || []).length;
   const liveN = (id) => SubPanel.alive(id) + bgN(id); // 살아 있는 일 = 보조(running+quiet) + 배경 작업
+  // 무엇이 몇 분째 도는지(v2.81, 2026-10-07 사용자 신고 "끝났는데 핀이 돌아 헷갈린다"): 툴팁·대화 아래 띠가 쓰는 한 줄씩.
+  const bgLines = (id) => (bgMap.get(id) || []).map(b => {
+    const min = Math.max(0, Math.floor((Date.now() - (Date.parse(b.t) || Date.now())) / 60000));
+    return `${b.kind === 'monitor' ? '감시' : '배경 명령'} · ${b.desc || b.id} · ${min}분째`;
+  });
   const viewStatus = (s) => (s.status !== 'idle' ? s.status : (SubPanel.running(s.id) || bgN(s.id)) ? 'delegated' : SubPanel.alive(s.id) ? 'waiting' : 'idle');
   const statusText = (s) => {
     const v = viewStatus(s);
@@ -189,7 +194,7 @@
     sessions.forEach((s, i) => {
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
       li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
-        <span class="sname" title="${esc(s.title || '')}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개">⁺${liveN(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
+        <span class="sname" title="${esc(s.title || '')}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="${esc([`살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개`, ...bgLines(s.id)].join('\n'))}">⁺${liveN(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
         <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
       li.onclick = () => select(s.id);
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
@@ -206,19 +211,30 @@
     IrisStars.setDim(!!current);
     IrisStars.setEnergy(sessions.some(s => s.status === 'busy' || viewStatus(s) === 'delegated') ? 0.7 : 0);
     renderComposer(); renderSetup();
-    if (current && current !== 'preview') renderHead();
+    if (current && current !== 'preview') renderHead(); else renderBgBar(null);
   }
   function renderHead() {
     const s = cur(); if (!s) return;
     $('#vh-dot').className = 'dot ' + viewStatus(s);
     $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = s.title ? `${s.title}\n${s.cwd}` : s.cwd;
-    $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = `${s.cwd}\n${s.cmdline || ''}`;
+    $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = [s.cwd, s.cmdline || '', ...bgLines(s.id)].join('\n');
+    renderBgBar(s);
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
     $('#btn-close').title = dead ? '기록 지우기' : '이 세션 종료(PID 기준)';
     Approval.render(s); // 노란불 + prompt 있을 때만 카드가 보인다(상태가 바뀌면 함께 내려감)
   }
+  /** 배경 작업 띠(v2.81): 메인은 답을 끝냈는데(idle) 배경 작업이 남았을 때만, 대화 아래에 무엇이 몇 분째 도는지 보인다.
+   *  끄기 버튼은 두지 않는다 — 화면이 프로세스를 죽이지 않는다(루트 프로세스 종료 규칙). 끄려면 세션에 말로 부탁한다. */
+  function renderBgBar(s) {
+    const bar = $('#bg-bar'); const lines = s && s.status === 'idle' ? bgLines(s.id) : [];
+    bar.hidden = !lines.length; if (!lines.length) { bar.innerHTML = ''; return; }
+    bar.innerHTML = `<span class="bg-ic">${Icons.svg('clock')}</span><span class="bg-body"><span class="bg-head">응답은 끝났고, 배경 작업 ${lines.length}개가 아직 돌고 있습니다</span>`
+      + lines.map(l => `<span class="bg-line">${esc(l)}</span>`).join('')
+      + `<span class="bg-hint">끝나면 알림이 옵니다 · 필요 없으면 "배경 작업 꺼줘"라고 말하세요</span></span>`;
+  }
+  setInterval(() => { const s = cur(); if (s && bgN(s.id)) { renderHead(); } }, 30000); // 'N분째'를 30초마다 새로
   function renderComposer() {
     const s = cur(); const fb = $('#btn-folder'); const fn = $('#folder-name'); const ta = $('#composer-text');
     if (s) { fb.className = 'folder-btn locked'; fn.textContent = shortPath(s.cwd); fb.title = `이 세션의 폴더: ${s.cwd} — 누르면 다른 폴더에서 새 요청`; ta.placeholder = ''; }
