@@ -78,6 +78,13 @@ try {
   t = claude('b5.jsonl', [...base, { type: 'queue-operation', operation: 'enqueue', timestamp: at(8), content: tn('bg222', 'Background command "코덱스" completed') }]);
   ok('배경: 흡수된 알림(queue-operation)도 끝', !t.backgroundPending(0, T0 + 9 * 60000).some(b => b.id === 'bg222'));
   ok('배경: 결과가 온 도구 입력은 지움(쌓이지 않음)', t.toolIn.size === 0, String(t.toolIn.size));
+  // v2.81.1: 문서·코드를 출력한 결과 속 예시 문장은 배경 작업이 아니다(2026-10-07 유령 "X" 사건 — 구현계획.md 를 sed 로 읽음)
+  t = claude('b6.jsonl', [user('설계 읽어', at(0)), use('r1', 'Bash', { command: 'sed -n 770,800p docs/구현계획.md', description: '설계 읽기' }, at(1)),
+    result('r1', '**② 원인과 고침.** … 시작을 적고(`Command running in background with ID: X` · `moved to the background (ID: X)` · `Monitor started (task X, expires in 10m …)`)', at(1)),
+    use('r2', 'Bash', { command: 'cat log' }, at(2)), result('r2', 'line1\nCommand running in background with ID: Y. Output', at(2))]);
+  ok('v2.81.1: 결과 중간의 예시 문장은 배경 작업 아님', ids(t.backgroundPending(0, T0 + 3 * 60000)) === '', ids(t.backgroundPending(0, T0 + 3 * 60000)));
+  t = claude('b7.jsonl', [user('x', at(0)), use('r3', 'Bash', { command: 'npm run build', run_in_background: true }, at(1)), result('r3', '\n  Command running in background with ID: bg777. Output is being written to: z', at(1))]);
+  ok('v2.81.1: 맨 앞(앞 공백 허용)이면 배경 작업', ids(t.backgroundPending(0, T0 + 2 * 60000)) === 'bg777');
 
   // 3) 연결(원문 검사)
   const src = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');

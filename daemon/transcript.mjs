@@ -54,7 +54,10 @@ export class TranscriptTail {
   noteBackground(toolUseId, tx, t) {
     const ms = Date.parse(t || '') || Date.now();
     const inp = this.toolIn.get(toolUseId) || {}; this.toolIn.delete(toolUseId); // 결과가 오면 재료는 다 쓴 것
-    let m = tx.match(/Command running in background with ID: ([\w-]+)/) || tx.match(/moved to the background \(ID: ([\w-]+)\)/);
+    // 문구는 도구 결과의 **맨 앞**에만 온다(v2.81.1) — 문서·코드를 출력한 결과 속 예시 문장("…with ID: X")을 배경 작업으로 오인해
+    // 끝날 일 없는 유령이 24시간 파란 고리를 붙잡던 사건(2026-10-07, 구현계획.md 를 sed 로 읽은 결과).
+    const head = tx.trimStart();
+    let m = head.match(/^Command running in background with ID: ([\w-]+)/) || head.match(/^Command did not complete within [^\n]*? moved to the background \(ID: ([\w-]+)\)/);
     if (m) { this.bg.set(m[1], { t: ms, kind: 'bash', desc: inp.desc || '', until: null }); return; }
     m = tx.match(/^Monitor started \(task ([\w-]+)(?:, expires in (\d+(?:\.\d+)?)\s*(ms|s|m|h))?/);
     if (m) { const unit = { ms: 1, s: 1000, m: 60000, h: 3600000 }[m[3]] || 0; this.bg.set(m[1], { t: ms, kind: 'monitor', desc: inp.desc || '', until: m[2] ? ms + Number(m[2]) * unit : null }); return; }
