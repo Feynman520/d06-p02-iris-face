@@ -211,30 +211,21 @@
     IrisStars.setDim(!!current);
     IrisStars.setEnergy(sessions.some(s => s.status === 'busy' || viewStatus(s) === 'delegated') ? 0.7 : 0);
     renderComposer(); renderSetup();
-    if (current && current !== 'preview') renderHead(); else renderBgBar(null);
+    if (current && current !== 'preview') renderHead();
   }
   function renderHead() {
     const s = cur(); if (!s) return;
     $('#vh-dot').className = 'dot ' + viewStatus(s);
     $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = s.title ? `${s.title}\n${s.cwd}` : s.cwd;
     $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = [s.cwd, s.cmdline || '', ...bgLines(s.id)].join('\n');
-    renderBgBar(s);
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
     $('#btn-close').title = dead ? '기록 지우기' : '이 세션 종료(PID 기준)';
     Approval.render(s); // 노란불 + prompt 있을 때만 카드가 보인다(상태가 바뀌면 함께 내려감)
   }
-  /** 배경 작업 띠(v2.81): 메인은 답을 끝냈는데(idle) 배경 작업이 남았을 때만, 대화 아래에 무엇이 몇 분째 도는지 보인다.
-   *  끄기 버튼은 두지 않는다 — 화면이 프로세스를 죽이지 않는다(루트 프로세스 종료 규칙). 끄려면 세션에 말로 부탁한다. */
-  function renderBgBar(s) {
-    const bar = $('#bg-bar'); const lines = s && s.status === 'idle' ? bgLines(s.id) : [];
-    bar.hidden = !lines.length; if (!lines.length) { bar.innerHTML = ''; return; }
-    bar.innerHTML = `<span class="bg-ic">${Icons.svg('clock')}</span><span class="bg-body"><span class="bg-head">응답은 끝났고, 배경 작업 ${lines.length}개가 아직 돌고 있습니다</span>`
-      + lines.map(l => `<span class="bg-line">${esc(l)}</span>`).join('')
-      + `<span class="bg-hint">끝나면 알림이 옵니다 · 필요 없으면 "배경 작업 꺼줘"라고 말하세요</span></span>`;
-  }
-  setInterval(() => { const s = cur(); if (s && bgN(s.id)) { renderHead(); } }, 30000); // 'N분째'를 30초마다 새로
+  // 배경 작업은 파란 도는 고리 + ⁺N·머리 툴팁으로만 보인다 — 대화 아래 띠(v2.81)는 v2.81.2 에서 사용자 요청으로 뺐다.
+  setInterval(() => { const s = cur(); if (s && bgN(s.id)) { renderHead(); } }, 30000); // 툴팁의 'N분째'를 30초마다 새로
   function renderComposer() {
     const s = cur(); const fb = $('#btn-folder'); const fn = $('#folder-name'); const ta = $('#composer-text');
     if (s) { fb.className = 'folder-btn locked'; fn.textContent = shortPath(s.cwd); fb.title = `이 세션의 폴더: ${s.cwd} — 누르면 다른 폴더에서 새 요청`; ta.placeholder = ''; }
