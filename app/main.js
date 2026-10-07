@@ -8,8 +8,17 @@
   /** 겉보기 상태(v2.40, 2026-09-11): 데몬 상태가 '대기'인데 살아 있는 보조(서브에이전트)가 있으면 초록으로 그리지 않는다.
    *  running이 하나라도 있으면 'delegated'(보라 고리), running은 없고 quiet(60초 조용, 완료 미확정)만 남았으면 'waiting'(노란 고리, v2.40.1 — 조용하다고 끝난 게 아니다).
    *  데몬 상태(rec.status)는 터미널 화면 판정·Esc 중단에 묶여 있어 손대지 않고, 점·글자만 이 값으로 그린다. */
-  const viewStatus = (s) => (s.status !== 'idle' ? s.status : SubPanel.running(s.id) ? 'delegated' : SubPanel.alive(s.id) ? 'waiting' : 'idle');
-  const statusText = (s) => { const v = viewStatus(s); return (v === 'delegated' || v === 'waiting') ? `${STATUS_KO[v]} ⁺${SubPanel.alive(s.id)}` : (STATUS_KO[v] || v); };
+  // 배경 작업(v2.80, 2026-10-07): 데몬이 {type:'bg'} 로 주는 아직 안 끝난 배경 명령·감시(코덱스 위임 포함). 메인·보조가 쉬어도 이게 남으면
+  // 초록(완료)이 아니라 'delegated'(파란 도는 고리 · "배경 작업 중 ⁺N")로 그린다 — 사용자 신고 "아직 안 끝났는데 초록불".
+  const bgMap = new Map();
+  const bgN = (id) => (bgMap.get(id) || []).length;
+  const liveN = (id) => SubPanel.alive(id) + bgN(id); // 살아 있는 일 = 보조(running+quiet) + 배경 작업
+  const viewStatus = (s) => (s.status !== 'idle' ? s.status : (SubPanel.running(s.id) || bgN(s.id)) ? 'delegated' : SubPanel.alive(s.id) ? 'waiting' : 'idle');
+  const statusText = (s) => {
+    const v = viewStatus(s);
+    if (v === 'delegated') return `${SubPanel.running(s.id) ? STATUS_KO.delegated : '배경 작업 중'} ⁺${liveN(s.id)}`;
+    return v === 'waiting' ? `${STATUS_KO[v]} ⁺${SubPanel.alive(s.id)}` : (STATUS_KO[v] || v);
+  };
   const AGENT_KO = { claude: 'Claude', codex: 'Codex' };
   let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null, ACCT = null;
   let folder = null;                 // 새 요청 모드에서 고른 폴더
@@ -126,7 +135,7 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); if (m.mem) MemGauge.onSample(m.mem); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); if (m.mem) MemGauge.onSample(m.mem); render(); }
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
       else if (m.type === 'handoff') Handoff.apply(m);                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
@@ -141,8 +150,9 @@
       else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
       else if (m.type === 'subtranscript') SubPanel.onTranscript(m);          // 서랍이 보고 있는 보조의 기록
+      else if (m.type === 'bg') { bgMap.set(m.id, Array.isArray(m.list) ? m.list : []); render(); Notify.onSubs(m.id, liveN(m.id), SubPanel.list(m.id).length, sessions.find(x => x.id === m.id)); } // 배경 작업(v2.80)
       else if (m.type === 'sessions') { sessions = m.list; render(); }
-      else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s, SubPanel.alive(m.id)); } }
+      else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s, liveN(m.id)); } }
       else if (m.type === 'replay') { if (m.id === current && term) { term.reset(); term.write(m.data); } }
       else if (m.type === 'output') { if (m.id === current && term) term.write(m.data); }
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
@@ -179,7 +189,7 @@
     sessions.forEach((s, i) => {
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
       li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
-        <span class="sname" title="${esc(s.title || '')}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${SubPanel.alive(s.id) ? `<span class="subn${SubPanel.running(s.id) ? '' : ' quiet'}" title="살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)})">⁺${SubPanel.alive(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
+        <span class="sname" title="${esc(s.title || '')}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개">⁺${liveN(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
         <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
       li.onclick = () => select(s.id);
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
@@ -561,7 +571,7 @@
   Approval.init({ send, current: () => current, onTerm: () => setMode('term') }); // 확인 카드(v2.43)
   // 인수 안내 카드(설치 패키지 v2, Task 21): 메신저 안내 카드는 그 모듈 서랍을 함께 펼친다.
   Handoff.init({ onOpenModule: (name) => { if (!drawerOpenFor(`mod:${name}`)) openModule(name); } });
-  SubPanel.init({ send, current: () => current, onChange: (id) => { render(); if (id) Notify.onSubs(id, SubPanel.alive(id), SubPanel.list(id).length, sessions.find(x => x.id === id)); } });
+  SubPanel.init({ send, current: () => current, onChange: (id) => { render(); if (id) Notify.onSubs(id, liveN(id), SubPanel.list(id).length, sessions.find(x => x.id === id)); } });
 
   // ---------- 각인(2026-09-10): 첫 실행 1회 `by SEJUN HAM` + 워드마크 두 번 클릭(Ctrl+Alt+I) = 별이 SEJUN HAM 으로 모임 ----------
   const SIG_NAME = 'SEJUN HAM';

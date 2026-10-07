@@ -162,6 +162,21 @@ function pumpSubs(rec, force = false) {
   if (subsSent.get(rec.id) !== w.version) { subsSent.set(rec.id, w.version); broadcast({ type: 'subagents', id: rec.id, list: w.list() }); }
   for (const u of updates) for (const c of clients) if (c.attached === rec.id && c.attachedSub === u.key) send(c, { type: 'subtranscript', id: rec.id, key: u.key, items: u.items });
 }
+// ---- 배경 작업(v2.80, 2026-10-07 사용자 신고): 배경 명령·감시·코덱스 위임이 남았는데 메인·보조가 쉬면 초록불(완료)이 켜지던 문제 ----
+// 기록의 시작("running in background with ID")과 끝(같은 task-id 알림·TaskStop·감시 만료)을 짝지어 남은 것을 센다(transcript.mjs backgroundPending).
+// 지금 CLI 프로세스(sm.live) 이전에 시작한 것은 죽은 것으로 본다. 바뀌면 {type:'bg', id, list} 방송 — 화면은 대기여도 '배경 작업 중'(파란 도는 고리).
+const bgSent = new Map(); // 세션 id → 마지막으로 방송한 목록 서명
+function bgFor(id) {
+  const st = sm.live.get(id); const tl = tails.get(id);
+  if (!st || !tl || typeof tl.backgroundPending !== 'function') return [];
+  return tl.backgroundPending(st.procAt || 0);
+}
+const allBg = () => { const o = {}; for (const id of tails.keys()) { const l = bgFor(id); if (l.length) o[id] = l; } return o; };
+function pumpBg(rec) {
+  const list = bgFor(rec.id); const sig = list.map(b => b.id).join(',');
+  if ((bgSent.get(rec.id) ?? '') === sig) return;
+  bgSent.set(rec.id, sig); broadcast({ type: 'bg', id: rec.id, list });
+}
 setInterval(() => {
   const now = Date.now();
   for (const rec of sm.list()) {
@@ -170,8 +185,9 @@ setInterval(() => {
     if (!fast && tl && now - (tl.polledAt || 0) < POLL_SLOW_MS) continue;
     pumpTail(rec);
     try { pumpSubs(rec); } catch (e) { log(`subs ${rec.id}: ${e.message}`); }
+    try { pumpBg(rec); } catch (e) { log(`bg ${rec.id}: ${e.message}`); }
   }
-  for (const id of [...tails.keys()]) if (!sm.get(id)) { tails.delete(id); hotUntil.delete(id); subs.delete(id); subsSent.delete(id); }
+  for (const id of [...tails.keys()]) if (!sm.get(id)) { tails.delete(id); hotUntil.delete(id); subs.delete(id); subsSent.delete(id); bgSent.delete(id); }
 }, POLL_FAST_MS);
 
 /** 이전 대화(요청·답만)를 새 에이전트에 넘길 글로 묶는다. 최근 것부터 8천 자 안쪽. */
@@ -466,7 +482,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }

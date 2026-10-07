@@ -2,11 +2,14 @@
 // 기록파일 꼬리 읽기 + 정규화 (읽기 전용). 클로드 projects\*.jsonl · 코덱스 sessions\rollout-*.jsonl
 // 정규화 항목: { i, t, kind, text?, name?, detail?, n? }
 //   kind: user | assistant | thinking | tool | tool_result | ask | command | compact | usage | subagent | notice | unknown
+//   interrupt = Esc 로 멈춤(v2.80, 클로드 "[Request interrupted by user…]"·코덱스 turn_aborted)
 //   notice = 새 차례를 연 작업 알림(배경 명령·보조 작업·감시 끝남, v2.79) — text 는 알림 한 줄씩, n = 알림 수
 import fs from 'node:fs';
 import { stripFaceNote, stripPasteMarks } from './facenote.mjs';
 
 const MAX_ITEMS = 5000;
+// Esc 중단 표식(클로드코드): 사용자 글 또는 도구 결과 전체가 이 문구다. 글 중간에 인용된 것은 해당 없음(^…$).
+const INTERRUPT_RE = /^\s*\[Request interrupted by user(?: for tool use)?\]\s*$/;
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + `\n… (+${s.length - n}자)` : s || '');
 const textOf = (c) => {
   if (typeof c === 'string') return c;
@@ -29,6 +32,33 @@ export class TranscriptTail {
     //                    tool-use-id 가 SendMessage 호출 id 라 finished 로는 못 잡는다(2026-09-11 사건, v2.47.1) — task-id 로 잡는다.
     //   tools    = 이 기록 안의 도구 호출 수 · firstT/lastT = 첫·마지막 항목 시각 · turnOpen = 코덱스 task_started~task_complete 사이면 true
     this.calls = new Map(); this.finished = new Map(); this.finishedByTask = new Map(); this.tools = 0; this.firstT = null; this.lastT = null; this.turnOpen = null; this.turnDoneAt = null;
+    // 배경 작업(v2.80, 2026-10-07): 배경 명령(run_in_background·120초 넘어 자동 배경)·감시(Monitor) — 코덱스 위임도 보통 배경 명령이다.
+    //   bg     = 작업 id → { t(ms), kind:'bash'|'monitor', desc, until(ms|null) }. 끝 = finishedByTask(알림의 task-id) · TaskStop · 감시 만료.
+    //   toolIn = 도구 호출 id → { name, desc, task } (결과가 올 때 설명·멈출 대상을 찾는 재료)
+    this.bg = new Map(); this.toolIn = new Map();
+  }
+  /** 아직 안 끝난 배경 작업(v2.80). 메인이 대기여도 이게 있으면 화면은 '작업 중(배경)'으로 본다.
+   *  sinceMs = 지금 CLI 프로세스가 뜬 시각 — 그 전에 시작한 작업은 프로세스와 함께 죽었으므로(재개·데몬 재시작) 세지 않는다.
+   *  감시는 만료 시각 + 1분, 배경 명령은 24시간이 지나면 끝난 것으로 본다(알림을 못 받은 경우의 안전판). */
+  backgroundPending(sinceMs = 0, now = Date.now()) {
+    const out = [];
+    for (const [id, b] of this.bg) {
+      if (this.finishedByTask.has(id)) continue;
+      if (b.t < sinceMs) continue;
+      if (b.until != null ? now > b.until + 60000 : now - b.t > 24 * 3600000) continue;
+      out.push({ id, kind: b.kind, desc: b.desc, t: new Date(b.t).toISOString() });
+    }
+    return out;
+  }
+  /** 도구 결과 글에서 배경 작업의 시작을 읽는다(클로드코드 2.1.27x 실측 문구). */
+  noteBackground(toolUseId, tx, t) {
+    const ms = Date.parse(t || '') || Date.now();
+    const inp = this.toolIn.get(toolUseId) || {}; this.toolIn.delete(toolUseId); // 결과가 오면 재료는 다 쓴 것
+    let m = tx.match(/Command running in background with ID: ([\w-]+)/) || tx.match(/moved to the background \(ID: ([\w-]+)\)/);
+    if (m) { this.bg.set(m[1], { t: ms, kind: 'bash', desc: inp.desc || '', until: null }); return; }
+    m = tx.match(/^Monitor started \(task ([\w-]+)(?:, expires in (\d+(?:\.\d+)?)\s*(ms|s|m|h))?/);
+    if (m) { const unit = { ms: 1, s: 1000, m: 60000, h: 3600000 }[m[3]] || 0; this.bg.set(m[1], { t: ms, kind: 'monitor', desc: inp.desc || '', until: m[2] ? ms + Number(m[2]) * unit : null }); return; }
+    if ((inp.name === 'TaskStop' || inp.name === 'KillShell') && inp.task) this.finishedByTask.set(inp.task, t);
   }
   /** 이 차례가 아직 열려 있는가(v2.73, 2026-09-21). 화면 글자만 보는 sessions.mjs idleCheck 의 교차 확인 재료 — 도구 출력에 섞인
    *  `>` 줄이나 빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 잘못 알린 사건(2026-09-20 사용자 실측)의 대책.
@@ -42,7 +72,7 @@ export class TranscriptTail {
       const k = this.items[i].kind;
       if (k === 'thinking' || k === 'compact' || k === 'notice') continue; // notice(v2.79)는 화면 경계용 — 판정은 예전처럼 알림이 없던 것과 같게
       if (k === 'user' || k === 'command' || k === 'tool' || k === 'tool_result' || k === 'subagent') return 'open';
-      if (k === 'ask') return 'closed';
+      if (k === 'ask' || k === 'interrupt') return 'closed'; // interrupt(v2.80) = Esc 로 멈춤 → 사람 차례(예전엔 사용자 글로 읽혀 'open' → 진행 중으로 굳었다)
       return null;
     }
     return null;
@@ -107,6 +137,8 @@ export class TranscriptTail {
           const tx = textOf(b.content);
           if (/^Async agent launched successfully/.test(tx)) continue; // 배경형 보조: 끝은 <task-notification>이 알린다
           if (this.calls.has(b.tool_use_id)) this.finished.set(b.tool_use_id, t); // 동기형 보조의 최종 보고 = 완료
+          if (INTERRUPT_RE.test(tx)) { out.push({ t, kind: 'interrupt' }); continue; } // 도구 실행 중 Esc
+          this.noteBackground(b.tool_use_id, tx, t);
           out.push({ t, kind: 'tool_result', text: clip(tx, 6000), error: !!b.is_error });
         }
         else if (b.type === 'image') out.push({ t, kind: 'user', text: '[이미지]' });
@@ -120,7 +152,10 @@ export class TranscriptTail {
       else if (b.type === 'tool_use') {
         if (b.name === 'AskUserQuestion') out.push({ t, kind: 'ask', text: (b.input?.questions || []).map(q => q.question).join('\n') });
         else if (b.name === 'Agent' || b.name === 'Task') { this.sidechain.add(b.id); this.calls.set(b.id, { t, desc: clip(b.input?.description || '', 120) }); out.push({ t, kind: 'subagent', n: this.sidechain.size, detail: clip(b.input?.description || '', 120), callId: b.id }); } // 서브에이전트 기록은 <세션id>\subagents\agent-*.jsonl 별도 파일(subagents.mjs가 읽는다)
-        else out.push({ t, kind: 'tool', name: b.name, detail: summarizeInput(b.name, b.input) });
+        else {
+          if (b.name === 'Bash' || b.name === 'Monitor' || b.name === 'TaskStop' || b.name === 'KillShell') this.toolIn.set(b.id, { name: b.name, desc: clip(b.input?.description || '', 120), task: b.input?.task_id || b.input?.shell_id || null });
+          out.push({ t, kind: 'tool', name: b.name, detail: summarizeInput(b.name, b.input) });
+        }
       }
     }
     if (m.usage) this.lastUsage = { in: (m.usage.input_tokens || 0) + (m.usage.cache_read_input_tokens || 0) + (m.usage.cache_creation_input_tokens || 0), out: m.usage.output_tokens || 0 };
@@ -129,16 +164,25 @@ export class TranscriptTail {
   /** 배경형 보조 작업의 끝 = <task-notification>의 <tool-use-id>(부모 Agent 호출 id)와 <status>. user 본문·queue-operation·attachment 어디에 있든 같은 규칙.
    *  같은 알림의 <task-id>(보조 agent id)도 finishedByTask 에 적는다 — SendMessage 로 재개된 보조는 tool-use-id 가 달라져도 task-id 는 같다(v2.47.1). */
   noteTaskNotification(s, t) {
-    const tn = s.match(/<task-notification>[\s\S]*?<tool-use-id>([^<]+)<\/tool-use-id>[\s\S]*?<status>([^<]+)<\/status>/);
-    if (tn && this.calls.has(tn[1].trim())) this.finished.set(tn[1].trim(), t);
-    const tk = s.match(/<task-notification>[\s\S]*?<task-id>([^<]+)<\/task-id>[\s\S]*?<status>([^<]+)<\/status>/);
-    if (tk) this.finishedByTask.set(tk[1].trim(), t);
+    // 알림 덩어리마다 따로 본다(v2.80): 한 글에 여러 알림이 붙으면 상태 없는 감시 이벤트의 task-id 가 다음 알림의 <status> 와 짝지어지던 구멍을 막는다.
+    // 끝 = <status> 가 있는 알림(completed·failed·killed) 또는 감시 만료 이벤트("[Monitor expired …]"). 상태 없는 감시 이벤트는 끝이 아니다.
+    for (const m of String(s).matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+      const body = m[1];
+      const ended = /<status>[^<]+<\/status>/.test(body) || /\[Monitor expired\b/.test(body);
+      if (!ended) continue;
+      const tu = body.match(/<tool-use-id>([^<]+)<\/tool-use-id>/)?.[1].trim();
+      if (tu && this.calls.has(tu)) this.finished.set(tu, t);
+      const tk = body.match(/<task-id>([^<]+)<\/task-id>/)?.[1].trim();
+      if (tk) this.finishedByTask.set(tk, t);
+    }
   }
   userText(t, s) {
     if (!s) return [];
     const cmd = s.match(/<command-name>([^<]+)<\/command-name>/);
     if (cmd) { const args = s.match(/<command-args>([^<]*)<\/command-args>/); return [{ t, kind: 'command', text: `${cmd[1]}${args && args[1] ? ' ' + args[1] : ''}` }]; }
     this.noteTaskNotification(s, t);
+    // Esc 로 멈춤(v2.80): 클로드코드는 "[Request interrupted by user]"(…for tool use) 를 사용자 글로 남긴다 — 요청이 아니라 중단 표식이다.
+    if (INTERRUPT_RE.test(s)) return [{ t, kind: 'interrupt' }];
     // 사용자 차례로 들어온 작업 알림(배경 명령·보조 작업·감시 끝남)은 요청은 아니지만 새 차례를 연다(v2.79, 2026-10-07 사용자 신고).
     // 숨기기만 하면 화면이 차례 경계를 몰라 알림에 대한 답이 앞 결과를 "과정"으로 밀어낸다 → notice 항목으로 넘겨 경계로 쓴다.
     // 작업 도중 흡수된 알림(queue-operation·attachment)은 새 차례를 열지 않으므로 위 fromClaude 에서처럼 계속 버린다.
@@ -172,6 +216,7 @@ export class TranscriptTail {
         if (p.type === 'token_count') { const u = p.info?.last_token_usage || p.info?.total_token_usage; if (u) this.lastUsage = { in: u.input_tokens || 0, out: u.output_tokens || 0, total: u.total_tokens || 0 }; if (p.info?.model_context_window) this.window = p.info.model_context_window; return []; }
         if (p.type === 'task_started') { this.turnOpen = true; if (p.model_context_window) this.window = p.model_context_window; return []; }
         if (p.type === 'task_complete') { this.turnOpen = false; this.turnDoneAt = t; return []; } // 코덱스 보조 rollout의 완료 신호(2026-08-31 실측: task_started/complete 7:7)
+        if (p.type === 'turn_aborted') { this.turnOpen = false; return [{ t, kind: 'interrupt' }]; } // Esc 중단(v2.80): 코덱스는 task_complete 없이 turn_aborted 만 남긴다(실측 started 217 · complete 144 · aborted 48)
         if (p.type === 'compacted' || p.type === 'context_compacted') return [{ t, kind: 'compact', text: '' }];
         if (p.type === 'request_user_input' || p.type === 'exec_approval_request' || p.type === 'apply_patch_approval_request') return [{ t, kind: 'ask', text: p.reason || p.command?.join?.(' ') || '승인·답변이 필요합니다' }];
         return [];

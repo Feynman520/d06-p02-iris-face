@@ -55,7 +55,7 @@ try {
   // 3) 화면
   const req = createRequire(import.meta.url);
   let pw = null;
-  for (const c of ['playwright', 'C:/Users/User/AppData/Roaming/npm/node_modules/playwright', path.join(process.env.APPDATA || '', 'npm/node_modules/playwright')]) { try { pw = req.resolve(c); break; } catch {} }
+  for (const c of ['playwright', path.join(process.env.APPDATA || '', 'npm/node_modules/playwright')]) { try { pw = req.resolve(c); break; } catch {} }
   if (!pw) console.log('SKIP renderer: playwright 없음');
   else {
     const mod = await import(pathToFileURL(pw).href); const chromium = (mod.default || mod).chromium;

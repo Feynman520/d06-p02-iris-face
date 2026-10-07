@@ -273,6 +273,9 @@ a { color: var(--iris); }
 .notice-group summary { cursor: pointer; list-style: none; }
 .notice-group summary::-webkit-details-marker { display: none; }
 .notice-group summary:hover { color: var(--ink-2); }
+/* Esc 중단(v2.80): 알림 줄과 같은 모양, 경고색 테두리로 "멈춤"을 구별 */
+.msg.interrupt { margin: 2px auto; }
+.msg.interrupt .notice-line { color: var(--warn); border-color: rgba(242,200,121,.35); background: rgba(242,200,121,.06); }
 .notice-group ul { margin: 6px 0 2px 14px; padding: 0 0 0 12px; font-size: 12px; color: var(--ink-3); }
 .rule { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12px; margin: 6px 0; }
 .rule::before, .rule::after { content: ''; flex: 1; border-top: 1px dashed var(--line-2); }

@@ -219,9 +219,19 @@ function createTranscript() {
       ? `<div class="notice-line">${icon}<span class="notice-text">${esc(el._lines[0])}</span><span class="ts">${timeOf(el._t)}</span></div>`
       : `<details class="notice-group"><summary class="notice-line">${icon}<span class="notice-text">알림 ${n}건 · ${esc(el._lines[n - 1])}</span><span class="ts">${timeOf(el._t)}</span></summary><ul>${el._lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>`;
   }
+  // ---- Esc 중단(v2.80): 터미널처럼 "멈춤"을 분명히 보인다 — 진행 중이던 차례를 접고 작은 줄 하나. 연달아 온 중단 표식(도구 결과+글)은 한 줄.
+  function placeInterrupt(it) {
+    const last = root.lastElementChild;
+    if (last && last.classList.contains('interrupt')) return;
+    settleTurn(); turn = null;
+    const el = document.createElement('div'); el.className = 'msg interrupt';
+    el.innerHTML = `<div class="notice-line">${window.Icons ? window.Icons.svg('stop', 13) : ''}<span class="notice-text">중단됨 · Esc로 멈췄습니다</span><span class="ts">${timeOf(it.t)}</span></div>`;
+    root.appendChild(el);
+  }
   function place(it) {
     if (it.kind === 'notice') { placeNotice(it); return; }
     if (it.kind !== 'unknown') lastNotice = null;
+    if (it.kind === 'interrupt') { placeInterrupt(it); return; }
     if (it.kind === 'user') { settleTurn(); turn = null; root.appendChild(bubble(it, 'user')); return; }
     if (it.kind === 'compact') { settleTurn(); turn = null; const d = document.createElement('div'); d.className = 'msg compact'; d.innerHTML = '<div class="rule"><span>이전 대화 요약됨</span></div>'; root.appendChild(d); return; }
     if (it.kind === 'command') { const d = document.createElement('div'); d.className = 'msg command'; d.innerHTML = `<span class="pill">명령 ${esc(it.text)}</span>`; root.appendChild(d); return; }

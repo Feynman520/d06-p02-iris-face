@@ -212,7 +212,8 @@ export class SessionManager {
 
   wire(id, rec, proc, cols, rows, firstPrompt) {
     const screen = new HeadlessTerminal({ cols, rows, allowProposedApi: true, scrollback: 0 });
-    const state = { pty: proc, screen, buffer: '', timer: null, pendingPrompt: firstPrompt || '', promptSent: false, activity: '' };
+    // procAt(v2.80) = 이 CLI 프로세스가 뜬 시각 — 그 전에 시작한 배경 작업은 이전 프로세스와 함께 죽었다(server.mjs bgFor)
+    const state = { pty: proc, screen, buffer: '', timer: null, pendingPrompt: firstPrompt || '', promptSent: false, activity: '', procAt: Date.now() };
     this.live.set(id, state);
     proc.onData((data) => {
       state.buffer += data; if (state.buffer.length > BUFFER_MAX) state.buffer = state.buffer.slice(-BUFFER_MAX);
