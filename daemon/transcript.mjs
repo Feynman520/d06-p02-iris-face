@@ -4,6 +4,7 @@
 //   kind: user | assistant | thinking | tool | tool_result | ask | command | compact | usage | subagent | notice | unknown
 //   interrupt = Esc 로 멈춤(v2.80, 클로드 "[Request interrupted by user…]"·코덱스 turn_aborted)
 //   notice = 새 차례를 연 작업 알림(배경 명령·보조 작업·감시 끝남, v2.79) — text 는 알림 한 줄씩, n = 알림 수
+//            src = task(작업 알림) · stop-hook · scheduled · peer · resume(v2.82, 시스템이 다시 연 차례 — detail = 전체 글, metaNotice)
 import fs from 'node:fs';
 import { stripFaceNote, stripPasteMarks } from './facenote.mjs';
 
@@ -129,7 +130,7 @@ export class TranscriptTail {
     if (r.type === 'queue-operation') { if (r.operation === 'enqueue' && typeof r.content === 'string') this.noteTaskNotification(r.content, t); return []; }
     if (r.type === 'attachment') { const p = r.attachment?.prompt; if (typeof p === 'string') this.noteTaskNotification(p, t); return []; }
     if (r.type !== 'user' && r.type !== 'assistant') return this.countUnknown(r.type, ['attachment', 'last-prompt', 'mode', 'permission-mode', 'atis-latch', 'ai-title', 'file-history-delta', 'file-history-snapshot', 'system', 'progress', 'queue-operation', 'atis', 'last-user-prompt', 'cost-state']);
-    if (r.isMeta) return [];
+    if (r.isMeta) { const n = metaNotice(r); return n ? [{ t, kind: 'notice', n: 1, ...n }] : []; } // 시스템이 다시 연 차례(v2.82) — 나머지 isMeta 는 버린다
     const m = r.message || {}; const c = m.content;
     const out = [];
     if (r.type === 'user') {
@@ -189,7 +190,7 @@ export class TranscriptTail {
     // 사용자 차례로 들어온 작업 알림(배경 명령·보조 작업·감시 끝남)은 요청은 아니지만 새 차례를 연다(v2.79, 2026-10-07 사용자 신고).
     // 숨기기만 하면 화면이 차례 경계를 몰라 알림에 대한 답이 앞 결과를 "과정"으로 밀어낸다 → notice 항목으로 넘겨 경계로 쓴다.
     // 작업 도중 흡수된 알림(queue-operation·attachment)은 새 차례를 열지 않으므로 위 fromClaude 에서처럼 계속 버린다.
-    if (/^\s*<task-notification>/.test(s)) { const notes = noticeLines(s); return notes.length ? [{ t, kind: 'notice', text: notes.join('\n'), n: notes.length }] : []; }
+    if (/^\s*<task-notification>/.test(s)) { const notes = noticeLines(s); return notes.length ? [{ t, kind: 'notice', src: 'task', text: notes.join('\n'), n: notes.length }] : []; }
     // 시스템이 만든 사용자 차례(리마인더·로컬 명령 출력)는 요청이 아니므로 숨긴다
     if (/^\s*<(system-reminder|local-command-stdout|local-command-caveat|command-message)/.test(s)) return [];
     // 본문 뒤에 붙는 system-reminder 는 잘라낸다
@@ -284,6 +285,34 @@ export function noticeLines(s) {
     out.push(line.length > 200 ? line.slice(0, 199) + '…' : line); // 한 줄 유지(clip 은 줄바꿈을 붙여 알림 줄이 쪼개진다)
   }
   return out;
+}
+
+/** 시스템이 사용자 자리에 넣은 글(isMeta) 가운데 **끝난 차례를 다시 여는 것**만 notice 재료로 바꾼다(v2.82, 2026-10-11 사용자 신고
+ *  "출력이 2개가 나왔는데 마지막 출력만 대화에 표시되네"). 숨기면 화면이 차례 경계를 몰라 뒤의 답이 앞 결과를 "과정"으로 밀어낸다.
+ *  대상(이 PC 기록 946개 실측, 답이 끝난 직후에 온 것): 정지 훅 피드백 180건 · 예약 깨우기 약 95건 · 끊긴 답 이어쓰기 12건 · 다른 세션 메시지 1건.
+ *  차례 중간의 isMeta(이미지 설명·스킬 본문·로컬 명령 머리말)는 null → 예전처럼 버린다.
+ *  @returns {{src:'stop-hook'|'scheduled'|'peer'|'resume', text:string, detail:string}|null} */
+export function metaNotice(r) {
+  const s = textOf(r?.message?.content).replace(/\r\n/g, '\n').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+  const firstLine = (x) => (String(x || '').split('\n').map(l => l.trim()).find(Boolean) || '');
+  const one = (x) => { const l = x.replace(/\s+/g, ' ').trim(); return l.length > 200 ? l.slice(0, 199) + '…' : l; }; // noticeLines 와 같은 한 줄 규칙
+  if (/^Stop hook feedback:/.test(s)) {
+    const body = s.replace(/^Stop hook feedback:[ \t]*\n?/, '').trim();
+    const head = firstLine(body); const m = head.match(/^\[([^\]\n]{1,60})\]\s*(.*)$/);
+    return { src: 'stop-hook', text: one(m ? `정지 훅 · ${m[1]}${m[2] ? ' — ' + m[2] : ''}` : `정지 훅${head ? ' — ' + head : ''}`), detail: body };
+  }
+  if (r.turnOrigin === 'scheduled') return { src: 'scheduled', text: one(`예약 깨우기${s ? ' · ' + firstLine(s) : ''}`), detail: s };
+  if (r.turnOrigin === 'peer' || r.origin?.kind === 'peer') {
+    const name = r.origin?.name || r.origin?.from || s.match(/<agent-message from="([^"]+)"/)?.[1] || '';
+    const body = (typeof r.origin?.body === 'string' ? r.origin.body : (s.match(/<agent-message[^>]*>\n?([\s\S]*?)\n?<\/agent-message>/)?.[1] || s)).trim();
+    return { src: 'peer', text: one(`다른 세션 메시지${name ? ' · ' + name : ''}${body ? ' — ' + firstLine(body) : ''}`), detail: body };
+  }
+  if (r.turnCompanion) {
+    const why = /cut off mid-stream/i.test(s) ? '답이 중간에 끊겨 이어 씀' : /safety classifier/i.test(s) ? '안전 분류기가 답을 멈춰 이어 씀'
+      : /no visible output/i.test(s) ? '보이는 답이 없어 이어 씀' : '답을 이어 씀';
+    return { src: 'resume', text: why, detail: s };
+  }
+  return null;
 }
 
 function safeJson(s) { if (typeof s !== 'string') return s; try { return JSON.parse(s); } catch { return { raw: s }; } }

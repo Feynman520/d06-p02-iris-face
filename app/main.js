@@ -217,7 +217,7 @@
     const s = cur(); if (!s) return;
     $('#vh-dot').className = 'dot ' + viewStatus(s);
     $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = s.title ? `${s.title}\n${s.cwd}` : s.cwd;
-    $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = [s.cwd, s.cmdline || '', ...bgLines(s.id)].join('\n');
+    $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = [$('#vh-combo').textContent, s.cwd, s.cmdline || '', ...bgLines(s.id)].join('\n'); // 첫 줄 = 말줄임 전 전체 글(v2.82)
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';

@@ -204,16 +204,29 @@ function createTranscript() {
   }
   // ---- 작업 알림(v2.79, 2026-10-07): 새 차례를 연 알림은 차례 경계다 — 앞 결과는 결과대로 두고 알림 한 줄을 놓는다.
   //      답 없이 연달아 온 알림은 한 줄로 합친다(「알림 N건」, 눌러서 펼침). lastNotice = 합칠 수 있는 직전 알림 줄.
+  // v2.82: 시스템이 다시 연 차례(정지 훅·예약 깨우기·다른 세션 메시지·끊긴 답 이어쓰기, 데몬 metaNotice)도 같은 경계다 — 다만 한 건씩 따로
+  //        두고(합치지 않음) 누르면 전체 글(detail)이 펼쳐진다. 작업 알림(src 없음·task)만 예전처럼 합친다.
+  const NOTICE_ICON = { task: 'bell', 'stop-hook': 'shield', scheduled: 'clock', peer: 'chat', resume: 'redo' };
   function placeNotice(it) {
     settleTurn(); turn = null;
+    const src = it.src || 'task';
+    const icon = window.Icons ? window.Icons.svg(NOTICE_ICON[src] || 'bell', 13) : '';
+    if (src !== 'task') {
+      const el = document.createElement('div'); el.className = 'msg notice sys'; el.dataset.src = src;
+      const line = `${icon}<span class="notice-text">${esc(it.text || '알림')}</span><span class="ts">${timeOf(it.t)}</span>`;
+      el.innerHTML = it.detail
+        ? `<details class="notice-group"><summary class="notice-line">${line}</summary><div class="notice-body">${esc(it.detail)}</div></details>`
+        : `<div class="notice-line">${line}</div>`;
+      root.appendChild(el); lastNotice = null;
+      return;
+    }
     const lines = String(it.text || '작업 알림').split('\n').filter(Boolean);
     let el = lastNotice;
     if (!el || el.parentElement !== root) {
-      el = document.createElement('div'); el.className = 'msg notice'; el._lines = []; el._t = it.t;
+      el = document.createElement('div'); el.className = 'msg notice'; el.dataset.src = 'task'; el._lines = []; el._t = it.t;
       root.appendChild(el); lastNotice = el;
     }
     el._lines.push(...lines);
-    const icon = window.Icons ? window.Icons.svg('bell', 13) : '';
     const n = el._lines.length;
     el.innerHTML = n === 1
       ? `<div class="notice-line">${icon}<span class="notice-text">${esc(el._lines[0])}</span><span class="ts">${timeOf(el._t)}</span></div>`
