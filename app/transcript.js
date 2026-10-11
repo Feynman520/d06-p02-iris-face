@@ -2,6 +2,7 @@
 /* 대화 화면 렌더러 — 차례(turn) 단위.
    내 요청 → [과정: 생각·도구·중간 답] → 최종 답.  진행 중엔 과정의 최신 한 단계만 부드럽게 넘어가며 보이고,
    답이 나오면(세션이 대기로 돌아오면) 과정은 "과정 N단계"로 접힌다.
+   중간 답이 보고(긴 글·제목·목록·표·진행 막대)면 과정으로 내리지 않고 그 자리에 결과로 둔다 — 한 차례가 [과정 → 보고]×N → 최종 답(v2.83).
    본문·도구 결과에 든 이미지·HTML·로컬 주소는 대화 안에 순서대로 삽입한다(/api/file 경유). 내장 마크다운(외부 라이브러리 없음). */
 // 인스턴스 여러 개(2026-09-11): window.Transcript = 메인 대화, Transcript.create() = 보조 작업 서랍 등 두 번째 화면.
 function createTranscript() {
@@ -189,11 +190,23 @@ function createTranscript() {
     const live = t.live; if (live.textContent === text) return;
     live.classList.remove('in'); void live.offsetWidth; live.textContent = text; live.classList.add('in');
   }
+  // ---- 중간 보고(v2.83, 2026-10-11): 답 뒤에 또 무엇이 오면 그 답은 중간 답이었다. 예전엔 무조건 과정으로 내렸는데, 요청 한 번에
+  //      긴 답·진행 보고를 쓰고 같은 차례에서 계속 일하면(경계 없음) 그 글이 과정에 묻혔다(v2.79·v2.82 의 경계 추가로는 못 막는 모양).
+  //      → 보고(300자 이상 · 제목·목록·표·코드·진행 막대)는 그 자리에 결과로 두고 앞 과정만 접은 뒤, 뒤따르는 것은 새 묶음으로 간다.
+  //      짧은 진행 한 줄은 예전처럼 과정으로. 시험 = scripts/check-midreport.mjs
+  const REPORT_MIN = 300;
+  const REPORT_RE = /(^|\n)[ \t]*(#{1,6}\s|\|.*\||[-*+]\s|\d+[.)]\s|```)|█/;
+  const isReport = (s) => { const t = String(s ?? '').trim(); return t.length >= REPORT_MIN || REPORT_RE.test(t); };
+  function demoteAnswer(reopen) {
+    const prev = turn.answer; turn.answer = null;
+    if (isReport(prev.dataset.text)) { settleTurn(); turn = null; return; }
+    prev.remove(); pushStep({ kind: 'assistant', text: prev.dataset.text, i: prev.dataset.i });
+    if (reopen) turn.steps.classList.remove('settled');
+  }
   function setAnswer(it) {
     if (!turn) root.appendChild(newTurn());
-    if (turn.answer) { // 앞선 답은 과정으로 내려간다
-      const prev = turn.answer; prev.remove(); pushStep({ kind: 'assistant', text: prev.dataset.text, i: prev.dataset.i });
-    }
+    if (turn.answer) demoteAnswer(false);
+    if (!turn) root.appendChild(newTurn());
     const el = bubble(it, 'assistant'); el.dataset.text = it.text;
     turn.el.appendChild(el); turn.answer = el;
   }
@@ -250,10 +263,7 @@ function createTranscript() {
     if (it.kind === 'command') { const d = document.createElement('div'); d.className = 'msg command'; d.innerHTML = `<span class="pill">명령 ${esc(it.text)}</span>`; root.appendChild(d); return; }
     if (it.kind === 'unknown') return;
     if (it.kind === 'assistant') { setAnswer(it); return; }
-    if (turn?.answer) { // 답 뒤에 또 과정이 오면 그 답은 중간 답이었다
-      const prev = turn.answer; prev.remove(); turn.answer = null; pushStep({ kind: 'assistant', text: prev.dataset.text, i: prev.dataset.i });
-      turn.steps.classList.remove('settled');
-    }
+    if (turn?.answer) demoteAnswer(true); // 답 뒤에 또 과정이 오면 그 답은 중간 답이었다(보고면 결과로 남음)
     // 보조 작업 호출: 이 차례에 칩 상자를 두고, 부모 호출 id로 그 상자를 찾을 수 있게 한다(칩 자체는 데몬의 목록이 오면 applySubs가 그린다)
     if (it.kind === 'subagent') { if (!turn) root.appendChild(newTurn()); ensureChips(turn); if (it.callId) callTurn.set(it.callId, turn.chips); }
     pushStep(it);
