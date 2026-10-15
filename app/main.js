@@ -140,10 +140,11 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); if (m.mem) MemGauge.onSample(m.mem); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); render(); }
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
       else if (m.type === 'handoff') Handoff.apply(m);                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
+      else if (m.type === 'auth') Settings.onAuth(m);                                                      // 인증(v2.84): 열쇠 만료 상태·갱신 진행
       else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
       else if (m.type === 'finalize') {                                                                   // 세팅 마무리 자동 실행(v2.60): 시작·결과 토스트
         if (m.phase === 'start') Notify.push({ title: '세팅 마무리를 시작합니다', sub: '세션을 잠시 닫고 마무리 절차를 돌린 뒤 같은 자리에서 이어 엽니다. 복구 문구 창이 뜨면 안내대로 적어 두세요.', status: 'busy', force: true });

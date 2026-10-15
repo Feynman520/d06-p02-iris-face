@@ -55,6 +55,9 @@
         <label class="st-opt child"><span class="st-opt-text">윈도 알림도<small>Face 창이 뒤에 있거나 숨어 있을 때만</small></span><input id="st-notify-os" class="sw" type="checkbox"></label></section>
       <section><h3>확장 모듈</h3>
         <div id="st-mods" class="mods"></div></section>
+      <!-- 인증(v2.84, 2026-10-15): 로그인 열쇠별 만료일 | 갱신 단추. 곧 만료(3일 안)는 주황, 만료는 빨강. 절 머리 단추 = 다시 확인. -->
+      <section id="st-auth-sec" hidden><h3 class="st-h-row"><span id="st-auth-h">인증</span><button id="st-auth-act" class="text-btn outline" type="button">다시 확인</button></h3>
+        <div id="st-auth" class="upd"></div></section>
       <!-- 업데이트(v2.58, 2026-09-14): 절 머리의 단추 하나로 확인 → 내려받기 → 적용까지. 부품 행은 값만 보이는 .st-opt 모양. -->
       <section><h3 class="st-h-row"><span id="st-update-h">업데이트</span><button id="st-update-act" class="text-btn outline" type="button">지금 확인</button></h3>
         <div id="st-update" class="upd"></div>

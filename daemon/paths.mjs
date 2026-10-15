@@ -29,6 +29,17 @@ export function dashDir() {
   return null;
 }
 
+/** 로그인 열쇠 감시 도구(iris-auth: status.mjs·longkey.mjs) 폴더 — IRIS_AUTH_DIR → 공유 도구 폴더 → 옛 자리 순서로 첫 존재. 없으면 null(= 인증 절 숨김). */
+export function authDir() {
+  const candidates = [
+    process.env.IRIS_AUTH_DIR,
+    path.join(toolsDir(), 'iris-auth'),
+    path.join(soulRoot(), '_agent', 'claude', 'tools', 'iris-auth'),
+  ].filter(Boolean);
+  for (const c of candidates) { try { if (fs.existsSync(path.join(c, 'status.mjs'))) return c; } catch {} }
+  return null;
+}
+
 /** TeamClaude 대시보드 뷰어 포트(기본 3457). 환경변수 TEAMCLAUDE_DASH_PORT 로 바꾼다. */
 export const dashPort = () => Number(process.env.TEAMCLAUDE_DASH_PORT) || 3457;
 

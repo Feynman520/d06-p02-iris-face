@@ -27,6 +27,7 @@ import { Updater } from './update.mjs';
 import { Finalizer } from './finalize.mjs';
 import { SetupProgress } from './progress.mjs';
 import { HandoffFlow } from './handoff.mjs';
+import { AuthWatch } from './auth.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -100,7 +101,9 @@ async function ensureDash() {
 }
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
-const features = () => ({ memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
+// ---- 로그인 열쇠 만료 감시(v2.84): 도구(iris-auth)가 있을 때만. 30분마다 점검 + 곧 만료면 윈도 알림(도구가 띄움) + 화면 방송 {type:'auth'}. ----
+const auth = new AuthWatch({ log: (m) => log(m), broadcast: (o) => broadcast(o), ensureDash });
+const features = () => ({ auth: auth.available, memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
 
 // ---- 업데이트(설계 2·3·4절, v2.58): 하루 1회 릴리스 확인 → 사용자가 누르면 받기·검증 → 메신저는 이 자리, IRIS 창·구조판은 적용기에 넘김. ----
 // 데몬은 자기 파일을 바꾸지 않는다. 화면에 줄 진행은 웹소켓 {type:'update', …} 방송.
@@ -318,6 +321,13 @@ const server = http.createServer(async (req, res) => {
       const r = handoff.resume();
       return json(res, r.ok ? 200 : 400, r);
     }
+    // ---- 인증(v2.84): 열쇠 만료 상태·다시 확인·갱신. 쓰기는 같은 출처만. ----
+    if (req.method === 'GET' && p === '/api/auth') { if (auth.available && !auth.info) await auth.refresh(); return json(res, 200, auth.public()); }
+    if (p.startsWith('/api/auth/') && req.method === 'POST') {
+      if (!sameOrigin(req)) { log(`403 auth ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      if (p === '/api/auth/refresh') { await auth.refresh(); return json(res, 200, auth.public()); }
+      if (p === '/api/auth/renew') { const b = await readBody(req); const r = await auth.renew(String(b.id || '')); return json(res, r.ok ? 200 : 400, { ...r, auth: auth.public() }); }
+    }
     // ---- 업데이트(v2.58): 확인·설정·내려받기·적용. 전부 같은 출처만(화면에서만 부른다). ----
     if (req.method === 'GET' && p === '/api/update') return json(res, 200, updater.info());
     if (p.startsWith('/api/update/') && req.method === 'POST') {
@@ -482,7 +492,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
@@ -512,6 +522,7 @@ function shutdown() {
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
   // 메모리 계기판(v2.78): 포트를 잡은 뒤에만 측정기(typeperf)를 띄운다 — 두 번째 실행이 포트 충돌로 끝날 때 고아 측정기를 남기지 않게.
+  try { auth.start(); log(`auth: ${auth.available ? 'on' : 'off (tool not installed)'}`); } catch (e) { log(`auth init error: ${e?.message || e}`); }
   try { memory.start(); log(`memory: commit=${memory.features().commit} sweep=${memory.features().sweep ? 'on' : 'off'}`); } catch (e) { log(`memory init error: ${e?.message || e}`); }
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.

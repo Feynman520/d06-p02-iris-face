@@ -11,6 +11,7 @@ import { titleFromPrompt, clipTitle } from './title.mjs';
 import { generateTitle } from './titler.mjs';
 import { parseApproval } from './approval.mjs';
 import { readReceipt, soulRoot, toolPath } from './paths.mjs';
+import { applyLongKey } from './auth.mjs';
 
 const require = createRequire(import.meta.url);
 const pty = require('node-pty');
@@ -170,6 +171,8 @@ export class SessionManager {
     const agent = /^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude';
     const t = preTrust({ agent, cwd, env, fallback: { claudeConfigDir: CLAUDE_CONFIG_DIR, codexHome: CODEX_HOME } });
     if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${agent} ${cwd} → ${t.result}`);
+    // 1년 열쇠(v2.84, 2026-10-15 "Login expired" 사고): 살아 있으면 클로드 세션은 30일 /login 열쇠 대신 그것을 쓴다(daemon/auth.mjs).
+    if (agent === 'claude') { const k = applyLongKey(env, { configDir: CLAUDE_CONFIG_DIR }); if (k.applied) this.hooks.onLog?.('[auth] long key → session'); }
     return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
   }
 

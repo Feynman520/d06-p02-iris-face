@@ -9,6 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { stripFaceNote } from './facenote.mjs';
+import { applyLongKey } from './auth.mjs';
+import { CLAUDE_CONFIG_DIR } from './agents.mjs';
 
 export const TITLE_MODEL = 'haiku';
 const TIMEOUT_MS = 90_000;
@@ -38,6 +40,7 @@ function childEnv() {
     if (/^CLAUDE_CODE_/.test(k) || k === 'CLAUDECODE' || k === 'CLAUDE_PID' || k === 'CLAUDE_EFFORT') delete env[k];
   }
   env.MAX_THINKING_TOKENS = '0'; // 생각 끄기: 켜면 API 구간이 20초, 끄면 1초(2026-09-10 실측)
+  applyLongKey(env, { configDir: CLAUDE_CONFIG_DIR }); // 1년 열쇠가 있으면 세션과 같은 열쇠(v2.84)
   return env;
 }
 

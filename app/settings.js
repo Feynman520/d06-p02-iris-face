@@ -101,6 +101,7 @@ window.Settings = (() => {
     fill($('#st-approval'), agents?.codex?.approvals || FALLBACK.approvals, cfg.approval);
     fill($('#st-sandbox'), agents?.codex?.sandboxes || FALLBACK.sandboxes, cfg.sandbox);
     renderMods();
+    renderAuth();
     renderUpdate();
   }
   // ---- 모듈(콘센트, 2026-09-11): 목록은 데몬 /api/modules. 이름·아이콘·설명은 전부 module.json 에서 온다(본체는 어떤 모듈인지 모른다). ----
@@ -260,6 +261,76 @@ window.Settings = (() => {
     }
   }
 
+  // ---- 인증(v2.84, 2026-10-15 "Login expired" 사고): 로그인 열쇠별 만료일과 갱신 단추. 상태 원천 = 데몬 GET /api/auth · ws {type:'auth'}. ----
+  // 열쇠 값은 화면에 오지 않는다(데몬 auth.mjs). 곧 만료·만료가 있으면 ⚙ 단추에 점 + 하루 한 번 창 알림.
+  let auth = null, authBusy = false;
+  const AUTH_WORD = { ok: '정상', soon: '곧 만료', expired: '만료', unknown: '모름' };
+  const authDue = () => (auth?.info?.items || []).filter(i => !i.optional && (i.level === 'soon' || i.level === 'expired'));
+  function authBadge() {
+    const b = $('#btn-settings'); if (!b) return;
+    const due = authDue(); const bad = due.some(i => i.level === 'expired');
+    b.classList.toggle('auth-bad', bad); b.classList.toggle('auth-warn', !bad && due.length > 0);
+    b.title = due.length ? `설정 (Ctrl+,) — 로그인 갱신 필요 ${due.length}개` : '설정 (Ctrl+,)';
+  }
+  function authNotice() {
+    const due = authDue(); if (!due.length) return;
+    const key = `${new Date().toISOString().slice(0, 10)}|${due.map(i => `${i.id}=${i.level}`).join(',')}`;
+    try { if (localStorage.getItem('iris.auth.noticed') === key) return; localStorage.setItem('iris.auth.noticed', key); } catch {}
+    const sub = due.map(i => i.level === 'expired' ? `${i.label} 만료` : `${i.label} D-${i.daysLeft}`).join(' · ');
+    Notify.push({ title: '로그인 갱신 필요', sub: `${sub} — 설정 → 인증에서 갱신`, status: 'attention', force: true });
+  }
+  function renderAuth() {
+    const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
+    sec.hidden = !(auth?.available || health?.features?.auth);
+    if (sec.hidden) return;
+    if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('shield', 15) + '<span>인증</span>'; head.dataset.iced = '1'; }
+    btn.disabled = authBusy;
+    const items = auth?.info?.items || [];
+    const job = auth?.job;
+    if (!items.length) { host.innerHTML = '<div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div>'; return; }
+    const rows = items.map(i => {
+      const when = i.expiresAt ? fmtWhen(new Date(i.expiresAt).toISOString()) : '';
+      const kind = i.longKey ? '1년 열쇠' : i.group === 'iris' ? '30일 로그인' : i.provider === 'codex' ? 'ChatGPT 로그인' : '30일 로그인';
+      const desc = [kind, when ? `만료 ${when}` : '만료일 모름', i.optional ? 'IRIS 창은 1년 열쇠 사용 중' : ''].filter(Boolean).join(' · ');
+      const d = i.level === 'expired' ? '만료' : i.daysLeft != null ? `D-${i.daysLeft}` : AUTH_WORD[i.level];
+      const label = i.group === 'iris' && !i.longKey && !i.optional ? '1년 열쇠 받기' : '갱신';
+      const running = job?.running && job.id === i.id;
+      return `<div class="st-opt auth-row ${esc(i.level)}${i.optional ? ' optional' : ''}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small>${esc(desc)}</small></span>`
+        + `<span class="auth-right"><span class="auth-d">${esc(d)}</span><button class="text-btn ${i.level === 'ok' ? 'outline' : 'accent'}" data-renew="1" ${job?.running ? 'disabled' : ''} title="브라우저에서 승인 한 번으로 새 열쇠를 받습니다">${running ? '승인 대기…' : esc(label)}</button></span></div>`;
+    }).join('');
+    const checked = auth?.info?.checkedAt ? `<div class="upd-line st-sub">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '';
+    host.innerHTML = rows + checked;
+    if (job && (job.running || job.result)) {
+      const el = document.createElement('div');
+      const r = job.result; el.className = 'auth-job' + (r && r.ok === false ? ' bad' : '');
+      el.textContent = [...(job.lines || []), r ? (r.ok ? `완료${r.email ? ` — ${r.email}` : ''}${r.message ? ` — ${r.message}` : ''}` : `실패 — ${r.error || r.message || ''}`) : ''].filter(Boolean).join('\n');
+      host.appendChild(el);
+    }
+  }
+  function setAuth(a) { if (!a) return; auth = a; authBadge(); authNotice(); if (open) renderAuth(); }
+  function onAuth(m) {
+    setAuth(m.info);
+    if (m.done && m.info?.job?.result) { const r = m.info.job.result; Notify.push({ title: r.ok ? '로그인 갱신 완료' : '로그인 갱신 실패', sub: r.ok ? (r.email ? `${r.email} — 새 세션부터 적용` : (r.message || '')) : (r.error || r.message || ''), status: r.ok ? 'idle' : 'attention', force: true }); }
+  }
+  async function loadAuth(refresh = false) {
+    try { const r = await fetch(refresh ? '/api/auth/refresh' : '/api/auth', refresh ? { method: 'POST' } : undefined); if (r.ok) setAuth(await r.json()); } catch {}
+  }
+  async function renewAuth(id) {
+    const it = (auth?.info?.items || []).find(i => i.id === id); if (!it) return;
+    const how = it.group === 'iris'
+      ? `브라우저에 claude.ai 승인 화면이 열립니다.\n${/@/.test(it.name) ? `${it.name} 계정인지 확인하고 ` : ''}「승인」을 누르면 IRIS 창용 1년 열쇠가 저장됩니다(열쇠는 화면에 보이지 않습니다).\n새로 여는 세션부터 적용됩니다.`
+      : it.longKey ? `브라우저에 claude.ai 승인 화면이 열립니다.\n브라우저가 ${it.name} 계정으로 로그인돼 있는지 확인한 뒤 「승인」을 누르면 그 계정의 1년 열쇠가 새로 바뀝니다.\n다른 계정으로 승인하면 아무것도 바꾸지 않습니다.`
+      : `브라우저에 로그인 승인 화면이 열립니다.\n브라우저가 ${it.label} 계정으로 로그인돼 있는지 확인한 뒤 「승인」을 누르세요.\n다른 계정으로 승인하면 그 계정이 갱신·추가됩니다.`;
+    if (!(await Dialog.confirm(how, { okLabel: '시작', cancelLabel: '취소' }))) return;
+    try {
+      const r = await fetch('/api/auth/renew', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
+      const d = await r.json().catch(() => ({}));
+      if (d.auth) setAuth(d.auth);
+      if (!r.ok) Dialog.alert(`갱신을 시작하지 못했습니다: ${d.error || r.status}`);
+    } catch (e) { Dialog.alert(`갱신을 시작하지 못했습니다: ${e.message}`); }
+    if (open) renderAuth();
+  }
+
   // ---- 정보(만든 사람) 대화상자 — 값은 전부 데몬 /api/health 의 about(원천 = package.json). 데몬이 아직 없으면 화면 쪽 기본값. ----
   const ABOUT_DEF = { name: 'IRIS', version: '—', author: 'Sejun Ham (함세준)', homepage: 'https://feynman520.github.io/card/#home', license: 'MIT', since: '2026-09-08', motto: '해결은 에이전트가, 정의는 우리가.' };
   function about() {
@@ -322,10 +393,14 @@ window.Settings = (() => {
       renderUpdate();
     });
     loadUpdate();
+    // 인증(v2.84): 절 머리 「다시 확인」 + 행마다 갱신 단추
+    $('#st-auth-act')?.addEventListener('click', async () => { authBusy = true; renderAuth(); await loadAuth(true); authBusy = false; renderAuth(); });
+    $('#st-auth')?.addEventListener('click', (e) => { const b = e.target.closest('button[data-renew]'); if (b) renewAuth(b.closest('[data-auth]').dataset.auth); });
+    loadAuth();
     $('#maker').onclick = about;
     applyMaker();
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult };
+  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth };
 })();
