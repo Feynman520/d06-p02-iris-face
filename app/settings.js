@@ -293,7 +293,7 @@ window.Settings = (() => {
       const kind = i.longKey ? '1년 열쇠' : i.group === 'iris' ? '30일 로그인' : i.provider === 'codex' ? 'ChatGPT 로그인' : '30일 로그인';
       const desc = [kind, when ? `만료 ${when}` : '만료일 모름', i.optional ? 'IRIS 창은 1년 열쇠 사용 중' : ''].filter(Boolean).join(' · ');
       const d = i.level === 'expired' ? '만료' : i.daysLeft != null ? `D-${i.daysLeft}` : AUTH_WORD[i.level];
-      const label = i.group === 'iris' && !i.longKey && !i.optional ? '1년 열쇠 받기' : '갱신';
+      const label = !i.longKey && !i.optional && (i.group === 'iris' || i.renew === 'teamclaude-longkey') ? '1년 열쇠 받기' : '갱신';
       const running = job?.running && job.id === i.id;
       return `<div class="st-opt auth-row ${esc(i.level)}${i.optional ? ' optional' : ''}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small>${esc(desc)}</small></span>`
         + `<span class="auth-right"><span class="auth-d">${esc(d)}</span><button class="text-btn ${i.level === 'ok' ? 'outline' : 'accent'}" data-renew="1" ${job?.running ? 'disabled' : ''} title="브라우저에서 승인 한 번으로 새 열쇠를 받습니다">${running ? '승인 대기…' : esc(label)}</button></span></div>`;
@@ -319,7 +319,7 @@ window.Settings = (() => {
     const it = (auth?.info?.items || []).find(i => i.id === id); if (!it) return;
     const how = it.group === 'iris'
       ? `브라우저에 claude.ai 승인 화면이 열립니다.\n${/@/.test(it.name) ? `${it.name} 계정인지 확인하고 ` : ''}「승인」을 누르면 IRIS 창용 1년 열쇠가 저장됩니다(열쇠는 화면에 보이지 않습니다).\n새로 여는 세션부터 적용됩니다.`
-      : it.longKey ? `브라우저에 claude.ai 승인 화면이 열립니다.\n브라우저가 ${it.name} 계정으로 로그인돼 있는지 확인한 뒤 「승인」을 누르면 그 계정의 1년 열쇠가 새로 바뀝니다.\n다른 계정으로 승인하면 아무것도 바꾸지 않습니다.`
+      : it.renew === 'teamclaude-longkey' ? `Edge 시크릿(InPrivate) 창에 claude.ai 승인 화면이 열립니다.\n그 창에서 ${it.name} 계정으로 로그인한 뒤 「승인」을 누르면 이 계정이 1년 열쇠로 바뀝니다(평소 브라우저 로그인은 그대로).\n다른 계정으로 승인하면 아무것도 바꾸지 않습니다.`
       : `브라우저에 로그인 승인 화면이 열립니다.\n브라우저가 ${it.label} 계정으로 로그인돼 있는지 확인한 뒤 「승인」을 누르세요.\n다른 계정으로 승인하면 그 계정이 갱신·추가됩니다.`;
     if (!(await Dialog.confirm(how, { okLabel: '시작', cancelLabel: '취소' }))) return;
     try {

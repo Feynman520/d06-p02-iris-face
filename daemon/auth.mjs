@@ -88,7 +88,8 @@ export class AuthWatch {
     const tcLong = item.group === 'teamclaude' && item.renew === 'teamclaude-longkey';
     if (tcLong || item.group === 'iris' || item.renew === 'iris-longkey' || item.renew === 'claude-login') {
       const hint = /@/.test(item.name || '') ? item.name : null;
-      const args = tcLong ? ['--account', item.name] : hint ? ['--hint', hint] : [];
+      // 중계기 계정은 시크릿 창(--private)으로 — 평소 브라우저가 다른 계정이면 그 계정으로 자동 승인돼 버린다(도구가 대조해 거절).
+      const args = tcLong ? ['--account', item.name, '--private'] : hint ? ['--hint', hint] : [];
       this.job = { running: true, id, kind: tcLong ? 'teamclaude-longkey' : 'iris-longkey', startedAt: new Date().toISOString(), lines: [], result: null };
       this.broadcast({ type: 'auth', info: this.public() });
       this.run('longkey.mjs', args, {
