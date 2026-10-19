@@ -197,9 +197,10 @@
     sessions.forEach((s, i) => {
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
       li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
-        <span class="sname" title="${esc(`${s.title || shortPath(s.cwd)}\n(두 번 클릭 = 이름 바꾸기)`)}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="${esc([`살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개`, ...bgLines(s.id)].join('\n'))}">⁺${liveN(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
+        <span class="sname" title="${esc(`${s.title || shortPath(s.cwd)}\n(두 번 클릭 · F2 = 이름 바꾸기)`)}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="${esc([`살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개`, ...bgLines(s.id)].join('\n'))}">⁺${liveN(s.id)}</span>` : ''}</span><span class="sside"><span class="sidx">${i + 1}</span><button class="srename" title="이름 바꾸기 (F2)" aria-label="이름 바꾸기">${Icons.svg('pencil', 14)}</button></span>
         <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
       li.onclick = () => { if (s.id === current && setupMode === 'new') return; select(s.id); }; // 이미 보는 줄은 다시 그리지 않는다 — 두 번 클릭의 둘째 클릭이 사라진 줄에 떨어지지 않게(v2.85)
+      li.querySelector('.srename').onclick = (e) => { e.stopPropagation(); startRename(s.id, li.querySelector('.stitle')); }; // 연필(v2.86) = 선택하지 않고 그 자리에서 고친다
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
       li.ondragstart = (e) => { dragId = s.id; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', s.id); e.dataTransfer.effectAllowed = 'move'; } catch {} };
       li.ondragend = () => { dragId = null; list.querySelectorAll('.srow').forEach(r => r.classList.remove('dragging', 'drop-before', 'drop-after')); };
@@ -219,7 +220,7 @@
   function renderHead() {
     const s = cur(); if (!s) return;
     $('#vh-dot').className = 'dot ' + viewStatus(s);
-    if (!renaming) { $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = `${s.title ? `${s.title}\n${s.cwd}` : s.cwd}\n(두 번 클릭 = 이름 바꾸기)`; }
+    if (!renaming) { $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = `${s.title ? `${s.title}\n${s.cwd}` : s.cwd}\n(누르면 이름 바꾸기 · F2)`; }
     $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = [$('#vh-combo').textContent, s.cwd, s.cmdline || '', ...bgLines(s.id)].join('\n'); // 첫 줄 = 말줄임 전 전체 글(v2.82)
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
@@ -273,7 +274,17 @@
     const row = e.target.closest('.srow'); if (!row || !e.target.closest('.sname')) return;
     e.preventDefault(); startRename(row.dataset.id, row.querySelector('.stitle'));
   });
-  $('#vh-title').addEventListener('dblclick', (e) => { if (current && current !== 'preview') { e.preventDefault(); startRename(current, $('#vh-title')); } });
+  // 머리 제목(v2.86): 한 번 클릭·연필로도 고친다(두 번 클릭은 첫 클릭에서 이미 열림). 입력칸은 제목 자리에만 — 연필은 CSS 로 숨는다.
+  const renameHead = (e) => { if (current && current !== 'preview') { e.preventDefault(); startRename(current, $('#vh-title')); } };
+  $('#vh-title').addEventListener('click', renameHead);
+  $('#vh-rename').addEventListener('click', renameHead);
+  // F2(v2.86, 윈도 탐색기와 같은 키): 보고 있는 세션 이름 — 사이드바 줄이 보이면 거기서, 사이드바를 접었으면 머리 제목에서.
+  // 대화 보기에서만 — 터미널 보기의 F2 는 xterm 이 CLI 로 보낸다.
+  function renameCurrentByKey() {
+    if (!current || current === 'preview' || renaming || mode !== 'chat') return false;
+    const t = $(`#session-list .srow[data-id="${current}"] .stitle`); // 접힌 사이드바는 줄(점)만 남고 이름이 숨으므로 이름 칸이 보이는지로 고른다
+    startRename(current, t && t.offsetParent ? t : $('#vh-title')); return true;
+  }
 
   // ---------- 세션 선택 / 새 요청 모드 ----------
   function select(id) { current = id; setupMode = 'new'; ensureTerm(); render(); attach(id); SubPanel.onSession(id); if (mode === 'term') term.focus(); else $('#composer-text').focus(); }
@@ -601,6 +612,7 @@
     if (e.ctrlKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleDash(); }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); const first = modules.find(x => x.catalog !== false) || modules[0]; if (first) modClick(first.name); } // 첫 카탈로그 모듈: 미설치 → 설치 확인 · 실행 중 → 서랍 · 멈춤 → 설정
     if (e.ctrlKey && e.key === ',') { e.preventDefault(); Settings.isOpen() ? Settings.hide() : Settings.show(); }
+    if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !Settings.isOpen() && !FolderPicker.isOpen() && renameCurrentByKey()) { e.preventDefault(); return; }
     if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm' && mode !== 'term') { e.preventDefault(); Voice.toggle(); }
     // Esc: 페이지 keydown(초점이 페이지 안일 때)과 Electron 메인의 before-input-event 중계(초점이 미리보기 iframe 안이라
     // keydown이 이 문서에 오지 않을 때) 두 길로 들어온다 → 한 함수(onEscape)로 처리, 같은 키를 두 번 처리하지 않게 300ms 가드.

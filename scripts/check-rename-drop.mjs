@@ -81,6 +81,15 @@ ok(/includes\('Files'\)/.test(main) && /'dragenter', 'dragover'/.test(main) && /
 ok(/isDirectory/.test(main) && /uploadAll\(picked\.filter\(x => !x\.dir\)/.test(main), '화면: 폴더는 거르고 파일만 같은 업로드 길로');
 ok(/f\.size > UPLOAD_MAX/.test(main) && /50 \* 1024 \* 1024/.test(server), '화면: 50MB 초과는 보내기 전에 거름(데몬 한도와 같음)');
 ok(/id="drop-hint" class="drop-hint" hidden/.test(html), 'index.html: 안내 막 기본 숨김');
+// v2.86: 말 안 해도 보이는 길(사용자 선택 ①+④+F2)
+ok(/<button class="srename"[^>]*>\$\{Icons\.svg\('pencil'/.test(main) && /\.srename'\)\.onclick = \(e\) => \{ e\.stopPropagation\(\); startRename\(s\.id/.test(main), '화면(v2.86): 사이드바 연필 = 줄 선택으로 번지지 않고 그 자리에서 고침');
+ok(/id="vh-name" class="vh-name"><span id="vh-title"[^>]*><\/span><button id="vh-rename"/.test(html), 'index.html(v2.86): 머리 제목 + 연필 묶음');
+ok(/\$\('#vh-title'\)\.addEventListener\('click', renameHead\)/.test(main) && /\$\('#vh-rename'\)\.addEventListener\('click', renameHead\)/.test(main), '화면(v2.86): 머리 제목 한 번 클릭·연필로 고침');
+const f2 = main.slice(main.indexOf('function renameCurrentByKey()'), main.indexOf('function renameCurrentByKey()') + 400);
+ok(/renaming \|\| mode !== 'chat'\) return false/.test(f2) && /t && t\.offsetParent \? t : \$\('#vh-title'\)/.test(f2), '화면(v2.86): F2 = 대화 보기에서만 · 사이드바 접혔으면(이름 칸이 안 보이면) 머리 제목');
+ok(/#app\.rail-hidden[^{]*\.srow \.sside \{ display: none; \}/.test(src('app/style.css')), 'style.css(v2.86): 접힌 사이드바엔 번호·연필 칸 모두 숨김');
+ok(/e\.key === 'F2'[^\n]*!Settings\.isOpen\(\) && !FolderPicker\.isOpen\(\) && renameCurrentByKey\(\)/.test(main), '화면(v2.86): F2 는 설정·폴더 고르기가 열려 있으면 무시');
+ok(/pencil: '/.test(src('app/icons.js')), 'icons.js(v2.86): pencil 선 아이콘');
 ok(/will-frame-navigate[\s\S]{0,80}\^file:/.test(elec), 'Electron: file:// 이동 안전망');
 
 // ---------- 3) 화면 ----------
@@ -114,6 +123,35 @@ else {
     });
     ok(fit.inside && fit.wide && fit.h < 30, `화면: 이름 입력칸이 사이드바 줄 안에 넉넉히 들어감(높이 ${Math.round(fit.h)}px)`);
     if (capDir) await page.locator('#rail').screenshot({ path: path.join(capDir, '이름바꾸기-입력칸.png') });
+    // v2.86: 평소엔 번호, 마우스를 올리면 그 자리에 연필 — 줄 높이는 그대로
+    const PEN = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M4 20h4L19 9"/></svg>';
+    await page.evaluate((PEN) => {
+      document.getElementById('session-list').innerHTML = [1, 2].map(n => `<li class="srow${n === 1 ? ' active' : ''}"><span class="dot idle"></span><span class="sname"><span class="stitle">세션 ${n}</span></span><span class="sside"><span class="sidx">${n}</span><button class="srename">${PEN}</button></span><span class="smeta">클로드 · opus · 대기</span></li>`).join('');
+    }, PEN);
+    const vis = (sel, i) => page.evaluate(([sel, i]) => getComputedStyle(document.querySelectorAll(sel)[i]).display !== 'none', [sel, i]);
+    const rowH = (i) => page.evaluate((i) => document.querySelectorAll('#session-list .srow')[i].getBoundingClientRect().height, i);
+    await page.mouse.move(1000, 650);
+    const h0 = await rowH(1), idle = [await vis('.srow .sidx', 1), await vis('.srow .srename', 1)];
+    await page.hover('#session-list .srow:nth-child(2)');
+    const h1 = await rowH(1), hov = [await vis('.srow .sidx', 1), await vis('.srow .srename', 1), await vis('.srow .srename', 0)];
+    ok(idle[0] && !idle[1], '화면(v2.86): 평소엔 번호만(연필 숨김)');
+    ok(!hov[0] && hov[1] && !hov[2], '화면(v2.86): 마우스 올린 줄만 번호 자리에 연필');
+    ok(Math.abs(h1 - h0) < 0.5, `화면(v2.86): 연필이 나와도 줄 높이 그대로(${h0}→${h1}px)`);
+    if (capDir) await page.locator('#rail').screenshot({ path: path.join(capDir, '이름바꾸기-사이드바연필.png') });
+    // 머리: 평소엔 연필 투명, 제목에 올리면 보임 · 긴 제목은 말줄임이고 연필은 머리 안
+    const head = await page.evaluate(() => {
+      document.getElementById('view').hidden = false;
+      document.getElementById('vh-title').textContent = '아주 긴 세션 이름 '.repeat(8);
+      document.getElementById('vh-combo').textContent = 'P02 · Claude Opus 5.5 · high · 대기';
+      const t = document.getElementById('vh-title'), p = document.getElementById('vh-rename'), h = document.getElementById('view-head').getBoundingClientRect();
+      const pb = p.getBoundingClientRect();
+      return { clipped: t.scrollWidth > t.clientWidth + 1, penIn: pb.right <= h.right && pb.width >= 20, op: getComputedStyle(p).opacity };
+    });
+    await page.hover('#vh-title'); await page.waitForTimeout(250);
+    const op1 = await page.evaluate(() => getComputedStyle(document.getElementById('vh-rename')).opacity);
+    ok(head.clipped && head.penIn, '화면(v2.86): 긴 머리 제목은 말줄임 · 연필은 머리 안에 자리');
+    ok(head.op === '0' && op1 === '1', `화면(v2.86): 머리 연필은 제목에 마우스를 올렸을 때만(${head.op}→${op1})`);
+    if (capDir) await page.locator('#view-head').screenshot({ path: path.join(capDir, '이름바꾸기-머리연필.png') });
     await page.close();
   } finally { await browser.close(); }
 }

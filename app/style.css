@@ -21,7 +21,7 @@ a { color: var(--iris); }
 /* ---- 뼈대 ---- */
 #app { display: grid; grid-template-columns: var(--rail-w) 1fr; grid-template-rows: 48px 1fr; height: 100vh; transition: grid-template-columns .22s ease; }
 #app.rail-hidden { grid-template-columns: 52px 1fr; }
-#app.rail-hidden .rail-title, #app.rail-hidden .rail-count, #app.rail-hidden .srow .sname, #app.rail-hidden .srow .smeta, #app.rail-hidden .srow .sidx { display: none; }
+#app.rail-hidden .rail-title, #app.rail-hidden .rail-count, #app.rail-hidden .srow .sname, #app.rail-hidden .srow .smeta, #app.rail-hidden .srow .sside { display: none; }
 #app.rail-hidden .srow { grid-template-columns: 10px; justify-content: center; padding: 10px 0; }
 #app.rail-hidden .rail-head { justify-content: center; padding-left: 0; }
 #app.rail-hidden .rail-foot { flex-direction: column; align-items: center; gap: 6px; }
@@ -99,7 +99,21 @@ a { color: var(--iris); }
 /* 이름 바꾸기 입력칸(v2.85): 사이드바 이름·머리 제목 자리에 그대로 들어간다 */
 .rename-in { font: inherit; color: var(--ink); background: var(--base); border: 1px solid var(--iris); border-radius: 5px; padding: 1px 6px; margin: -2px 0; width: 100%; min-width: 0; box-sizing: border-box; outline: none; }
 .srow .sname .stitle:has(.rename-in) { flex: 1 1 auto; overflow: visible; }
-#view-head > .vh-title:has(.rename-in) { flex: 1 1 auto; overflow: visible; }
+#view-head > .vh-name:has(.rename-in) { flex: 1 1 auto; max-width: none; }
+.vh-name .vh-title:has(.rename-in) { flex: 1 1 auto; overflow: visible; box-shadow: none; background: none; }
+/* 말 안 해도 보이는 이름 바꾸기(v2.86, 사용자 선택 ①+④+F2): 평소 화면은 그대로, 마우스를 올렸을 때만 연필이 보인다 */
+.srow .sside { display: grid; place-items: center; min-width: 18px; }
+.srow .srename { display: none; width: 20px; height: 20px; margin: -3px -3px; border-radius: 6px; place-items: center; color: var(--ink-3); }
+.srow .srename:hover { background: var(--overlay); color: var(--ink); }
+.srow:hover:not(:has(.rename-in)) .sidx { display: none; }
+.srow:hover:not(:has(.rename-in)) .srename { display: grid; }
+.vh-name { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.vh-name .vh-title { min-width: 0; padding: 2px 6px; margin: -2px 0 -2px -6px; border-radius: 6px; cursor: text; transition: box-shadow .15s, background .15s; }
+.vh-name:hover .vh-title { box-shadow: inset 0 0 0 1px var(--line-2); background: rgba(255,255,255,.03); }
+.vh-pen { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: var(--ink-3); opacity: 0; transition: opacity .15s; }
+.vh-name:hover .vh-pen, .vh-pen:focus-visible { opacity: 1; }
+.vh-pen:hover { background: var(--raised); color: var(--ink); }
+.vh-name:has(.rename-in) .vh-pen { display: none; }
 /* 끌어다 놓기 안내 막(v2.85): 창 전체를 덮어 미리보기 iframe 이 놓기를 가로채지 못하게 한다 */
 .drop-hint { position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center; background: rgba(10,12,20,.62); }
 .drop-hint .dh-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 40px; border: 2px dashed var(--iris); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 15px; pointer-events: none; }
@@ -148,7 +162,7 @@ a { color: var(--iris); }
 #view-head { min-width: 0; }
 #view-head > * { flex: none; }
 .vh-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#view-head > .vh-title { flex: 0 1 auto; min-width: 3em; max-width: 45%; }
+#view-head > .vh-name { flex: 0 1 auto; min-width: 3em; max-width: 45%; } /* v2.86: 제목+연필 묶음이 줄어든다(제목만 말줄임) */
 .vh-combo, .vh-usage { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 #view-head > .vh-combo { flex: 1 1 0; min-width: min(9em, 14vw); overflow: hidden; text-overflow: ellipsis; } /* 좁은 창에서도 부제 앞부분은 보인다(제목이 먼저 준다) */
 #view-head .seg-btn { white-space: nowrap; }
