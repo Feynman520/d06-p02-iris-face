@@ -192,9 +192,12 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     fs.writeFileSync(path.join(sd, 'index.mjs'), 'setTimeout(() => process.exit(1), 250);');
     const shost = new ModuleHost({ dir: path.join(tmp, 'mods4c'), faceVersion: FACE, log: (m) => slogs.push(m), restartDelayMs: 50, healthyMs: 100, restartMax: 3 });
     shost.scan(); shost.start('slowcrash');
-    await sleep(1800);
-    const sby = Object.fromEntries(shost.list().map(m => [m.name, m]));
-    ok(sby.slowcrash.status !== 'failed' && slogs.filter(l => /module start slowcrash/.test(l)).length >= 4, 'proc: healthyMs 이상 살면 restarts 초기화(영구 failed 없음)');
+    // 고정 1.8초 대신 시작 5번(= 처음 1 + restartMax 3 을 넘어섬 — 초기화가 없으면 4번째 뒤 failed 로 멈춘다)이나 failed 까지 최대 8초 기다린다.
+    // node 를 새로 띄우는 시간이 PC 부하에 따라 늘어 1.8초 안에 4번을 못 채우는 일이 있었다(2026-10-19 릴리스 자체 검사, 연속 실행 2번 중 1번).
+    const starts = () => slogs.filter(l => /module start slowcrash/.test(l)).length;
+    const status = () => shost.list().find(m => m.name === 'slowcrash')?.status;
+    for (let i = 0; i < 80 && starts() < 5 && status() !== 'failed'; i++) await sleep(100);
+    ok(status() !== 'failed' && starts() >= 5, `proc: healthyMs 이상 살면 restarts 초기화(영구 failed 없음, 시작 ${starts()}번)`);
     await shost.stop('slowcrash');
   }
 
