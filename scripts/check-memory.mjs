@@ -170,7 +170,8 @@ const typeperfPids = (parentPid) => {
 };
 if (WIN) {
   const p = new CommitProbe({});
-  p.start(); let r = null; for (let i = 0; i < 40 && !r; i++) { await sleep(200); r = p.read(); }
+  // 첫 숫자까지 평소 약 4초, PC 가 무거우면 9초까지(2026-10-19 실측 4.7·5.4·9.0초 — 8초 마감이 실패를 냈다) → 20초까지 기다린다(측정기 자체 마감 15초보다 길게)
+  p.start(); let r = null; for (let i = 0; i < 100 && !r; i++) { await sleep(200); r = p.read(); }
   ok(r && r.limit >= os.totalmem() * 0.9 && r.used > 0 && r.used < r.limit, `7 진짜 typeperf: 커밋 ${r ? (r.used / GB).toFixed(1) : '?'} / ${r ? (r.limit / GB).toFixed(1) : '?'}GB`);
   const childPid = p.child?.pid;
   ok(typeperfPids(process.pid).includes(childPid), `7 측정기는 이 프로세스의 자식 1개 (pid ${childPid})`);
@@ -196,12 +197,12 @@ if (WIN) {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`); const got = [];
   ws.on('message', (d) => { try { got.push(JSON.parse(d.toString())); } catch {} });
   await new Promise((res) => { ws.on('open', res); ws.on('error', res); });
-  // typeperf 는 켜진 뒤 첫 숫자까지 약 4.3초(2026-10-04 실측) → 방송에 커밋이 실리기까지 최대 9초 기다린다
-  for (let i = 0; i < 45 && !got.some(m => m.type === 'mem' && m.s?.cu != null); i++) await sleep(200);
+  // typeperf 는 켜진 뒤 첫 숫자까지 약 4.3초(2026-10-04 실측), PC 가 무거우면 9초 넘게(2026-10-19) → 방송에 커밋이 실리기까지 최대 20초 기다린다
+  for (let i = 0; i < 100 && !got.some(m => m.type === 'mem' && m.s?.cu != null); i++) await sleep(200);
   const hello = got.find(m => m.type === 'hello'); const mems = got.filter(m => m.type === 'mem');
   ok(hello && hello.mem && typeof hello.mem.ru === 'number', '8 ws hello.mem 표본');
   ok(mems.length >= 1 && mems.every(m => m.s && m.s.rt > 0), `8 ws mem 방송 ${mems.length}회`);
-  ok(mems.some(m => m.s.cu != null && m.s.cl > 0), '8 방송에 커밋 숫자가 실림(typeperf 동작, 9초 안)');
+  ok(mems.some(m => m.s.cu != null && m.s.cl > 0), '8 방송에 커밋 숫자가 실림(typeperf 동작, 20초 안)');
   ok(mems.filter(m => m.s.cu == null).every(m => m.s.cw === true), '8 첫 숫자 전 표본은 cw(준비 중) 표시');
   ws.close();
   const h = await api('/api/memory');
