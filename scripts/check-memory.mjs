@@ -208,7 +208,11 @@ if (WIN) {
   const h = await api('/api/memory');
   ok(h.status === 200 && Array.isArray(h.body.samples) && h.body.samples.length >= 2, `8 /api/memory 기록 ${h.body.samples?.length}개`);
   const t = await api('/api/memory/top');
-  ok(t.status === 200 && Array.isArray(t.body.groups) && t.body.groups.length > 0 && t.body.groups.some(x => x.kind === 'iris'), `8 /api/memory/top ${t.body.groups?.length}묶음(IRIS 데몬 포함, 프로세스 ${t.body.procs}개)`);
+  // 목록은 잡아 둔 양 큰 순 8묶음까지라, 몸집 작은 시험 데몬은 무거운 PC(프로세스 700개 넘게)에서 9위 밖으로 밀린다(2026-10-19 릴리스 자체 검사).
+  // IRIS 묶기 규칙은 3절이 따로 검사하므로 여기서는 실제 CIM 표 → 묶음·정렬까지만 보고, IRIS 포함 여부는 정보로만 찍는다.
+  const tg = Array.isArray(t.body.groups) ? t.body.groups : [];
+  ok(t.status === 200 && tg.length > 0 && t.body.procs > 0 && tg.every((x, i) => i === 0 || tg[i - 1].priv >= x.priv),
+    `8 /api/memory/top ${tg.length}묶음 큰 순(프로세스 ${t.body.procs}개, IRIS 데몬 ${tg.some(x => x.kind === 'iris') ? '포함' : '9위 밖'})`);
   const f = await api('/api/memory/sweep-preview', { method: 'POST', headers: { Origin: 'http://evil.example.com' } });
   ok(f.status === 403, `8 다른 출처의 잔여물 미리보기 거부(403) (got ${f.status})`);
   const tp = typeperfPids(pid);
