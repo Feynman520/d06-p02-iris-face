@@ -28,6 +28,7 @@
   let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null, ACCT = null;
   let folder = null;                 // 새 요청 모드에서 고른 폴더
   let setupMode = 'new';             // 'new' = 새 세션 조합 / 'switch' = 열린 세션의 조합 바꾸기
+  let renaming = null;               // 이름 바꾸는 중 { id, cancel } — 그동안 render()가 목록·머리 제목을 다시 그리지 않는다(v2.85)
   const sel = loadSel();             // { agent, model:{claude,codex}, effort:{claude,codex}, readOnly }
   const api = async (method, path, body) => { const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; };
   const shortPath = (p) => p.split(/[\\/]/).filter(Boolean).slice(-1)[0] || p;
@@ -191,13 +192,14 @@
   }
   function render() {
     sortSessions();
-    const list = $('#session-list'); list.innerHTML = '';
+    const list = $('#session-list');
+    if (!renaming) { list.innerHTML = ''; // 이름을 고치는 동안은 목록을 다시 그리지 않는다(상태 방송마다 입력칸이 날아가지 않게, v2.85)
     sessions.forEach((s, i) => {
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
       li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
-        <span class="sname" title="${esc(s.title || '')}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="${esc([`살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개`, ...bgLines(s.id)].join('\n'))}">⁺${liveN(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
+        <span class="sname" title="${esc(`${s.title || shortPath(s.cwd)}\n(두 번 클릭 = 이름 바꾸기)`)}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="${esc([`살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개`, ...bgLines(s.id)].join('\n'))}">⁺${liveN(s.id)}</span>` : ''}</span><span class="sidx">${i + 1}</span>
         <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
-      li.onclick = () => select(s.id);
+      li.onclick = () => { if (s.id === current && setupMode === 'new') return; select(s.id); }; // 이미 보는 줄은 다시 그리지 않는다 — 두 번 클릭의 둘째 클릭이 사라진 줄에 떨어지지 않게(v2.85)
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
       li.ondragstart = (e) => { dragId = s.id; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', s.id); e.dataTransfer.effectAllowed = 'move'; } catch {} };
       li.ondragend = () => { dragId = null; list.querySelectorAll('.srow').forEach(r => r.classList.remove('dragging', 'drop-before', 'drop-after')); };
@@ -205,7 +207,7 @@
       li.ondragleave = () => li.classList.remove('drop-before', 'drop-after');
       li.ondrop = (e) => { if (!dragId) return; e.preventDefault(); const r = li.getBoundingClientRect(); moveSession(dragId, s.id, e.clientY > r.top + r.height / 2); dragId = null; };
       list.appendChild(li);
-    });
+    }); }
     $('#rail-count').textContent = sessions.length ? `${sessions.length}` : '';
     if (current && current !== 'preview' && !cur()) current = null;
     $('#view').hidden = !current;
@@ -217,7 +219,7 @@
   function renderHead() {
     const s = cur(); if (!s) return;
     $('#vh-dot').className = 'dot ' + viewStatus(s);
-    $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = s.title ? `${s.title}\n${s.cwd}` : s.cwd;
+    if (!renaming) { $('#vh-title').textContent = s.title || shortPath(s.cwd); $('#vh-title').title = `${s.title ? `${s.title}\n${s.cwd}` : s.cwd}\n(두 번 클릭 = 이름 바꾸기)`; }
     $('#vh-combo').textContent = `${s.title ? shortPath(s.cwd) + ' · ' : ''}${label(s)} · ${statusText(s)}`; $('#vh-combo').title = [$('#vh-combo').textContent, s.cwd, s.cmdline || '', ...bgLines(s.id)].join('\n'); // 첫 줄 = 말줄임 전 전체 글(v2.82)
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
@@ -233,6 +235,45 @@
     else if (folder) { fb.className = 'folder-btn picked'; fn.textContent = folder.name; fb.title = folder.path; ta.placeholder = ''; }
     else { fb.className = 'folder-btn'; fn.textContent = '폴더'; fb.title = '폴더 고르기 (Ctrl+O)'; ta.placeholder = '폴더를 고르고 요청을 적어 주세요'; }
   }
+
+  // ---------- 세션 이름 바꾸기(v2.85): 사이드바 이름·머리 제목 두 번 클릭 → 그 자리 입력칸 ----------
+  // Enter = 저장 · Esc·바깥 클릭 = 취소 · 빈칸 저장 = 자동 이름으로 되돌림. 저장은 데몬(source=user)이 하므로 자동 이름이 덮지 않는다.
+  // 입력칸의 키는 문서로 올려 보내지 않는다(확인 카드 1~9·단축키가 먹지 않게). Esc 는 Electron 중계로도 오므로 onEscape() 맨 앞에서도 취소만 한다.
+  function startRename(id, host) {
+    const s = sessions.find(x => x.id === id); if (!s || !host || renaming) return;
+    const row = host.closest('.srow'); if (row) row.draggable = false; // 고치는 동안은 끌어서 순서 바꾸기를 끈다(글자 선택 가능)
+    const input = document.createElement('input');
+    input.className = 'rename-in'; input.maxLength = 48; input.spellcheck = false; input.autocomplete = 'off';
+    input.value = s.title || ''; input.placeholder = '빈칸 = 자동 이름';
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true; renaming = null;
+      const v = input.value.replace(/\s+/g, ' ').trim();
+      if (save && v !== (s.title || '')) {
+        try {
+          const r = await fetch(`/api/sessions/${id}/title`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) });
+          const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
+          const t = sessions.find(x => x.id === id); if (t) { t.title = j.title; t.titleSource = j.titleSource; }
+        } catch (e) { Dialog.alert('이름을 바꾸지 못했습니다: ' + e.message); }
+      }
+      render();
+    };
+    renaming = { id, cancel: () => finish(false) };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter 는 조합 확정용
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); lastEscAt = Date.now(); finish(false); } // 곧 올 Electron 중계 Esc 가 작업 중단으로 새지 않게
+    });
+    input.addEventListener('blur', () => finish(false));
+    for (const ev of ['click', 'dblclick', 'mousedown']) input.addEventListener(ev, (e) => e.stopPropagation()); // 줄 클릭(세션 선택)으로 번지지 않게
+    host.replaceChildren(input); input.focus(); input.select();
+  }
+  $('#session-list').addEventListener('dblclick', (e) => {
+    const row = e.target.closest('.srow'); if (!row || !e.target.closest('.sname')) return;
+    e.preventDefault(); startRename(row.dataset.id, row.querySelector('.stitle'));
+  });
+  $('#vh-title').addEventListener('dblclick', (e) => { if (current && current !== 'preview') { e.preventDefault(); startRename(current, $('#vh-title')); } });
 
   // ---------- 세션 선택 / 새 요청 모드 ----------
   function select(id) { current = id; setupMode = 'new'; ensureTerm(); render(); attach(id); SubPanel.onSession(id); if (mode === 'term') term.focus(); else $('#composer-text').focus(); }
@@ -291,7 +332,31 @@
   }
   $('#btn-photo').onclick = () => $('#file-in').click();
   $('#btn-file').onclick = () => $('#file-any').click();
-  for (const id of ['#file-in', '#file-any']) $(id).addEventListener('change', async (e) => { for (const f of e.target.files) { try { await upload(f); } catch (err) { await Dialog.alert(err.message); } } e.target.value = ''; });
+  const UPLOAD_MAX = 50 * 1024 * 1024; // 데몬 /api/upload 한도와 같다
+  async function uploadAll(files) {
+    for (const f of files) {
+      if (f.size > UPLOAD_MAX) { await Dialog.alert(`50MB를 넘는 파일은 첨부할 수 없습니다: ${f.name}`); continue; }
+      try { await upload(f); } catch (err) { await Dialog.alert(err.message); }
+    }
+  }
+  for (const id of ['#file-in', '#file-any']) $(id).addEventListener('change', async (e) => { await uploadAll([...e.target.files]); e.target.value = ''; });
+  // 끌어다 놓기 첨부(v2.85): 창 어디에 놓든 버튼 첨부와 같은 길(uploadAll)로 들어간다.
+  // 'Files' 가 실린 끌기만 받는다 — 사이드바 줄 순서 바꾸기(창 안 끌기)는 여기서 무시된다.
+  // Electron 은 놓은 파일을 막지 않으면 창 전체를 그 파일로 이동(file://)해 버리므로 기본 동작을 문서 단계에서 항상 막는다.
+  // 안내 막(#drop-hint)은 창 전체를 덮어 미리보기 iframe 이 놓기를 가로채지 못하게 하고, dragover 가 250ms 끊기면 내린다(dragleave 짝 세기보다 튼튼).
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  let dropHideTimer = 0;
+  const dropHint = (on) => { clearTimeout(dropHideTimer); if (on) { $('#drop-hint').hidden = false; dropHideTimer = setTimeout(() => dropHint(false), 250); } else $('#drop-hint').hidden = true; };
+  for (const ev of ['dragenter', 'dragover']) document.addEventListener(ev, (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; dropHint(true); });
+  document.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return; e.preventDefault(); dropHint(false);
+    // DataTransfer 는 이 처리기가 끝나면 비워지므로 파일·폴더 구분을 먼저 동기로 뽑아 둔다
+    const picked = [...(e.dataTransfer.items || [])].filter(it => it.kind === 'file').map(it => ({ file: it.getAsFile(), dir: !!it.webkitGetAsEntry?.()?.isDirectory })).filter(x => x.file);
+    const dirs = picked.filter(x => x.dir).map(x => x.file.name);
+    if (dirs.length) await Dialog.alert(`폴더는 첨부할 수 없습니다(파일만 가능): ${dirs.join(', ')}`);
+    await uploadAll(picked.filter(x => !x.dir).map(x => x.file));
+    if (mode === 'chat') $('#composer-text').focus();
+  });
   let camStream = null;
   $('#btn-cam').onclick = async () => { try { camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false }); $('#cam-video').srcObject = camStream; $('#cam').hidden = false; } catch (err) { Dialog.alert('카메라를 열 수 없습니다: ' + err.message); } };
   function camStop() { camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('#cam').hidden = true; }
@@ -547,6 +612,7 @@
   let lastEscAt = 0;
   function onEscape() {
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
+    if (renaming) { renaming.cancel(); return; }      // 이름 고치는 중 Esc = 고치기 취소만(작업 중단 아님, v2.85)
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
     if (Settings.isOpen()) { Settings.hide(); return; }
     if (MemGauge.isOpen()) { MemGauge.close(); return; } // 메모리 계기판 펼침 = Esc 로 닫기만(중단 아님)

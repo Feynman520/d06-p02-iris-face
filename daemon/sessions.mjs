@@ -203,7 +203,8 @@ export class SessionManager {
     this.live.delete(id);
     const cmd = buildCommand(sel, rec.cwd);
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
-    if (rec.title) rec.titleSource = 'fixed'; // 이어받기 요청문("이전 대화…")으로 이름이 바뀌지 않게 고정
+    if (rec.title && rec.titleSource !== 'user') rec.titleSource = 'fixed'; // 이어받기 요청문("이전 대화…")으로 이름이 바뀌지 않게 고정(사용자가 지은 이름은 그대로)
+    if (rec.autoTitle) rec.autoTitle.source = 'fixed';                       // 사용자 이름을 지워 되돌릴 때도 이어받기 요청문 이름이 끼어들지 않게
     rec.previous = [...(rec.previous || []), { agent: rec.agent, model: rec.model, effort: rec.effort, sessionId: rec.sessionId, recordPath: rec.recordPath, resumeCmd: rec.resumeCmd, until: new Date().toISOString() }];
     Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, status: 'busy', exitCode: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
     // 다른 에이전트로 새로 띄우는 것이므로 안내문을 이어받기 요청 앞에 붙인다
@@ -323,15 +324,29 @@ export class SessionManager {
       if (!changed) { this.save(); this.hooks.onList?.(); } // 이름은 그대로여도 pending 해제는 저장·방송한다
     }).catch((e) => { const rec = this.sessions.get(id); if (rec) { rec.titlePending = false; log(`title gen threw: ${e?.message || e}`); if (!this.setTitle(id, titleFromPrompt(prompt), 'first')) { this.save(); this.hooks.onList?.(); } } });
   }
-  /** 작업목록 이름 갱신. 우선순위 ai > gen > first. fixed(이어받기 뒤)는 건드리지 않고, 생성 대기 중엔 first를 받지 않는다. 바뀌었을 때만 true */
+  /** 작업목록 이름 갱신. 우선순위 ai > gen > first. fixed(이어받기 뒤)·user(사용자가 지음)는 건드리지 않고, 생성 대기 중엔 first를 받지 않는다. 바뀌었을 때만 true */
   setTitle(id, title, source) {
     const RANK = { first: 1, gen: 2, ai: 3 };
     const rec = this.sessions.get(id); const t = clipTitle(title, source === 'first' ? undefined : 48); if (!rec || !t) return false; // first만 24자, ai·gen은 원문대로(짧게 만들어 옴)
-    if (rec.titleSource === 'fixed') return false;
+    if (rec.titleSource === 'fixed' || rec.titleSource === 'user') return false;
     if (source === 'first' && rec.titlePending) return false;
     if ((RANK[rec.titleSource] || 0) > (RANK[source] || 0)) return false;
     if (rec.title === t && rec.titleSource === source) return false;
     rec.title = t; rec.titleSource = source; this.save(); this.hooks.onList?.(); return true;
+  }
+  /** 사용자가 고친 이름(v2.85, 사이드바·머리 제목 두 번 클릭). source=user 는 자동 이름(ai·gen·first)이 덮지 못한다.
+   *  빈 글 = 자동 이름으로 되돌림: 처음 고칠 때 맡겨 둔 자동 이름(autoTitle)을 돌려놓고, 그 뒤로는 다시 자동 갱신을 받는다. */
+  renameByUser(id, title) {
+    const rec = this.sessions.get(id); if (!rec) return null;
+    const t = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 48);
+    if (t) {
+      if (rec.titleSource !== 'user') rec.autoTitle = { title: rec.title || '', source: rec.titleSource || '' };
+      rec.title = t; rec.titleSource = 'user';
+    } else if (rec.titleSource === 'user') {
+      const a = rec.autoTitle || { title: '', source: '' };
+      rec.title = a.title; rec.titleSource = a.source; delete rec.autoTitle;
+    } else return rec;
+    this.save(); this.hooks.onList?.(); return rec;
   }
   /** 상태 전환 방송. done = "요청을 실제로 받은 뒤(worked)의 busy → 끝(idle·attention·exited)" 전환에만 true — 화면의 작업 완료 알림 근거(2026-09-11).
    *  세션 시작 직후 첫 프롬프트가 뜨는 busy→idle(아직 요청 전)은 worked=false 라 알림이 나가지 않는다. */

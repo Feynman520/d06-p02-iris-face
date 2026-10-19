@@ -94,6 +94,8 @@ function createWindow() {
     if (d.method === 'POST' && d.statusCode === 200 && !quitting) { quitting = true; setTimeout(() => app.quit(), 300); }
   });
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  // 끌어다 놓기 안전망(v2.85): 페이지가 놓기를 못 막은 경우에도 창·프레임이 놓은 파일(file://)로 넘어가지 않게(화면은 전부 http 데몬 주소라 file:// 이동은 쓸 일이 없다)
+  win.webContents.on('will-frame-navigate', (e) => { if (/^file:/i.test(e.url || '')) { e.preventDefault(); } });
   const menu = Menu.buildFromTemplate([{ label: '보기', submenu: [{ role: 'reload', accelerator: 'F5' }, { role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }, { label: '창 숨기기', accelerator: 'Ctrl+W', click: () => win.hide() }] }]);
   Menu.setApplicationMenu(menu);
 }

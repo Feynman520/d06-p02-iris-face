@@ -96,6 +96,15 @@ a { color: var(--iris); }
 .srow .sname { font-weight: 560; display: flex; align-items: center; min-width: 0; white-space: nowrap; } /* v2.40: 제목만 줄임표, ⁺N 배지는 항상 보이게 */
 .srow .sname .stitle { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .srow .sname .subn { flex: none; }
+/* 이름 바꾸기 입력칸(v2.85): 사이드바 이름·머리 제목 자리에 그대로 들어간다 */
+.rename-in { font: inherit; color: var(--ink); background: var(--base); border: 1px solid var(--iris); border-radius: 5px; padding: 1px 6px; margin: -2px 0; width: 100%; min-width: 0; box-sizing: border-box; outline: none; }
+.srow .sname .stitle:has(.rename-in) { flex: 1 1 auto; overflow: visible; }
+#view-head > .vh-title:has(.rename-in) { flex: 1 1 auto; overflow: visible; }
+/* 끌어다 놓기 안내 막(v2.85): 창 전체를 덮어 미리보기 iframe 이 놓기를 가로채지 못하게 한다 */
+.drop-hint { position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center; background: rgba(10,12,20,.62); }
+.drop-hint .dh-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 40px; border: 2px dashed var(--iris); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 15px; pointer-events: none; }
+.drop-hint .dh-box svg { color: var(--iris); }
+.drop-hint .dh-sub { font-size: 12px; color: var(--ink-3); }
 /* 제목과 메타 줄 사이 6px, 메타 줄은 뱃지(테두리 포함 18px)가 잘리지 않게 줄 높이 20px */
 .srow .smeta { grid-column: 2 / 4; margin-top: 6px; line-height: 20px; font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srow .smeta .chip { display: inline-block; line-height: 14px; vertical-align: middle; margin-right: 2px; }

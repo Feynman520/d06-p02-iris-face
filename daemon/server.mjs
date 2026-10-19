@@ -448,6 +448,15 @@ const server = http.createServer(async (req, res) => {
       const tr = w?.transcript(decodeURIComponent(ms[2])); if (!tr) return json(res, 404, { error: 'no subagent' });
       return json(res, 200, tr);
     }
+    // 세션 이름 바꾸기(v2.85): 사이드바·머리 제목 두 번 클릭. 빈 글 = 자동 이름으로 되돌림. 같은 출처만(화면에서만 부른다).
+    const mt = p.match(/^\/api\/sessions\/([a-z0-9]+)\/title$/);
+    if (mt && req.method === 'POST') {
+      if (!sameOrigin(req)) { log(`403 title ${mt[1]}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      const b = await readBody(req); const rec = sm.renameByUser(mt[1], b.title);
+      if (!rec) return json(res, 404, { error: 'no session' });
+      log(`title ${rec.id} (${rec.titleSource || 'auto'}) ${rec.title}`);
+      return json(res, 200, { ok: true, title: rec.title, titleSource: rec.titleSource });
+    }
     const m = p.match(/^\/api\/sessions\/([a-z0-9]+)(?:\/(input|resize|buffer|forget|transcript|send|switch|resume))?$/);
     if (m) {
       const [, id, action] = m;
