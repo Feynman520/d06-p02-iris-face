@@ -26,7 +26,7 @@ import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
 import { Updater } from './update.mjs';
 import { Finalizer } from './finalize.mjs';
 import { SetupProgress } from './progress.mjs';
-import { HandoffFlow } from './handoff.mjs';
+import { HandoffFlow, relayReady } from './handoff.mjs';
 import { AuthWatch } from './auth.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -65,7 +65,8 @@ var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadca
 const setupProgress = new SetupProgress({ root: WS_ROOT, broadcast, log });
 // 인수 문서(설치 패키지 v2, P03 Task 21): `_agent\setup\handoff.json` 이 있으면 첫 실행을 여기서 가른다 —
 // ready 면 주도 에이전트에 firstMessage 를 그대로 보내고, 아니면 안내 카드 + 「설치 이어하기」. 없으면(1.x) 아무 일도 하지 않는다.
-const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broadcast });
+// v2.89: 중계기 도구가 있는 설치(dashDir)면 첫 인사는 그 에이전트 계정이 중계기에 올라온 뒤에 보낸다(실행기가 중계기와 데몬을 동시에 켜므로).
+const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broadcast, relayReady: dashDir() ? (agent) => relayReady(agent) : null });
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
 // 에이전트 자가 치유·계정 감시(v2.76): 시작 때 한 번 + 15초마다 — 프로그램이 있는 잠든/빠진 에이전트를 켜고,
 // 계정 수·프로그램 없음이 바뀌면 화면에 알린다. 영수증이 없는 PC(이 개발 PC 포함)에서는 무동작.

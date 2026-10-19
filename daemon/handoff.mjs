@@ -14,6 +14,7 @@
 // 파일 하나가 거짓말을 해도 사용자가 반쯤 된 영혼에서 대화를 시작하지 않게 하는 안전선이다.
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
 import { spawn } from 'node:child_process';
 
 export const HANDOFF_SCHEMA = 1;
@@ -151,6 +152,28 @@ export function resumeTarget(root, handoff) {
  * 첫 실행 분기. 데몬이 한 번 부르고(서버 listen 직후), 화면은 `hello.handoff` / `{type:'handoff'}` 방송으로 받아 카드를 그린다.
  * 실제 세션 만들기·보내기는 전부 주입받은 `sm`(SessionManager) 로만 한다 — 새 전송 길을 만들지 않는다(v2.64 send 경로 재사용).
  */
+/**
+ * 중계기(127.0.0.1:3456)가 그 에이전트 계정을 하나 이상(끄지 않은 것) 들고 응답하는가. 상태 주소는 같은 PC 안에서만 열린다.
+ * 열쇠·계정 이름은 읽지도 남기지도 않는다 — provider·disabled 만 본다.
+ */
+export function relayReady(agent, { port = Number(process.env.IRIS_RELAY_PORT || 3456), timeoutMs = 1500, get = http.get } = {}) {
+  const want = agent === 'codex' ? 'codex' : 'anthropic';
+  return new Promise((resolve) => {
+    let done = false; const end = (v) => { if (!done) { done = true; resolve(v); } };
+    try {
+      const req = get({ host: '127.0.0.1', port, path: '/teamclaude/status', timeout: timeoutMs }, (res) => {
+        let t = ''; res.setEncoding('utf8'); res.on('data', (c) => { t += c; if (t.length > 4_000_000) req.destroy(); });
+        // 401·403 = 중계기는 살아 있는데 상태를 열쇠 없이 못 본다(다른 판·설정) → 영원히 기다리지 않도록 "켜짐"으로 친다.
+        if (res.statusCode === 401 || res.statusCode === 403) { res.resume(); end(true); return; }
+        res.on('end', () => { try { const j = JSON.parse(t); end(res.statusCode === 200 && Array.isArray(j.accounts) && j.accounts.some((a) => a && a.provider === want && !a.disabled)); } catch { end(false); } });
+        res.on('error', () => end(false));
+      });
+      req.on('timeout', () => { req.destroy(); end(false); });
+      req.on('error', () => end(false));
+    } catch { end(false); }
+  });
+}
+
 export class HandoffFlow {
   /** @param {{root:string, stateDir:string, sm:object, log?:Function, broadcast?:Function, spawnImpl?:Function, now?:Function}} o */
   constructor(o = {}) {
@@ -161,6 +184,13 @@ export class HandoffFlow {
     this.broadcast = o.broadcast || (() => {});
     this.spawnImpl = o.spawnImpl || spawn;
     this.now = o.now || (() => Date.now());
+    // v2.89(2026-10-19 신고: 코덱스만 고른 새 설치의 첫 세션이 "Reconnecting 1/5…5/5" 뒤 실패, 새 세션은 정상):
+    // 실행기는 중계기 켜기와 데몬 켜기를 동시에 하므로 데몬이 뜨자마자 보낸 첫 인사가 중계기보다 먼저 출발할 수 있다.
+    // relayReady(agent) 가 주어지면(= 중계기 도구가 있는 설치) 그 에이전트 계정이 중계기에 올라올 때까지 기다렸다가 보낸다.
+    this.relayReady = o.relayReady || null;
+    this.sleep = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.waitSlowMs = o.waitSlowMs ?? 90_000;   // 이만큼 지나면 카드 글을 "오래 걸린다"로
+    this.waitFastMs = o.waitFastMs ?? 180_000;  // 이만큼은 1초마다, 그 뒤로는 5초마다 계속 본다(포기하지 않는다)
     this.card = null;       // 지금 화면에 띄울 카드(없으면 null)
     this.last = null;       // 마지막 runOnce 결과
     this.ran = false;
@@ -262,20 +292,38 @@ export class HandoffFlow {
     else {
       // 설치기 2.0.24 까지는 구독 id 'chatgpt' 가 그대로 왔다(코덱스만 고른 설치의 첫 세션이 클로드로 열린 원인, 2026-09-19).
       const agent = (r.handoff.leadAgent === 'codex' || r.handoff.leadAgent === 'chatgpt') ? 'codex' : 'claude';
-      const dup = this.liveInRoot();
-      try {
-        if (dup && dup.status === 'busy') { out = { state: 'ready', action: 'busy-skip', reason: `세션 ${dup.id} 이 바쁨` }; }
-        else if (dup) { this.sm.send(dup.id, text); out = { state: 'ready', action: 'sent', id: dup.id }; }
-        else { const rec = this.sm.create({ cwd: this.root, agent, prompt: text }); out = { state: 'ready', action: 'created', id: rec.id }; }
-      } catch (e) { out = { state: 'ready', action: 'failed', reason: String(e?.message || e) }; this.log(`handoff: 첫 인사 실패 — ${out.reason}`); }
-      // 바빠서 미룬 것·실패는 "했다"고 적지 않는다 → 다음 실행 때 다시 시도한다.
-      if (out.action === 'sent' || out.action === 'created') {
-        this.writeSeen({ ...seen, greetedFor: key, greetedAt: new Date(this.now()).toISOString(), action: out.action });
-        this.log(`handoff: 첫 인사 ${out.action} agent=${agent} id=${out.id}`);
+      if (this.relayReady) {
+        // 중계기 준비를 기다린 뒤 보낸다(v2.89). 그동안 「연결 준비」 카드, 끝나면 첫 인사 → 메신저 안내 순서는 그대로.
+        out = { state: 'ready', action: 'waiting-relay', agent };
+        this.card = this.relayCard(agent, false); this.last = out; this.publish();
+        this.log(`handoff: 첫 인사 전 중계기 준비 기다림 agent=${agent}`);
+        this.waiting = this.waitThenGreet(r, seen, key, text, agent);
+        return out;
       }
+      out = this.greet(seen, key, text, agent);
     }
+    this.messengerStep(r, out);
+    this.last = out; this.publish(); return out;
+  }
 
-    // ---- 메신저 로그인 안내: 설치돼 있고 아직 한 번도 보인 적 없을 때만, 보이는 즉시 표시했다고 적는다 ----
+  /** 첫 인사를 실제로 보낸다(같은 폴더에 살아 있는 세션이 있으면 거기로). 바빠서 미룬 것·실패는 "했다"고 적지 않는다 → 다음 실행 때 다시. */
+  greet(seen, key, text, agent) {
+    let out;
+    const dup = this.liveInRoot();
+    try {
+      if (dup && dup.status === 'busy') { out = { state: 'ready', action: 'busy-skip', reason: `세션 ${dup.id} 이 바쁨` }; }
+      else if (dup) { this.sm.send(dup.id, text); out = { state: 'ready', action: 'sent', id: dup.id }; }
+      else { const rec = this.sm.create({ cwd: this.root, agent, prompt: text }); out = { state: 'ready', action: 'created', id: rec.id }; }
+    } catch (e) { out = { state: 'ready', action: 'failed', reason: String(e?.message || e) }; this.log(`handoff: 첫 인사 실패 — ${out.reason}`); }
+    if (out.action === 'sent' || out.action === 'created') {
+      this.writeSeen({ ...seen, greetedFor: key, greetedAt: new Date(this.now()).toISOString(), action: out.action });
+      this.log(`handoff: 첫 인사 ${out.action} agent=${agent} id=${out.id}`);
+    }
+    return out;
+  }
+
+  /** 메신저 로그인 안내: 설치돼 있고 아직 한 번도 보인 적 없을 때만, 보이는 즉시 표시했다고 적는다. */
+  messengerStep(r, out) {
     const m = r.handoff.messenger || {};
     if (m.installed === true && m.prompted !== true) {
       this.card = this.messengerCard();
@@ -283,9 +331,47 @@ export class HandoffFlow {
       this.log(`handoff: 메신저 안내 1회 표시 (prompted 기록 ${w.ok ? 'ok' : `실패: ${w.reason}`})`);
       out.messenger = 'prompted';
     } else this.card = null;
+  }
 
+  /** 「연결 준비」 카드 — 사용자 글에 중계기 제품 이름을 쓰지 않는다. */
+  relayCard(agent, slow) {
+    const who = agent === 'codex' ? 'Codex' : 'Claude';
+    return {
+      kind: 'relay-wait', state: 'ready',
+      title: slow ? '연결 준비가 오래 걸리고 있습니다' : '연결을 준비하고 있습니다',
+      lines: slow ? [
+        `${who}에 연결해 주는 중계기가 아직 켜지는 중입니다.`,
+        '처음 실행할 때는 컴퓨터의 보안 검사 때문에 1~2분 더 걸릴 수 있습니다. 계속 기다리고 있으니 창을 닫지 마세요.',
+        '준비되는 즉시 첫 대화가 자동으로 시작됩니다.',
+      ] : [
+        `${who}에 연결해 주는 중계기가 켜지는 중입니다.`,
+        '준비되면 첫 대화가 자동으로 시작됩니다. 잠시만 기다려 주세요.',
+      ],
+      resume: false, later: true,
+    };
+  }
+
+  /** 중계기에 그 에이전트 계정이 올라올 때까지 기다렸다가(포기하지 않음) 첫 인사를 보낸다. */
+  async waitThenGreet(r, seen, key, text, agent) {
+    const t0 = this.now(); let slow = false, n = 0;
+    for (;;) {
+      let ok = false;
+      try { ok = !!(await this.relayReady(agent)); } catch { ok = false; }
+      if (ok || this.stopped) break;
+      const waited = this.now() - t0;
+      if (!slow && waited >= this.waitSlowMs) {
+        slow = true; this.log(`handoff: 중계기 준비가 ${Math.round(waited / 1000)}초째 안 됨 — 계속 기다림`);
+        if (this.card?.kind === 'relay-wait') { this.card = this.relayCard(agent, true); this.publish(); }
+      }
+      n++; await this.sleep(waited < this.waitFastMs ? 1000 : 5000);
+    }
+    if (this.stopped) return this.last;
+    this.log(`handoff: 중계기 준비 확인 (${Math.round((this.now() - t0) / 1000)}초, ${n}번 기다림) → 첫 인사`);
+    const out = this.greet(seen, key, text, agent);
+    this.messengerStep(r, out);
     this.last = out; this.publish(); return out;
   }
+  stop() { this.stopped = true; }
 
   /** 카드의 「나중에」 — 카드만 내린다. 상태 파일은 건드리지 않는다. */
   dismiss() { this.card = null; this.publish(); return { ok: true }; }

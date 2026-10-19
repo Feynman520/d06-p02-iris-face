@@ -12,8 +12,9 @@ import path from 'node:path';
 import {
   HANDOFF_SCHEMA, SETUP_STAGES, handoffFile, receiptFile, handoffExists, readHandoff,
   receiptSetupOk, receiptLoginOk, handoffLoginOk, resolveState, markMessengerPrompted, resumeTarget, HandoffFlow,
-  CONTRACT_INSTALLER_PATH,
+  CONTRACT_INSTALLER_PATH, relayReady,
 } from '../daemon/handoff.mjs';
+import http from 'node:http';
 import { SetupProgress, progressFile } from '../daemon/progress.mjs';
 import { Finalizer } from '../daemon/finalize.mjs';
 import { needsReinstall, REINSTALL_NOTE, REINSTALL_URL } from '../daemon/update.mjs';
@@ -297,6 +298,70 @@ const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.j
   ok(needsReinstall({ latestPackageVersion: '1.4.5', receipt: { schema: 1 } }) === false, 'reinstall: 구조판이 아직 1.x 면 해당 없음');
   ok(REINSTALL_NOTE === '2.0은 설치 방식이 바뀌어 새로 설치합니다. 기존 자료는 그대로 두고 설치기를 실행하면 됩니다.', '안내 문구가 계약 그대로');
   ok(REINSTALL_URL === 'https://iris-workspace.com/install.html', '홈페이지 링크가 계약 그대로');
+}
+
+// ---------- 7) 첫 인사는 중계기 준비 뒤에(v2.89, 2026-10-19 신고: 코덱스만 고른 새 설치의 첫 세션이 "Reconnecting 1/5…5/5" 뒤 실패) ----------
+{
+  // 가짜 시계·잠: 준비 안 됨 N번 → 됨. 실제로 기다리지 않는다.
+  const r = makeSoul('FLOW-RELAY', { handoff: handoffDoc({ subscriptions: ['chatgpt'], leadAgent: 'codex', login: { claude: 'not-needed', chatgpt: 'done' } }) });
+  const sm = fakeSm(); let t = 0, asks = 0; const seenAgents = []; const pubs = [];
+  const f = flowOf(r, sm, {
+    now: () => t, sleep: async (ms) => { t += ms; },
+    relayReady: async (agent) => { seenAgents.push(agent); asks++; return asks > 100; }, // 100번(≈100초) 뒤에 준비
+    broadcast: (m) => pubs.push(m),
+  });
+  const out = f.runOnce();
+  ok(out.action === 'waiting-relay' && sm.calls.length === 0, '7 중계기 준비 전에는 세션을 만들지 않는다');
+  ok(f.card?.kind === 'relay-wait' && f.card.later === true && f.card.resume === false, '7 「연결 준비」 카드(나중에만)');
+  ok(!/TeamClaude/i.test([f.card.title, ...f.card.lines].join(' ')) && /Codex/.test(f.card.lines[0]), '7 카드 글: 주도 에이전트 이름 · "TeamClaude" 0회');
+  ok(!fs.existsSync(f.seenFile()), '7 기다리는 동안은 "인사했다"고 적지 않는다');
+  const done = await f.waiting;
+  ok(done.action === 'created' && sm.calls.length === 1 && sm.calls[0].agent === 'codex' && sm.calls[0].prompt === handoffDoc().firstMessage, '7 준비되면 그때 첫 인사(코덱스 · firstMessage 그대로)');
+  ok(seenAgents.every(a => a === 'codex') && asks === 101, `7 주도 에이전트 계정으로만 확인(${asks}번)`);
+  ok(JSON.parse(fs.readFileSync(f.seenFile(), 'utf8')).greetedFor, '7 보낸 뒤에야 "인사했다" 기록');
+  ok(pubs.some(m => m.card?.kind === 'relay-wait' && /오래/.test(m.card.title)), '7 90초가 지나면 카드 글이 "오래 걸린다"로 바뀐다');
+  ok(f.card?.kind === 'messenger-prompt', '7 첫 인사 뒤 메신저 안내는 그대로');
+}
+{
+  // 「나중에」로 카드를 내려도 기다림·첫 인사는 계속된다
+  const r = makeSoul('FLOW-RELAY-LATER');
+  const sm = fakeSm(); let ready = false;
+  const f = flowOf(r, sm, { sleep: async () => { ready = true; }, relayReady: async () => ready });
+  f.runOnce(); f.dismiss();
+  ok(f.card === null, '7 「나중에」 = 카드만 내림');
+  const done = await f.waiting;
+  ok(done.action === 'created' && sm.calls[0]?.agent === 'claude', '7 카드를 내려도 준비되면 첫 인사(클로드 설치도 같은 길)');
+}
+{
+  // relayReady 가 없으면(중계기 도구 없는 설치) 예전처럼 바로 보낸다
+  const r = makeSoul('FLOW-NORELAY'); const sm = fakeSm();
+  ok(flowOf(r, sm).runOnce().action === 'created' && sm.calls.length === 1, '7 중계기 도구가 없으면 바로 보낸다(예전 동작)');
+}
+{
+  // relayReady(): 가짜 중계기 상태 주소 — 그 에이전트의 켜진 계정이 있어야 true. 꺼진 포트·깨진 JSON·끈 계정 = false.
+  let body = '';
+  const srv = http.createServer((req, res) => { if (req.url === '/teamclaude/status') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(body); } else { res.writeHead(404); res.end(); } });
+  await new Promise((res) => srv.listen(0, '127.0.0.1', res));
+  const port = srv.address().port;
+  body = JSON.stringify({ accounts: [{ provider: 'anthropic', disabled: false }] });
+  ok(await relayReady('claude', { port }) === true && await relayReady('codex', { port }) === false, '7 relayReady: 클로드 계정만 있으면 claude=true · codex=false');
+  body = JSON.stringify({ accounts: [{ provider: 'codex', disabled: true }, { provider: 'anthropic', disabled: false }] });
+  ok(await relayReady('codex', { port }) === false, '7 relayReady: 끈 코덱스 계정은 준비로 치지 않는다');
+  body = JSON.stringify({ accounts: [{ provider: 'codex', disabled: false }] });
+  ok(await relayReady('codex', { port }) === true, '7 relayReady: 켜진 코덱스 계정 = 준비');
+  body = '{broken';
+  ok(await relayReady('codex', { port }) === false, '7 relayReady: 깨진 응답 = 준비 안 됨');
+  await new Promise((res) => srv.close(res));
+  // 상태를 열쇠 없이 못 보는 중계기(401) — 살아 있으니 "켜짐"(영원히 기다리지 않게)
+  const gate = http.createServer((req, res) => { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"type":"error"}'); });
+  await new Promise((res) => gate.listen(0, '127.0.0.1', res));
+  ok(await relayReady('codex', { port: gate.address().port }) === true, '7 relayReady: 401(열쇠 필요) = 중계기는 켜짐으로 친다');
+  await new Promise((res) => gate.close(res));
+  ok(await relayReady('codex', { port, timeoutMs: 500 }) === false, '7 relayReady: 중계기가 꺼져 있으면 false(예외 없이)');
+  const src = fs.readFileSync(new URL('../daemon/server.mjs', import.meta.url), 'utf8');
+  ok(/relayReady: dashDir\(\) \? \(agent\) => relayReady\(agent\) : null/.test(src), '7 데몬: 중계기 도구가 있는 설치에서만 기다림을 켠다');
+  const ui = fs.readFileSync(new URL('../app/handoff.js', import.meta.url), 'utf8');
+  ok(/'relay-wait': \{/.test(ui), '7 화면: 「연결 준비」 카드 종류');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
