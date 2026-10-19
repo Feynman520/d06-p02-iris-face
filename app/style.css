@@ -566,6 +566,16 @@ a { color: var(--iris); }
 /* ---- 인증(v2.84): 열쇠 행 = 이름 + 만료 설명 | 오른쪽 D-값 + 갱신 단추. 곧 만료 = 주황, 만료 = 빨강. 톱니 버튼 점 = 알릴 것 있음 ---- */
 #st-auth-h { display: inline-flex; align-items: center; gap: 7px; }
 .auth-row { cursor: default; }
+/* 열쇠 두 종류로 나눠 보기(v2.88): IRIS 열쇠 | Claude 계정 | Codex 계정 — 묶음 머리 + 행마다 종류 알약 */
+.auth-sec + .auth-sec { margin-top: 6px; border-top: 1px solid var(--line); }
+.auth-sec-h { display: flex; align-items: center; gap: 8px; padding: 12px 0 4px; flex-wrap: wrap; }
+.auth-sec-h .chip { font-size: 11.5px; }
+.auth-sec-t { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.auth-sec-t svg { color: var(--iris); }
+.auth-sec-h small { font-size: 11.5px; color: var(--ink-3); }
+.auth-kind { display: inline-block; margin-right: 7px; padding: 0 7px; border-radius: 999px; font-size: 10.5px; line-height: 16px; border: 1px solid var(--line-2); color: var(--ink-2); vertical-align: 1px; }
+.auth-kind.long { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.auth-kind.short { color: var(--ink-2); }
 .auth-right { flex: none; display: inline-flex; align-items: center; gap: 8px; }
 .auth-d { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .auth-row.soon .auth-d { color: var(--warn); font-weight: 600; }

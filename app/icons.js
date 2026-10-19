@@ -24,6 +24,7 @@
     palette: '<circle cx="12" cy="12" r="8.5"/><circle cx="8.5" cy="10" r="1" fill="currentColor"/><circle cx="12" cy="7.5" r="1" fill="currentColor"/><circle cx="15.5" cy="10" r="1" fill="currentColor"/><path d="M12 20.5c-1.5 0-2-1-2-2s.8-2 2-2h1.5a3 3 0 0 0 3-3"/>', // 설정 목차 「디자인」(v2.87)
     terminal: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/>', // 설정 목차 「세션 기본값」(v2.87)
     refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/>', // 설정 목차 「업데이트·정보」(v2.87)
+    key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/>', // 설정 → 계정·보안 「IRIS 열쇠」(v2.88)
     pencil: '<path d="M4.5 19.5h3.8L18.6 9.2a2.2 2.2 0 0 0-3.1-3.1L5.2 16.4z"/><path d="m14 7.6 3.1 3.1"/>', // 이름 바꾸기 연필(v2.86)
   };
   const NAMES = Object.keys(PATHS);

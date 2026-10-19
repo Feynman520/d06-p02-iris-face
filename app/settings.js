@@ -133,7 +133,8 @@ window.Settings = (() => {
     set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
     set('#st-sum-mods', modsSum);
     const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);
-    set('#st-sum-account', !hasAuth ? '비밀 금고' : !items.length ? '열쇠 상태 확인 전' : due.length ? `갱신 필요 ${due.length}개` : `열쇠 ${items.length}개 정상`);
+    const nCl = items.filter(i => i.group !== 'iris' && i.provider !== 'codex').length, nCx = items.filter(i => i.group !== 'iris' && i.provider === 'codex').length;
+    set('#st-sum-account', !hasAuth ? '비밀 금고' : !items.length ? '열쇠 상태 확인 전' : due.length ? `갱신 필요 ${due.length}개` : `Claude ${nCl} · Codex ${nCx} · 모두 정상`);
     const ba = $('#st-badge-account'); if (ba) { ba.hidden = !due.length; ba.textContent = String(due.length); ba.classList.toggle('bad', due.some(i => i.level === 'expired')); }
     const dev = upd?.mode === 'dev', newV = !dev && upd?.headline?.version;
     set('#st-sum-about', newV ? `새 판 v${newV}` : `v${health?.version || '—'}${dev ? ' · 개발 폴더' : ''}`);
@@ -323,25 +324,31 @@ window.Settings = (() => {
     renderNav();
     sec.hidden = !(auth?.available || health?.features?.auth);
     if (sec.hidden) return;
-    if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('shield', 15) + '<span>인증</span>'; head.dataset.iced = '1'; }
+    if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('shield', 15) + '<span>로그인 열쇠</span>'; head.dataset.iced = '1'; }
     btn.disabled = authBusy;
     // 급한 열쇠가 맨 위(v2.87): 만료 → 곧 만료 → 모름 → 정상, 같은 단계면 남은 날 적은 순, 선택 항목(optional)은 맨 아래
     const RANK = { expired: 0, soon: 1, unknown: 2, ok: 3 };
     const items = (auth?.info?.items || []).slice().sort((a, b) => (!!a.optional - !!b.optional) || ((RANK[a.level] ?? 2) - (RANK[b.level] ?? 2)) || ((a.daysLeft ?? 9999) - (b.daysLeft ?? 9999)));
     const job = auth?.job;
     if (!items.length) { host.innerHTML = '<div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div>'; return; }
-    const rows = items.map(i => {
+    const row = (i) => {
       const when = i.expiresAt ? fmtWhen(new Date(i.expiresAt).toISOString()) : '';
-      const kind = i.longKey ? '1년 열쇠' : i.group === 'iris' ? '30일 로그인' : i.provider === 'codex' ? 'ChatGPT 로그인' : '30일 로그인';
-      const desc = [kind, when ? `만료 ${when}` : '만료일 모름', i.optional ? 'IRIS 창은 1년 열쇠 사용 중' : ''].filter(Boolean).join(' · ');
+      const [kind, kcls] = i.longKey ? ['1년 열쇠', 'long'] : i.provider === 'codex' ? ['ChatGPT 로그인', ''] : ['30일 로그인', 'short'];
+      const desc = [when ? `만료 ${when}` : '만료일 모름', i.optional ? 'IRIS 창은 1년 열쇠 사용 중' : ''].filter(Boolean).join(' · ');
       const d = i.level === 'expired' ? '만료' : i.daysLeft != null ? `D-${i.daysLeft}` : AUTH_WORD[i.level];
       const label = !i.longKey && !i.optional && (i.group === 'iris' || i.renew === 'teamclaude-longkey') ? '1년 열쇠 받기' : '갱신';
       const running = job?.running && job.id === i.id;
-      return `<div class="st-opt auth-row ${esc(i.level)}${i.optional ? ' optional' : ''}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small>${esc(desc)}</small></span>`
+      return `<div class="st-opt auth-row ${esc(i.level)}${i.optional ? ' optional' : ''}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small><span class="auth-kind ${kcls}">${esc(kind)}</span>${esc(desc)}</small></span>`
         + `<span class="auth-right"><span class="auth-d">${esc(d)}</span><button class="text-btn ${i.level === 'ok' ? 'outline' : 'accent'}" data-renew="1" ${job?.running ? 'disabled' : ''} title="브라우저에서 승인 한 번으로 새 열쇠를 받습니다">${running ? '승인 대기…' : esc(label)}</button></span></div>`;
-    }).join('');
-    const checked = auth?.info?.checkedAt ? `<div class="upd-line st-sub">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '';
-    host.innerHTML = rows + checked;
+    };
+    // 열쇠는 두 종류(v2.88, 사용자 신고 "종류·클로드/코덱스 구분이 없다"): IRIS 열쇠(창이 클로드 세션을 열 때 쓰는 것) | 계정 열쇠(중계기가 돌려 쓰는 계정, Claude·Codex 따로)
+    const block = (head, list) => !list.length ? '' : `<div class="auth-sec"><div class="auth-sec-h">${head}</div>${list.map(row).join('')}</div>`;
+    const iris = items.filter(i => i.group === 'iris'), acc = items.filter(i => i.group !== 'iris');
+    const cl = acc.filter(i => i.provider !== 'codex'), cx = acc.filter(i => i.provider === 'codex');
+    host.innerHTML = block(`<span class="auth-sec-t">${Icons.svg('key', 14)}IRIS 열쇠</span><small>IRIS 창이 Claude 세션을 열 때 쓰는 열쇠</small>`, iris)
+      + block(`<span class="chip claude">Claude</span><span class="auth-sec-t">계정 열쇠 ${cl.length}개</span><small>중계기가 번갈아 쓰는 계정</small>`, cl)
+      + block(`<span class="chip codex">Codex</span><span class="auth-sec-t">계정 열쇠 ${cx.length}개</span><small>중계기가 번갈아 쓰는 계정</small>`, cx)
+      + (auth?.info?.checkedAt ? `<div class="upd-line st-sub">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '');
     if (job && (job.running || job.result)) {
       const el = document.createElement('div');
       const r = job.result; el.className = 'auth-job' + (r && r.ok === false ? ' bad' : '');
