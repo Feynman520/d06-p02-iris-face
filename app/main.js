@@ -493,8 +493,7 @@
     else openSettingsModules();
   }
   function openSettingsModules() {
-    if (!Settings.isOpen()) Settings.show();
-    requestAnimationFrame(() => { const el = $('#st-mods'); (el?.closest('section') || el)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+    if (!Settings.isOpen()) Settings.show('mods'); else Settings.showPane('mods'); // v2.87: 설정은 묶음별로 보이므로 「확장 모듈」 묶음을 연다
   }
   async function installModule(name) {
     const m = modules.find(x => x.name === name); if (!m || m.installed !== false || isInstalling(name)) return;

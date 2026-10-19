@@ -21,6 +21,9 @@
     stop: '<circle cx="12" cy="12" r="8.5"/><rect x="9" y="9" width="6" height="6" rx="1"/>', // 대화의 "중단됨" 줄(v2.80)
     shield: '<path d="M12 3.5 5 6.2v5.3c0 4.3 3 7.6 7 9 4-1.4 7-4.7 7-9V6.2z"/><path d="M9.2 12.2l2 2 3.8-4"/>', // 정지 훅 줄(v2.82)
     redo: '<path d="M19 8.5h-9a5 5 0 0 0 0 10h3M19 8.5l-3.5-3.5M19 8.5 15.5 12"/>', // 끊긴 답 이어쓰기 줄(v2.82)
+    palette: '<circle cx="12" cy="12" r="8.5"/><circle cx="8.5" cy="10" r="1" fill="currentColor"/><circle cx="12" cy="7.5" r="1" fill="currentColor"/><circle cx="15.5" cy="10" r="1" fill="currentColor"/><path d="M12 20.5c-1.5 0-2-1-2-2s.8-2 2-2h1.5a3 3 0 0 0 3-3"/>', // 설정 목차 「디자인」(v2.87)
+    terminal: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="m7.5 10 2.5 2-2.5 2M12.5 14.5h4"/>', // 설정 목차 「세션 기본값」(v2.87)
+    refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/>', // 설정 목차 「업데이트·정보」(v2.87)
     pencil: '<path d="M4.5 19.5h3.8L18.6 9.2a2.2 2.2 0 0 0-3.1-3.1L5.2 16.4z"/><path d="m14 7.6 3.1 3.1"/>', // 이름 바꾸기 연필(v2.86)
   };
   const NAMES = Object.keys(PATHS);

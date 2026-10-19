@@ -77,12 +77,12 @@ window.Settings = (() => {
 
   // ---- 패널 ----
   function renderPanel() {
-    $('#st-themes').innerHTML = R.THEMES.map(t => `<button class="st-card theme${t.id === cfg.theme ? ' cur' : ''}" data-theme="${t.id}"><span class="sw" style="background:${t.vars['--base']};border-color:${t.vars['--iris']}"><i style="background:${t.vars['--surface']}"></i><i style="background:${t.vars['--iris']}"></i><i style="background:${t.vars['--iris-2']}"></i></span><span>${esc(t.name)}</span></button>`).join('');
-    // 중앙 애니메이션: 카드마다 작은 캔버스에서 실제로 돌려 보여 준다(패널을 닫으면 정리)
+    // 테마 = 작은 견본(바탕 | 면 대각선 + 강조색 점, v2.87)
+    $('#st-themes').innerHTML = R.THEMES.map(t => `<button class="st-theme${t.id === cfg.theme ? ' cur' : ''}" data-theme="${t.id}" title="${esc(t.name)}"><i style="--th-b:${t.vars['--base']};--th-s:${t.vars['--surface']};--th-a:${t.vars['--iris']}"></i><span>${esc(t.name)}</span></button>`).join('');
+    // 중앙 애니메이션: 카드마다 작은 캔버스에서 실제로 돌려 보여 준다(패널을 닫거나 다른 묶음으로 가면 정리)
     destroyPreviews();
     $('#st-stages').innerHTML = R.STAGES.map(s => `<button class="st-card stage${s.id === cfg.stage ? ' cur' : ''}" data-stage="${s.id}" title="${esc(s.desc)}"><canvas class="stage-pv" data-pv="${s.id}"></canvas><span>${esc(s.name)}</span></button>`).join('');
-    const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0]; const colors = { a: th.vars['--star-a'], b: th.vars['--star-b'], c: th.vars['--star-c'], glow: th.vars['--glow'] };
-    for (const c of $('#st-stages').querySelectorAll('canvas.stage-pv')) previews.push(IrisStars.preview(c, { style: c.dataset.pv, colors }));
+    startPreviews();
     $('#st-density').value = cfg.density; $('#st-density-v').textContent = Math.round(cfg.density * 100) + '%';
     renderStage(IrisStars.status());
     $('#st-pause').checked = !!cfg.pauseWhenDim;
@@ -103,6 +103,41 @@ window.Settings = (() => {
     renderMods();
     renderAuth();
     renderUpdate();
+    renderNav();
+  }
+  // ---- 묶음과 오른쪽 목차(v2.87, 사용자 선택 = 시안 A′): 한 번에 한 묶음만. 마지막으로 본 묶음을 기억한다. ----
+  const PANES = ['design', 'session', 'notify', 'mods', 'account', 'about'];
+  let pane = (() => { try { const p = localStorage.getItem('iris.settings.pane'); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
+  let modsSum = '';
+  // 미리보기 캔버스는 「디자인」 묶음이 보일 때만 돌린다(다른 묶음에서 숨은 캔버스 11개가 GPU 를 쓰지 않게)
+  function startPreviews() {
+    destroyPreviews(); if (!open || pane !== 'design') return;
+    const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0]; const colors = { a: th.vars['--star-a'], b: th.vars['--star-b'], c: th.vars['--star-c'], glow: th.vars['--glow'] };
+    for (const c of $('#st-stages').querySelectorAll('canvas.stage-pv')) previews.push(IrisStars.preview(c, { style: c.dataset.pv, colors }));
+  }
+  function showPane(p) {
+    if (!PANES.includes(p)) return;
+    pane = p; try { localStorage.setItem('iris.settings.pane', p); } catch {}
+    for (const el of document.querySelectorAll('#settings .st-pane')) el.hidden = el.dataset.pane !== p;
+    for (const el of document.querySelectorAll('#st-nav .st-nav-i')) el.classList.toggle('cur', el.dataset.pane === p);
+    const body = document.querySelector('#settings .st-body'); if (body) body.scrollTop = 0;
+    if (p === 'design') startPreviews(); else destroyPreviews();
+  }
+  const optText = (id) => $(id)?.selectedOptions?.[0]?.textContent || '';
+  /** 목차 아래 작은 글씨 = 지금 값 한 줄, 노란·빨간 숫자 = 갱신이 필요한 로그인 열쇠, 청보라 = 새 판. */
+  function renderNav() {
+    const set = (id, t) => { const el = $(id); if (el) { el.textContent = t; el.title = t; } };
+    const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0], st = R.STAGES.find(s => s.id === cfg.stage) || R.STAGES[0];
+    set('#st-sum-design', `${th.name} · ${st.name}`);
+    set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}`);
+    set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
+    set('#st-sum-mods', modsSum);
+    const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);
+    set('#st-sum-account', !hasAuth ? '비밀 금고' : !items.length ? '열쇠 상태 확인 전' : due.length ? `갱신 필요 ${due.length}개` : `열쇠 ${items.length}개 정상`);
+    const ba = $('#st-badge-account'); if (ba) { ba.hidden = !due.length; ba.textContent = String(due.length); ba.classList.toggle('bad', due.some(i => i.level === 'expired')); }
+    const dev = upd?.mode === 'dev', newV = !dev && upd?.headline?.version;
+    set('#st-sum-about', newV ? `새 판 v${newV}` : `v${health?.version || '—'}${dev ? ' · 개발 폴더' : ''}`);
+    const bu = $('#st-badge-about'); if (bu) { bu.hidden = !newV; bu.textContent = '새'; }
   }
   // ---- 모듈(콘센트, 2026-09-11): 목록은 데몬 /api/modules. 이름·아이콘·설명은 전부 module.json 에서 온다(본체는 어떤 모듈인지 모른다). ----
   // 목록 = 데몬 /api/catalog(공식 IRIS 모듈 카탈로그 + 설치 여부, v2.53). 행마다 설치됨/미설치 표와 그에 맞는 버튼(설치 / 재시작·제거).
@@ -116,7 +151,10 @@ window.Settings = (() => {
       const r = await fetch('/api/catalog');
       if (r.ok) list = (await r.json()).list || [];
       else { const r2 = await fetch('/api/modules'); list = ((await r2.json()).list || []).map(m => ({ ...m, installed: true, catalog: false })); } // 카탈로그 라우트가 없는 옛 데몬(⏻ 재실행 전): 설치된 것만
-    } catch { host.innerHTML = '<div class="mods-empty">데몬에 연결되지 않아 목록을 읽지 못했습니다.</div>'; return; }
+    } catch { host.innerHTML = '<div class="mods-empty">데몬에 연결되지 않아 목록을 읽지 못했습니다.</div>'; modsSum = '목록을 읽지 못함'; renderNav(); return; }
+    const nIn = list.filter(m => m.installed).length;
+    modsSum = !list.length ? '없음' : nIn ? `설치 ${nIn}개${list.length > nIn ? ` · 미설치 ${list.length - nIn}개` : ''}` : list.length === 1 ? `${list[0].label} 미설치` : `미설치 ${list.length}개`;
+    renderNav();
     if (!list.length) { host.innerHTML = '<div class="mods-empty">모듈이 없습니다.</div>'; return; }
     host.innerHTML = list.map(m => {
       let meta, actions;
@@ -162,6 +200,7 @@ window.Settings = (() => {
   function renderUpdate() {
     const host = $('#st-update'), btn = $('#st-update-act'), auto = $('#st-update-auto'), head = $('#st-update-h');
     if (!host) return;
+    renderNav();
     if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('bolt', 15) + '<span>업데이트</span>'; head.dataset.iced = '1'; } // 아이콘은 icons.js 이름만(이모지 0)
     const dev = upd?.mode === 'dev';
     auto.checked = upd ? upd.enabled !== false : true; auto.disabled = !upd;
@@ -281,11 +320,14 @@ window.Settings = (() => {
   }
   function renderAuth() {
     const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
+    renderNav();
     sec.hidden = !(auth?.available || health?.features?.auth);
     if (sec.hidden) return;
     if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('shield', 15) + '<span>인증</span>'; head.dataset.iced = '1'; }
     btn.disabled = authBusy;
-    const items = auth?.info?.items || [];
+    // 급한 열쇠가 맨 위(v2.87): 만료 → 곧 만료 → 모름 → 정상, 같은 단계면 남은 날 적은 순, 선택 항목(optional)은 맨 아래
+    const RANK = { expired: 0, soon: 1, unknown: 2, ok: 3 };
+    const items = (auth?.info?.items || []).slice().sort((a, b) => (!!a.optional - !!b.optional) || ((RANK[a.level] ?? 2) - (RANK[b.level] ?? 2)) || ((a.daysLeft ?? 9999) - (b.daysLeft ?? 9999)));
     const job = auth?.job;
     if (!items.length) { host.innerHTML = '<div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div>'; return; }
     const rows = items.map(i => {
@@ -351,7 +393,8 @@ window.Settings = (() => {
   }
   const koName = (s) => (String(s || '').match(/\(([^)]+)\)\s*$/) || [])[1] || s; // 'Sejun Ham (함세준)' → '함세준'
   function applyMaker() { $('#maker').textContent = `v${health?.version || '—'} · ${koName(health?.about?.author || ABOUT_DEF.author)}`; }
-  function show() { open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); renderPanel(); }
+  /** p = 열 묶음(없으면 마지막으로 본 묶음). 예: 헤더 모듈 버튼이 멈춘 모듈을 보여 줄 때 show('mods'). */
+  function show(p) { open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(p)) pane = p; showPane(pane); renderPanel(); }
   function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
   function pick(patch) { Object.assign(cfg, patch); applyAll(); save(); renderPanel(); }
 
@@ -360,6 +403,10 @@ window.Settings = (() => {
     load(); applyAll();
     $('#btn-settings').onclick = () => (open ? hide() : show());
     $('#st-close').onclick = hide;
+    // 오른쪽 목차(v2.87): 아이콘은 icons.js 이름만(이모지 0)
+    for (const el of document.querySelectorAll('#st-nav [data-icon]')) el.innerHTML = Icons.svg(el.dataset.icon, 17);
+    for (const el of document.querySelectorAll('#st-nav .st-nav-i')) el.title = el.querySelector('.st-nav-t').firstChild.textContent.trim(); // 좁은 창(아이콘만)에서도 이름이 보이게
+    $('#st-nav').addEventListener('click', (e) => { const b = e.target.closest('.st-nav-i[data-pane]'); if (b) showPane(b.dataset.pane); });
     $('#settings').addEventListener('click', (e) => {
       const t = e.target.closest('#st-themes [data-theme]'); if (t) return pick({ theme: t.dataset.theme });
       const s = e.target.closest('#st-stages [data-stage]'); if (s) return pick({ stage: s.dataset.stage });
@@ -402,5 +449,5 @@ window.Settings = (() => {
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth };
+  return { init, show, hide, about, showPane, pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth };
 })();
