@@ -262,7 +262,7 @@ window.Settings = (() => {
   }
 
   // ---- 인증(v2.84, 2026-10-15 "Login expired" 사고): 로그인 열쇠별 만료일과 갱신 단추. 상태 원천 = 데몬 GET /api/auth · ws {type:'auth'}. ----
-  // 열쇠 값은 화면에 오지 않는다(데몬 auth.mjs). 곧 만료·만료가 있으면 ⚙ 단추에 점 + 하루 한 번 창 알림.
+  // 열쇠 값은 화면에 오지 않는다(데몬 auth.mjs). 곧 만료·만료가 있으면 설정(톱니) 단추에 점 + 하루 한 번 창 알림.
   let auth = null, authBusy = false;
   const AUTH_WORD = { ok: '정상', soon: '곧 만료', expired: '만료', unknown: '모름' };
   const authDue = () => (auth?.info?.items || []).filter(i => !i.optional && (i.level === 'soon' || i.level === 'expired'));
