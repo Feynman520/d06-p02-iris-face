@@ -198,35 +198,34 @@ function fakeSm(list = []) {
 }
 const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.join(root, '_state'), sm, log: () => {}, broadcast: () => {}, spawnImpl: () => ({ pid: 4242, unref() {} }), ...over });
 {
+  // v2.90(2026-10-19 사용자 결정): ready 여도 세션을 자동으로 열지 않는다 — 화면이 튜토리얼을 띄우고, 끝나면 메신저 안내
   const r = makeSoul('FLOW-READY');
   const sm = fakeSm();
   const f = flowOf(r, sm);
   const out = f.runOnce();
-  ok(out.state === 'ready' && out.action === 'created', 'ready: 세션을 새로 열었다');
-  ok(sm.calls[0].cwd === r && sm.calls[0].agent === 'claude', 'ready: 영혼 루트 + 주도 에이전트(claude)');
-  ok(sm.calls[0].prompt === handoffDoc().firstMessage, 'ready: firstMessage 를 그대로 보낸다(창이 문장을 만들지 않음)');
-  ok(f.card?.kind === 'messenger-prompt' && f.card.openModule === 'messenger', 'ready: 메신저 안내 카드 1회');
-  ok(JSON.parse(fs.readFileSync(handoffFile(r), 'utf8')).messenger.prompted === true, 'ready: 표시하자마자 prompted=true 기록');
+  ok(out.state === 'ready' && out.action === 'tutorial' && sm.calls.length === 0, 'ready: 세션을 만들지도 보내지도 않고 튜토리얼');
+  ok(f.card === null && f.info().tutorial.due === true, 'ready: 튜토리얼 동안 메신저 안내는 미룬다');
+  f.finishTutorial({ skipped: false });
+  ok(f.card?.kind === 'messenger-prompt' && f.card.openModule === 'messenger', '튜토리얼이 끝나면 메신저 안내 카드 1회');
+  ok(JSON.parse(fs.readFileSync(handoffFile(r), 'utf8')).messenger.prompted === true, '표시하자마자 prompted=true 기록');
   ok(f.card.later === true && f.card.resume === false, '메신저 카드에는 「나중에」만');
   ok(!/TeamClaude/i.test([f.card.title, ...f.card.lines].join(' ')), '메신저 안내 카드 글에도 "TeamClaude" 0회');
-  // 두 번째 데몬 시작 — 새 흐름 객체로 다시 불러도 인사·안내를 되풀이하지 않는다
-  const f2 = flowOf(r, fakeSm());
+  // 두 번째 데몬 시작 — 튜토리얼·메신저 안내를 되풀이하지 않는다
+  const sm2 = fakeSm(); const f2 = flowOf(r, sm2);
   const out2 = f2.runOnce();
-  ok(out2.action === 'already-greeted' && f2.card === null, '다시 시작해도 첫 인사·메신저 안내를 되풀이하지 않는다');
+  ok(out2.action !== 'tutorial' && f2.card === null && sm2.calls.length === 0, '다시 시작해도 튜토리얼·메신저 안내를 되풀이하지 않는다');
 }
 {
-  // 같은 폴더에 살아 있는 세션이 있으면 새로 열지 않고 요청문만 보낸다(launch.mjs --first-session 과 같은 규칙)
+  // 살아 있는 세션이 있어도(같은 폴더) 창은 아무것도 보내지 않는다 — firstMessage 는 이제 쓰지 않음
   const r = makeSoul('FLOW-DUP');
   const sm = fakeSm([{ id: 's1', cwd: r, status: 'idle' }]);
-  const out = flowOf(r, sm).runOnce();
-  ok(out.action === 'sent' && sm.calls[0].op === 'send' && sm.calls[0].id === 's1', 'ready: 살아 있는 세션에는 보내기만(중복 세션 없음)');
+  ok(flowOf(r, sm).runOnce().action === 'tutorial' && sm.calls.length === 0, 'ready: 살아 있는 세션에도 보내지 않는다');
 }
 {
-  const r = makeSoul('FLOW-BUSY');
-  const sm = fakeSm([{ id: 's1', cwd: r, status: 'busy' }]);
-  const f = flowOf(r, sm);
-  ok(f.runOnce().action === 'busy-skip' && sm.calls.length === 0, 'ready: 바쁜 세션은 건드리지 않는다');
-  ok(!fs.existsSync(f.seenFile()) || !JSON.parse(fs.readFileSync(f.seenFile(), 'utf8')).greetedFor, '미룬 인사는 "했다"고 적지 않는다(다음에 다시 시도)');
+  // 이미 역할(R) 폴더가 있는 영혼(업데이트한 PC·개발 PC) — 튜토리얼 자동 표시 없음, 세션 0
+  const r = makeSoul('FLOW-ROLES'); fs.mkdirSync(path.join(r, 'R01-교사(Teacher)'));
+  const sm = fakeSm(); const f = flowOf(r, sm);
+  ok(f.runOnce().action !== 'tutorial' && sm.calls.length === 0 && f.info().tutorial.due === false, 'R 폴더가 있으면 튜토리얼 자동 표시 없음 · 세션 0');
 }
 {
   const r = makeSoul('FLOW-CARD', {
@@ -300,43 +299,7 @@ const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.j
   ok(REINSTALL_URL === 'https://iris-workspace.com/install.html', '홈페이지 링크가 계약 그대로');
 }
 
-// ---------- 7) 첫 인사는 중계기 준비 뒤에(v2.89, 2026-10-19 신고: 코덱스만 고른 새 설치의 첫 세션이 "Reconnecting 1/5…5/5" 뒤 실패) ----------
-{
-  // 가짜 시계·잠: 준비 안 됨 N번 → 됨. 실제로 기다리지 않는다.
-  const r = makeSoul('FLOW-RELAY', { handoff: handoffDoc({ subscriptions: ['chatgpt'], leadAgent: 'codex', login: { claude: 'not-needed', chatgpt: 'done' } }) });
-  const sm = fakeSm(); let t = 0, asks = 0; const seenAgents = []; const pubs = [];
-  const f = flowOf(r, sm, {
-    now: () => t, sleep: async (ms) => { t += ms; },
-    relayReady: async (agent) => { seenAgents.push(agent); asks++; return asks > 100; }, // 100번(≈100초) 뒤에 준비
-    broadcast: (m) => pubs.push(m),
-  });
-  const out = f.runOnce();
-  ok(out.action === 'waiting-relay' && sm.calls.length === 0, '7 중계기 준비 전에는 세션을 만들지 않는다');
-  ok(f.card?.kind === 'relay-wait' && f.card.later === true && f.card.resume === false, '7 「연결 준비」 카드(나중에만)');
-  ok(!/TeamClaude/i.test([f.card.title, ...f.card.lines].join(' ')) && /Codex/.test(f.card.lines[0]), '7 카드 글: 주도 에이전트 이름 · "TeamClaude" 0회');
-  ok(!fs.existsSync(f.seenFile()), '7 기다리는 동안은 "인사했다"고 적지 않는다');
-  const done = await f.waiting;
-  ok(done.action === 'created' && sm.calls.length === 1 && sm.calls[0].agent === 'codex' && sm.calls[0].prompt === handoffDoc().firstMessage, '7 준비되면 그때 첫 인사(코덱스 · firstMessage 그대로)');
-  ok(seenAgents.every(a => a === 'codex') && asks === 101, `7 주도 에이전트 계정으로만 확인(${asks}번)`);
-  ok(JSON.parse(fs.readFileSync(f.seenFile(), 'utf8')).greetedFor, '7 보낸 뒤에야 "인사했다" 기록');
-  ok(pubs.some(m => m.card?.kind === 'relay-wait' && /오래/.test(m.card.title)), '7 90초가 지나면 카드 글이 "오래 걸린다"로 바뀐다');
-  ok(f.card?.kind === 'messenger-prompt', '7 첫 인사 뒤 메신저 안내는 그대로');
-}
-{
-  // 「나중에」로 카드를 내려도 기다림·첫 인사는 계속된다
-  const r = makeSoul('FLOW-RELAY-LATER');
-  const sm = fakeSm(); let ready = false;
-  const f = flowOf(r, sm, { sleep: async () => { ready = true; }, relayReady: async () => ready });
-  f.runOnce(); f.dismiss();
-  ok(f.card === null, '7 「나중에」 = 카드만 내림');
-  const done = await f.waiting;
-  ok(done.action === 'created' && sm.calls[0]?.agent === 'claude', '7 카드를 내려도 준비되면 첫 인사(클로드 설치도 같은 길)');
-}
-{
-  // relayReady 가 없으면(중계기 도구 없는 설치) 예전처럼 바로 보낸다
-  const r = makeSoul('FLOW-NORELAY'); const sm = fakeSm();
-  ok(flowOf(r, sm).runOnce().action === 'created' && sm.calls.length === 1, '7 중계기 도구가 없으면 바로 보낸다(예전 동작)');
-}
+// ---------- 7) relayReady(v2.89 함수 — v2.90 에선 자동 첫 인사 대신 튜토리얼 「첫 대화 해 보기」 전 확인 GET /api/relay/ready 에 쓴다) ----------
 {
   // relayReady(): 가짜 중계기 상태 주소 — 그 에이전트의 켜진 계정이 있어야 true. 꺼진 포트·깨진 JSON·끈 계정 = false.
   let body = '';
@@ -359,9 +322,10 @@ const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.j
   await new Promise((res) => gate.close(res));
   ok(await relayReady('codex', { port, timeoutMs: 500 }) === false, '7 relayReady: 중계기가 꺼져 있으면 false(예외 없이)');
   const src = fs.readFileSync(new URL('../daemon/server.mjs', import.meta.url), 'utf8');
-  ok(/relayReady: dashDir\(\) \? \(agent\) => relayReady\(agent\) : null/.test(src), '7 데몬: 중계기 도구가 있는 설치에서만 기다림을 켠다');
+  ok(/\/api\/relay\/ready/.test(src) && /await relayReady\(agent\)/.test(src), '7 데몬: GET /api/relay/ready 가 relayReady 를 쓴다');
+  ok(!/relayReady:/.test(src), '7 데몬: HandoffFlow 에 기다림 옵션을 넘기지 않는다(자동 첫 인사 없음)');
   const ui = fs.readFileSync(new URL('../app/handoff.js', import.meta.url), 'utf8');
-  ok(/'relay-wait': \{/.test(ui), '7 화면: 「연결 준비」 카드 종류');
+  ok(!/'relay-wait': \{/.test(ui), '7 화면: 쓰지 않는 「연결 준비」 카드 종류는 지웠다');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

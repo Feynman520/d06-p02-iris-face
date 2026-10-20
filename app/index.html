@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/app/style.css">
 <link rel="stylesheet" href="/app/subagents.css">
+<link rel="stylesheet" href="/app/tutorial.css">
 </head>
 <body>
 <div id="app">
@@ -53,6 +54,15 @@
           <div class="st-opt"><span class="st-opt-text">승인<small>명령을 실행하기 전에 물을지</small></span><select id="st-approval" class="pick"></select></div>
           <div class="st-opt"><span class="st-opt-text">샌드박스<small>파일·네트워크에 닿을 수 있는 범위</small></span><select id="st-sandbox" class="pick"></select></div></section>
       </div>
+      <!-- v2.90: 온톨로지(app/ontology.js — 방사형 나무 그래프) · 도구(app/tools.js — 스킬·MCP·플러그인). 묶음을 처음 열 때 데몬에서 읽는다. -->
+      <div class="st-pane wide" data-pane="ontology" hidden>
+        <div class="st-pane-h"><h2>온톨로지</h2><p>내 폴더 구조 — 역할 → 영역 → 프로젝트</p></div>
+        <div id="st-onto" class="st-onto"></div>
+      </div>
+      <div class="st-pane" data-pane="tools" hidden>
+        <div class="st-pane-h"><h2>도구</h2><p>도구 = 에이전트의 팔다리 · 이 IRIS에 설치된 스킬·MCP·플러그인</p></div>
+        <div id="st-tools" class="st-tools"></div>
+      </div>
       <!-- 알림·모듈(v2.52, 2026-09-13): 한 줄 = 제목 + 한 줄 설명 + 오른쪽 스위치(.st-opt). 절 제목 오른쪽에 그 절의 유일한 행동 버튼. -->
       <div class="st-pane" data-pane="notify" hidden>
         <div class="st-pane-h"><h2>알림</h2><p>작업이 끝났을 때 알려 주기</p></div>
@@ -67,8 +77,9 @@
       <div class="st-pane" data-pane="account" hidden>
         <div class="st-pane-h"><h2>계정·보안</h2><p>로그인 열쇠와 비밀 금고</p></div>
         <!-- 인증(v2.84, 2026-10-15): 로그인 열쇠별 만료일 | 갱신 단추. 곧 만료(3일 안)는 주황, 만료는 빨강. 절 머리 단추 = 다시 확인. -->
-        <section id="st-auth-sec" class="st-grp" hidden><h3 class="st-h-row"><span id="st-auth-h">인증</span><button id="st-auth-act" class="text-btn outline" type="button">다시 확인</button></h3>
-          <div id="st-auth" class="upd"></div></section>
+        <!-- v2.90: 머리(로그인 열쇠 + 다시 확인) 아래 카드 세 장 = IRIS 열쇠 · Claude 열쇠 · Codex 열쇠(settings.js renderAuth 가 #st-auth 안에 section.st-grp 로 그림) -->
+        <div id="st-auth-sec" class="st-keys" hidden><div class="st-keys-h"><span id="st-auth-h">인증</span><button id="st-auth-act" class="text-btn outline" type="button">다시 확인</button></div>
+          <div id="st-auth" class="upd"></div></div>
         <section class="st-grp"><h3 class="st-h-row"><span>비밀 금고</span><button id="st-recovery" class="text-btn outline" type="button">복구 문구 보기</button></h3>
           <div class="st-opt"><span class="st-opt-text">복구 문구<small>세팅 때 창이 금고를 만들며 문구를 이 컴퓨터에 보관했습니다. USB로 옮기거나 다른 컴퓨터에서 열려면 그 전에 한 번 보고 종이에 적어 두세요(화면 창으로만 보입니다).</small></span></div></section>
       </div>
@@ -79,13 +90,16 @@
           <div id="st-update" class="upd"></div>
           <label class="st-opt"><span class="st-opt-text">하루 한 번 새 판 확인<small>켜 두면 하루 한 번 새 판이 있는지만 읽습니다 — 내려받기는 위 단추를 누를 때만</small></span><input id="st-update-auto" class="sw" type="checkbox"></label></section>
         <section class="st-grp"><h3>정보</h3>
-          <div class="st-opt"><span class="st-opt-text">IRIS 폴더<small><code id="st-root"></code></small></span></div></section>
+          <div class="st-opt"><span class="st-opt-text">IRIS 폴더<small><code id="st-root"></code></small></span></div>
+          <div class="st-opt"><span class="st-opt-text">처음 쓰는 법<small>에이전트·온톨로지·도구를 다시 둘러보고 폴더를 더 만들 수 있습니다</small></span><button id="st-tutorial" class="text-btn outline" type="button">튜토리얼 다시 보기</button></div></section>
       </div>
     </div></div>
     <!-- 오른쪽 목차: 아이콘·이름·지금 값 한 줄 요약·주의 숫자. 맨 아래 = 전부 종료 + 버전(어느 묶음에서든 한 번에). -->
     <nav id="st-nav" class="st-nav">
       <button class="st-nav-i" data-pane="design"><span class="st-nav-ic" data-icon="palette"></span><span class="st-nav-t">디자인<small id="st-sum-design"></small></span></button>
       <button class="st-nav-i" data-pane="session"><span class="st-nav-ic" data-icon="terminal"></span><span class="st-nav-t">세션 기본값<small id="st-sum-session"></small></span></button>
+      <button class="st-nav-i" data-pane="ontology"><span class="st-nav-ic" data-icon="graph"></span><span class="st-nav-t">온톨로지<small id="st-sum-ontology"></small></span></button>
+      <button class="st-nav-i" data-pane="tools"><span class="st-nav-ic" data-icon="wrench"></span><span class="st-nav-t">도구<small id="st-sum-tools"></small></span></button>
       <button class="st-nav-i" data-pane="notify"><span class="st-nav-ic" data-icon="bell"></span><span class="st-nav-t">알림<small id="st-sum-notify"></small></span></button>
       <button class="st-nav-i" data-pane="mods"><span class="st-nav-ic" data-icon="plug"></span><span class="st-nav-t">확장 모듈<small id="st-sum-mods"></small></span></button>
       <button class="st-nav-i" data-pane="account"><span class="st-nav-ic" data-icon="shield"></span><span class="st-nav-t">계정·보안<small id="st-sum-account"></small></span><span class="st-nav-b" id="st-badge-account" hidden></span></button>
@@ -211,12 +225,15 @@
 <script src="/app/transcript.js"></script>
 <script src="/app/subagents.js"></script>
 <script src="/app/folders.js"></script>
+<script src="/app/ontology.js"></script>
+<script src="/app/tools.js"></script>
 <script src="/app/settings.js"></script>
 <script src="/app/voice.js"></script>
 <script src="/app/notify.js"></script>
 <script src="/app/approval.js"></script>
 <script src="/app/handoff.js"></script>
 <script src="/app/memory.js"></script>
+<script src="/app/tutorial.js"></script>
 <script src="/app/main.js"></script>
 </body>
 </html>

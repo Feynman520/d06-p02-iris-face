@@ -566,8 +566,13 @@ a { color: var(--iris); }
 /* ---- 인증(v2.84): 열쇠 행 = 이름 + 만료 설명 | 오른쪽 D-값 + 갱신 단추. 곧 만료 = 주황, 만료 = 빨강. 톱니 버튼 점 = 알릴 것 있음 ---- */
 #st-auth-h { display: inline-flex; align-items: center; gap: 7px; }
 .auth-row { cursor: default; }
-/* 열쇠 두 종류로 나눠 보기(v2.88): IRIS 열쇠 | Claude 계정 | Codex 계정 — 묶음 머리 + 행마다 종류 알약 */
-.auth-sec + .auth-sec { margin-top: 6px; border-top: 1px solid var(--line); }
+/* 열쇠 카드 세 장(v2.90): 머리(로그인 열쇠 + 다시 확인)는 카드 밖, IRIS 열쇠 | Claude 계정 | Codex 계정은 각자 카드(.st-grp.auth-card) */
+.st-keys { margin: 0 0 14px; }
+.st-keys-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; padding: 0 2px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.st-grp > h3.auth-sec-h { display: flex; align-items: center; gap: 8px; padding: 12px 0 6px; flex-wrap: wrap; }
+.auth-n { margin-left: auto; font-size: 11.5px; font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.auth-empty { padding: 8px 0 12px; }
+.auth-checked { padding: 0 2px; }
 .auth-sec-h { display: flex; align-items: center; gap: 8px; padding: 12px 0 4px; flex-wrap: wrap; }
 .auth-sec-h .chip { font-size: 11.5px; }
 .auth-sec-t { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
@@ -771,3 +776,56 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 .mp-sweep-btn:hover:not(:disabled) { background: var(--raised); color: var(--ink); } .mp-sweep-btn:disabled { opacity: .6; cursor: default; }
 .mp-sweep small { color: var(--ink-3); font-size: 11px; }
 .mp-sweep pre { margin: 4px 0 0; padding: 8px; border-radius: 6px; background: var(--surface); font: 11px/1.5 var(--mono); color: var(--ink-2); white-space: pre-wrap; max-height: 180px; overflow: auto; }
+/* ---- 설정 「온톨로지」·「도구」(v2.90): 검색칸 + 요약 + 그래프(방사형 나무, SVG) / 카드 세 장 ---- */
+.st-panes:has(.st-pane.wide:not([hidden])) { max-width: 1180px; } /* 그래프 묶음만 넓게 */
+.on-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; }
+.on-search { flex: 1; min-width: 220px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--base); color: var(--ink-3); }
+.on-search:focus-within { border-color: var(--iris); box-shadow: 0 0 0 3px var(--iris-soft); }
+.on-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--ink); font: 13px var(--sans); padding: 8px 0; }
+.on-sum { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 2px 10px; font-size: 12.5px; color: var(--ink-2); }
+.on-sum b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.on-dim { color: var(--ink-3); font-size: 12px; }
+.on-body { position: relative; height: min(64vh, 620px); min-height: 360px; border: 1px solid var(--line); border-radius: 12px; background: var(--base); overflow: hidden; }
+.on-empty { padding: 28px 20px; color: var(--ink-3); font-size: 13px; line-height: 1.6; }
+.on-svg { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none; }
+.on-svg:active { cursor: grabbing; }
+.on-svg .on-e { stroke: var(--line-2); stroke-width: .9; fill: none; vector-effect: non-scaling-stroke; }
+.on-svg .on-e.lv-role { stroke: color-mix(in srgb, var(--iris) 35%, transparent); stroke-width: 1.2; }
+.on-svg .on-link { stroke: color-mix(in srgb, var(--iris-2) 45%, transparent); stroke-width: 1; stroke-dasharray: 3 3; fill: none; vector-effect: non-scaling-stroke; }
+/* 점·글자는 그래프를 확대해도 화면에서 같은 크기 — ontology.js 가 svg 에 --k(확대 배율)를 주고 여기서 1/k 로 나눈다 */
+.on-svg .on-core { r: calc(17px / var(--k, 1)); fill: var(--iris-soft); stroke: var(--iris); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.on-svg .on-core-t { fill: var(--ink); font-family: var(--sans); font-weight: 700; font-size: calc(11px / var(--k, 1)); }
+.on-svg .on-n { cursor: pointer; }
+.on-svg .on-n circle { r: calc(2.6px / var(--k, 1)); fill: var(--surface); stroke: var(--ink-3); stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+.on-svg .on-n.t-role circle { r: calc(6px / var(--k, 1)); fill: var(--iris); stroke: var(--iris); }
+.on-svg .on-n.t-domain circle { r: calc(3.8px / var(--k, 1)); stroke: var(--iris); }
+.on-svg .on-n text { fill: var(--ink-2); font-family: var(--sans); font-size: calc(11px / var(--k, 1)); display: none; pointer-events: none; paint-order: stroke; stroke: var(--base); stroke-width: calc(3px / var(--k, 1)); stroke-linejoin: round; }
+.on-svg .on-n.t-role text { display: block; fill: var(--ink); font-weight: 650; font-size: calc(12.5px / var(--k, 1)); }
+.on-svg[data-zoom="2"] .on-n.t-domain text, .on-svg[data-zoom="3"] .on-n text { display: block; }
+.on-svg .on-n.t-project text { font-size: calc(10.5px / var(--k, 1)); }
+.on-svg .on-n.dim { opacity: .45; }
+.on-svg .on-n:hover circle { stroke: var(--ink); }
+.on-svg.searching .on-n:not(.hit):not(.sel) { opacity: .18; }
+.on-svg .on-n.hit text, .on-svg .on-n.sel text { display: block; fill: var(--ink); }
+.on-svg .on-n.hit circle { fill: var(--warn); stroke: var(--warn); }
+.on-svg .on-n.sel circle { r: calc(6px / var(--k, 1)); fill: var(--iris); stroke: var(--ink); stroke-width: 2; }
+.on-info { position: absolute; top: 12px; right: 12px; width: 280px; max-width: calc(100% - 24px); padding: 14px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); box-shadow: 0 14px 40px rgba(0,0,0,.35); font-size: 12.5px; color: var(--ink-2); }
+.on-i-kind { font-size: 11.5px; color: var(--iris); font-weight: 600; margin-bottom: 4px; }
+.on-i-name { font-size: 14px; font-weight: 650; color: var(--ink); line-height: 1.4; margin-bottom: 8px; word-break: break-word; }
+.on-i-row { display: flex; gap: 8px; padding: 3px 0; color: var(--ink-3); }
+.on-i-row span { color: var(--ink-2); word-break: break-word; }
+.on-i-path { display: block; margin: 8px 0 10px; padding: 6px 8px; border-radius: 7px; background: var(--base); font: 11px/1.5 var(--mono); color: var(--ink-3); word-break: break-all; max-height: 72px; overflow: auto; }
+.on-i-act { display: flex; gap: 8px; }
+.on-i-act .text-btn { display: inline-flex; align-items: center; gap: 6px; }
+.on-help { margin: 8px 2px 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; }
+.tl-sum { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.tl-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--base); font-size: 12.5px; color: var(--ink-2); }
+.tl-pill svg { color: var(--iris); } .tl-pill b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.st-grp > h3.tl-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl-h svg { color: var(--iris); } .tl-t { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.tl-h small { font-size: 11.5px; font-weight: 400; color: var(--ink-3); }
+.tl-row { cursor: default; }
+.tl-row .st-opt-text small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tl-row.off { opacity: .6; }
+.tl-ag { flex: none; display: inline-flex; gap: 5px; align-items: center; }
+.tl-off { font-size: 11px; color: var(--warn); }

@@ -61,12 +61,17 @@
   function loadSel() { try { const s = JSON.parse(localStorage.getItem('iris.sel') || 'null'); if (s && s.model && s.effort) return { permission: '', approval: '', sandbox: '', ...s }; } catch {} return { agent: 'claude', model: { claude: 'opus', codex: 'gpt-6-sol' }, effort: { claude: 'high', codex: 'medium' }, permission: '', approval: '', sandbox: '' }; }
   function saveSel() { try { localStorage.setItem('iris.sel', JSON.stringify(sel)); } catch {} }
   // 새 세션 기본 에이전트 = 설치기가 고른 주도 에이전트(사용자가 한 번이라도 고르기 전까지만). 코덱스만 로그인한 PC 가 클로드로 서지 않게(2026-09-19).
+  // v2.90: 에이전트 목록(/api/agents)보다 hello 가 먼저 오면 AGENTS 가 아직 null — 예전엔 여기서 오류가 나 hello 처리 전체가 멈췄다
+  // (코덱스가 주도인 설치에서 목록·튜토리얼이 안 그려짐). 목록이 오면 그때 적용한다.
+  let pendingLead = null;
   function applyLeadAgent(h) {
     const lead = h && h.leadAgent;
+    if (!AGENTS) { if (lead) pendingLead = h; return; }
     let saved = null; try { saved = localStorage.getItem('iris.sel'); } catch {}
     if (!lead || saved || !AGENTS[lead] || sel.agent === lead) return;
     sel.agent = lead; renderSetup();
   }
+  const flushLead = () => { if (pendingLead && AGENTS) { const h = pendingLead; pendingLead = null; applyLeadAgent(h); } };
   // 권한 기본값은 설정(⚙ → 권한 기본값)에서 온다
   function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: sel.effort[sel.agent], permission: sel.agent === 'claude' ? (st.permission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
   const fill = (el, list, val) => { el.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join(''); el.value = val ?? ''; };
@@ -141,10 +146,10 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); render(); }
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
-      else if (m.type === 'handoff') Handoff.apply(m);                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
+      else if (m.type === 'handoff') { Handoff.apply(m); Tutorial.maybeOpen(m); }                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
       else if (m.type === 'auth') Settings.onAuth(m);                                                      // 인증(v2.84): 열쇠 만료 상태·갱신 진행
       else if (m.type === 'update') Settings.onUpdate(m);                                                  // 업데이트(v2.58): 확인 결과·내려받기 진행
       else if (m.type === 'finalize') {                                                                   // 세팅 마무리 자동 실행(v2.60): 시작·결과 토스트
@@ -165,7 +170,7 @@
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
       else if (m.type === 'activity') { if (m.id === current) { const s = cur(); if (s?.status === 'busy') Transcript.setBusy(true, m.text); } }
       else if (m.type === 'prompt') { const s = sessions.find(x => x.id === m.id); if (s) { s.prompt = m.prompt; if (m.id === current) Approval.render(s); } } // 확인 카드(v2.43): 노란불의 질문·선택지
-      else if (m.type === 'agents') { AGENTS = m.agents; if (m.status) ACCT = m.status; renderSetup(); } // v2.76: 계정 수·프로그램 없음이 바뀜 → 버튼 옆 안내 다시 그림
+      else if (m.type === 'agents') { AGENTS = m.agents; if (m.status) ACCT = m.status; renderSetup(); flushLead(); } // v2.76: 계정 수·프로그램 없음이 바뀜 → 버튼 옆 안내 다시 그림
     };
   }
   const send = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -624,6 +629,7 @@
   function onEscape() {
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
     if (renaming) { renaming.cancel(); return; }      // 이름 고치는 중 Esc = 고치기 취소만(작업 중단 아님, v2.85)
+    if (Tutorial.isOpen()) return;                    // 튜토리얼 위에서 Esc 는 아무 일도 하지 않는다(작업 중단으로 새지 않게, v2.90)
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
     if (Settings.isOpen()) { Settings.hide(); return; }
     if (MemGauge.isOpen()) { MemGauge.close(); return; } // 메모리 계기판 펼침 = Esc 로 닫기만(중단 아님)
@@ -656,6 +662,13 @@
   Approval.init({ send, current: () => current, onTerm: () => setMode('term') }); // 확인 카드(v2.43)
   // 인수 안내 카드(설치 패키지 v2, Task 21): 메신저 안내 카드는 그 모듈 서랍을 함께 펼친다.
   Handoff.init({ onOpenModule: (name) => { if (!drawerOpenFor(`mod:${name}`)) openModule(name); } });
+  // 첫 실행 튜토리얼(v2.90): 「첫 대화 해 보기」 = 그 폴더를 고른 새 요청 화면 + 예시 문장을 채워 두기만(보내기는 사용자).
+  Tutorial.init({ onFirstChat: ({ path: p, rel, name, agent, text }) => {
+    if (current) goHome();
+    folder = { path: p, rel, name };
+    if (AGENTS[agent] && sel.agent !== agent) { sel.agent = agent; saveSel(); renderSetup(); }
+    render(); const ta2 = $('#composer-text'); ta2.value = text; ta2.dispatchEvent(new Event('input', { bubbles: true })); ta2.focus(); ta2.setSelectionRange(ta2.value.length, ta2.value.length);
+  } });
   SubPanel.init({ send, current: () => current, onChange: (id) => { render(); if (id) Notify.onSubs(id, liveN(id), SubPanel.list(id).length, sessions.find(x => x.id === id)); } });
 
   // ---------- 각인(2026-09-10): 첫 실행 1회 `by SEJUN HAM` + 워드마크 두 번 클릭(Ctrl+Alt+I) = 별이 SEJUN HAM 으로 모임 ----------
@@ -690,7 +703,7 @@
   const qs = new URLSearchParams(location.search);
   if (qs.get('preview')) fetch(`/api/transcript-preview?path=${encodeURIComponent(qs.get('preview'))}&agent=${qs.get('agent') || 'claude'}`).then(r => r.json()).then((j) => { current = 'preview'; $('#view').hidden = false; IrisStars.setDim(true); $('#vh-title').textContent = '미리보기'; Transcript.render(j.items || [], j.meta); afterTranscript(j.meta); });
 
-  fetch('/api/agents').then(r => r.json()).then((a) => { AGENTS = a; renderSetup(); });
+  fetch('/api/agents').then(r => r.json()).then((a) => { AGENTS = a; renderSetup(); flushLead(); });
   fetch('/api/agents/status').then(r => r.json()).then((j) => { ACCT = j || null; renderSetup(); }).catch(() => {});
   connect(); autoGrow();
 

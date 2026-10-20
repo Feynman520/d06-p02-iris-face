@@ -106,7 +106,7 @@ window.Settings = (() => {
     renderNav();
   }
   // ---- 묶음과 오른쪽 목차(v2.87, 사용자 선택 = 시안 A′): 한 번에 한 묶음만. 마지막으로 본 묶음을 기억한다. ----
-  const PANES = ['design', 'session', 'notify', 'mods', 'account', 'about'];
+  const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음)
   let pane = (() => { try { const p = localStorage.getItem('iris.settings.pane'); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
   let modsSum = '';
   // 미리보기 캔버스는 「디자인」 묶음이 보일 때만 돌린다(다른 묶음에서 숨은 캔버스 11개가 GPU 를 쓰지 않게)
@@ -122,6 +122,8 @@ window.Settings = (() => {
     for (const el of document.querySelectorAll('#st-nav .st-nav-i')) el.classList.toggle('cur', el.dataset.pane === p);
     const body = document.querySelector('#settings .st-body'); if (body) body.scrollTop = 0;
     if (p === 'design') startPreviews(); else destroyPreviews();
+    if (open && p === 'ontology') window.OntologyView?.show();
+    if (open && p === 'tools') window.ToolsView?.show();
   }
   const optText = (id) => $(id)?.selectedOptions?.[0]?.textContent || '';
   /** 목차 아래 작은 글씨 = 지금 값 한 줄, 노란·빨간 숫자 = 갱신이 필요한 로그인 열쇠, 청보라 = 새 판. */
@@ -130,6 +132,8 @@ window.Settings = (() => {
     const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0], st = R.STAGES.find(s => s.id === cfg.stage) || R.STAGES[0];
     set('#st-sum-design', `${th.name} · ${st.name}`);
     set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}`);
+    set('#st-sum-ontology', '폴더 구조 그래프');
+    set('#st-sum-tools', '스킬 · MCP · 플러그인');
     set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
     set('#st-sum-mods', modsSum);
     const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);
@@ -330,7 +334,7 @@ window.Settings = (() => {
     const RANK = { expired: 0, soon: 1, unknown: 2, ok: 3 };
     const items = (auth?.info?.items || []).slice().sort((a, b) => (!!a.optional - !!b.optional) || ((RANK[a.level] ?? 2) - (RANK[b.level] ?? 2)) || ((a.daysLeft ?? 9999) - (b.daysLeft ?? 9999)));
     const job = auth?.job;
-    if (!items.length) { host.innerHTML = '<div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div>'; return; }
+    if (!items.length) { host.innerHTML = '<section class="st-grp"><div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div></section>'; return; }
     const row = (i) => {
       const when = i.expiresAt ? fmtWhen(new Date(i.expiresAt).toISOString()) : '';
       const [kind, kcls] = i.longKey ? ['1년 열쇠', 'long'] : i.provider === 'codex' ? ['ChatGPT 로그인', ''] : ['30일 로그인', 'short'];
@@ -341,14 +345,16 @@ window.Settings = (() => {
       return `<div class="st-opt auth-row ${esc(i.level)}${i.optional ? ' optional' : ''}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small><span class="auth-kind ${kcls}">${esc(kind)}</span>${esc(desc)}</small></span>`
         + `<span class="auth-right"><span class="auth-d">${esc(d)}</span><button class="text-btn ${i.level === 'ok' ? 'outline' : 'accent'}" data-renew="1" ${job?.running ? 'disabled' : ''} title="브라우저에서 승인 한 번으로 새 열쇠를 받습니다">${running ? '승인 대기…' : esc(label)}</button></span></div>`;
     };
-    // 열쇠는 두 종류(v2.88, 사용자 신고 "종류·클로드/코덱스 구분이 없다"): IRIS 열쇠(창이 클로드 세션을 열 때 쓰는 것) | 계정 열쇠(중계기가 돌려 쓰는 계정, Claude·Codex 따로)
-    const block = (head, list) => !list.length ? '' : `<div class="auth-sec"><div class="auth-sec-h">${head}</div>${list.map(row).join('')}</div>`;
+    // 열쇠 = 카드 세 장(v2.90, 사용자 요청 "영역을 명확히 구분"): IRIS 열쇠(창이 클로드 세션을 열 때 쓰는 것) | Claude 계정 열쇠 | Codex 계정 열쇠(중계기가 돌려 쓰는 계정).
+    // 빈 카드도 그린다 — 0개면 어디서 더하는지 한 줄.
+    const card = (kind, head, list, empty) => `<section class="st-grp auth-card" data-kind="${kind}"><h3 class="auth-sec-h">${head}<span class="auth-n">${list.length}개</span></h3>`
+      + (list.length ? list.map(row).join('') : `<div class="upd-line st-sub auth-empty">${empty}</div>`) + '</section>';
     const iris = items.filter(i => i.group === 'iris'), acc = items.filter(i => i.group !== 'iris');
     const cl = acc.filter(i => i.provider !== 'codex'), cx = acc.filter(i => i.provider === 'codex');
-    host.innerHTML = block(`<span class="auth-sec-t">${Icons.svg('key', 14)}IRIS 열쇠</span><small>IRIS 창이 Claude 세션을 열 때 쓰는 열쇠</small>`, iris)
-      + block(`<span class="chip claude">Claude</span><span class="auth-sec-t">계정 열쇠 ${cl.length}개</span><small>중계기가 번갈아 쓰는 계정</small>`, cl)
-      + block(`<span class="chip codex">Codex</span><span class="auth-sec-t">계정 열쇠 ${cx.length}개</span><small>중계기가 번갈아 쓰는 계정</small>`, cx)
-      + (auth?.info?.checkedAt ? `<div class="upd-line st-sub">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '');
+    host.innerHTML = card('iris', `<span class="auth-sec-t">${Icons.svg('key', 14)}IRIS 열쇠</span><small>IRIS 창이 Claude 세션을 열 때 쓰는 열쇠</small>`, iris, '열쇠 없음 — Claude 세션은 각 계정 로그인으로 열립니다')
+      + card('claude', `<span class="chip claude">Claude</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 Claude 계정</small>`, cl, '계정 없음 — 대시보드에서 추가')
+      + card('codex', `<span class="chip codex">Codex</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 ChatGPT(Codex) 계정</small>`, cx, '계정 없음 — 대시보드에서 추가')
+      + (auth?.info?.checkedAt ? `<div class="upd-line st-sub auth-checked">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '');
     if (job && (job.running || job.result)) {
       const el = document.createElement('div');
       const r = job.result; el.className = 'auth-job' + (r && r.ok === false ? ' bad' : '');
@@ -451,6 +457,7 @@ window.Settings = (() => {
     $('#st-auth-act')?.addEventListener('click', async () => { authBusy = true; renderAuth(); await loadAuth(true); authBusy = false; renderAuth(); });
     $('#st-auth')?.addEventListener('click', (e) => { const b = e.target.closest('button[data-renew]'); if (b) renewAuth(b.closest('[data-auth]').dataset.auth); });
     loadAuth();
+    $('#st-tutorial')?.addEventListener('click', () => { hide(); window.Tutorial?.open({ replay: true }); }); // v2.90
     $('#maker').onclick = about;
     applyMaker();
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});

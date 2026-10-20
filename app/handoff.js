@@ -12,8 +12,7 @@ window.Handoff = (() => {
   const KIND = {
     'setup-status': { icon: '!', name: '설치' },
     'messenger-prompt': { icon: '✉', name: '메신저' },
-    'relay-wait': { icon: '…', name: '연결 준비' }, // v2.89: 첫 인사 전 중계기 준비 기다리기
-  };
+  }; // v2.90: 'relay-wait'(첫 인사 전 중계기 기다리기) 삭제 — 자동 첫 인사 자체를 없애고 튜토리얼로 바꿈
   let opts = { onOpenModule: () => {} };
   let shown = null;   // 지금 그려진 카드(같은 카드면 다시 그리지 않는다)
   let busy = false;

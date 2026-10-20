@@ -27,6 +27,7 @@ import { Updater } from './update.mjs';
 import { Finalizer } from './finalize.mjs';
 import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
+import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -65,8 +66,8 @@ var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadca
 const setupProgress = new SetupProgress({ root: WS_ROOT, broadcast, log });
 // 인수 문서(설치 패키지 v2, P03 Task 21): `_agent\setup\handoff.json` 이 있으면 첫 실행을 여기서 가른다 —
 // ready 면 주도 에이전트에 firstMessage 를 그대로 보내고, 아니면 안내 카드 + 「설치 이어하기」. 없으면(1.x) 아무 일도 하지 않는다.
-// v2.89: 중계기 도구가 있는 설치(dashDir)면 첫 인사는 그 에이전트 계정이 중계기에 올라온 뒤에 보낸다(실행기가 중계기와 데몬을 동시에 켜므로).
-const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broadcast, relayReady: dashDir() ? (agent) => relayReady(agent) : null });
+// v2.90: ready 면 첫 세션을 자동으로 열지 않고 튜토리얼(화면)을 띄운다. relayReady 는 튜토리얼 「첫 대화 해 보기」·새 세션 전 확인에 쓴다(GET /api/relay/ready).
+const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broadcast });
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
 // 에이전트 자가 치유·계정 감시(v2.76): 시작 때 한 번 + 15초마다 — 프로그램이 있는 잠든/빠진 에이전트를 켜고,
 // 계정 수·프로그램 없음이 바뀌면 화면에 알린다. 영수증이 없는 PC(이 개발 PC 포함)에서는 무동작.
@@ -316,6 +317,33 @@ const server = http.createServer(async (req, res) => {
     }
     // ---- 인수 문서(설치 패키지 v2, Task 21): 상태·카드 읽기 / 「설치 이어하기」 / 「나중에」. POST 는 같은 출처만. ----
     if (req.method === 'GET' && p === '/api/handoff') return json(res, 200, handoff.info());
+    // ---- 튜토리얼·온톨로지·도구(v2.90, 설계 = docs\설계-튜토리얼-2026-10-19.md). 쓰는 길은 전부 같은 출처만. ----
+    if (req.method === 'GET' && p === '/api/tutorial') return json(res, 200, { ...handoff.info().tutorial, root: WS_ROOT, rootName: path.basename(WS_ROOT), leadAgent: handoff.info().leadAgent, year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
+    if (req.method === 'POST' && (p === '/api/tutorial/plan' || p === '/api/tutorial/structure' || p === '/api/tutorial/done' || p === '/api/ontology/rebuild' || p === '/api/open-folder')) {
+      if (!sameOrigin(req)) { log(`403 ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      const b = await readBody(req);
+      if (p === '/api/tutorial/plan') return json(res, 200, planStructure(WS_ROOT, b.spec));
+      if (p === '/api/tutorial/done') return json(res, 200, handoff.finishTutorial({ skipped: !!b.skipped }));
+      if (p === '/api/tutorial/structure') {
+        let r; try { r = createStructure(WS_ROOT, b.spec, { log }); } catch (e) { log(`tutorial structure 실패: ${e?.message || e}`); return json(res, 500, { ok: false, errors: [{ where: '', message: `폴더를 만들지 못했습니다: ${e?.message || e}` }] }); }
+        if (!r.ok) return json(res, 400, r);
+        r.ontology = await runOntology(WS_ROOT, { python: ontologyPython(WS_ROOT, pythonExe()), log });
+        return json(res, 200, r);
+      }
+      if (p === '/api/ontology/rebuild') { const o = await runOntology(WS_ROOT, { python: ontologyPython(WS_ROOT, pythonExe()), log }); return json(res, 200, { ontology: o, graph: ontologyGraph(WS_ROOT) }); }
+      // 폴더 열기(튜토리얼 「폴더 열기」·온톨로지 노드): 영혼 폴더 안의 **폴더**만, explorer.exe 에 경로 하나만 넘긴다.
+      const dir = path.resolve(WS_ROOT, String(b.rel || ''));
+      if (!(dir + path.sep).toLowerCase().startsWith((path.resolve(WS_ROOT) + path.sep).toLowerCase()) || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return json(res, 404, { error: '영혼 폴더 안의 폴더만 열 수 있습니다' });
+      try { spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
+      catch (e) { return json(res, 500, { error: e.message }); }
+    }
+    if (req.method === 'GET' && p === '/api/relay/ready') {
+      const agent = url.searchParams.get('agent') === 'codex' ? 'codex' : 'claude';
+      if (!dashDir()) return json(res, 200, { ready: true, relay: false }); // 중계기 도구가 없는 설치 — 확인할 것이 없다
+      return json(res, 200, { ready: await relayReady(agent), relay: true, agent });
+    }
+    if (req.method === 'GET' && p === '/api/ontology/graph') return json(res, 200, ontologyGraph(WS_ROOT));
+    if (req.method === 'GET' && p === '/api/tools') return json(res, 200, listTools(WS_ROOT));
     if (req.method === 'POST' && (p === '/api/handoff/resume' || p === '/api/handoff/dismiss')) {
       if (!sameOrigin(req)) { log(`403 handoff ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       if (p === '/api/handoff/dismiss') { handoff.dismiss(); return json(res, 200, { ok: true, ...handoff.info() }); }

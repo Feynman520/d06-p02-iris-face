@@ -17,24 +17,24 @@ let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) { pass++; console.log(`PASS ${n}`); } else { fail++; console.log(`FAIL ${n}`); } };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const src = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
-const PANES = ['design', 'session', 'notify', 'mods', 'account', 'about'];
+const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about']; // v2.90: 온톨로지·도구 묶음 추가
 
 // ---------- 1) 정적 ----------
 const html = src('app/index.html'), js = src('app/settings.js'), icons = src('app/icons.js'), main = src('app/main.js');
 const aside = html.slice(html.indexOf('<aside id="settings"'), html.indexOf('</aside>', html.indexOf('<aside id="settings"')));
-const order = [...aside.matchAll(/class="st-pane" data-pane="([a-z]+)"/g)].map(m => m[1]);
-ok(JSON.stringify(order) === JSON.stringify(PANES), `1 묶음 6개 순서 (${order.join(',')})`);
+const order = [...aside.matchAll(/class="st-pane(?: wide)?" data-pane="([a-z]+)"/g)].map(m => m[1]);
+ok(JSON.stringify(order) === JSON.stringify(PANES), `1 묶음 ${PANES.length}개 순서 (${order.join(',')})`);
 ok(/data-pane="design">\s*<div class="st-pane-h"><h2>디자인<\/h2>/.test(aside) && !/<h2>모양<\/h2>/.test(aside), '1 첫 묶음 이름 = 디자인(옛 "모양" 없음)');
 const navOrder = [...aside.matchAll(/class="st-nav-i" data-pane="([a-z]+)"/g)].map(m => m[1]);
-ok(JSON.stringify(navOrder) === JSON.stringify(PANES), '1 목차 6줄 = 묶음과 같은 순서');
-ok(aside.indexOf('id="st-nav"') > aside.lastIndexOf('class="st-pane"'), '1 목차가 묶음 뒤 = 오른쪽');
+ok(JSON.stringify(navOrder) === JSON.stringify(PANES), `1 목차 ${PANES.length}줄 = 묶음과 같은 순서`);
+ok(aside.indexOf('id="st-nav"') > aside.lastIndexOf('class="st-pane'), '1 목차가 묶음 뒤 = 오른쪽');
 ok(PANES.slice(1).every(p => new RegExp(`data-pane="${p}" hidden`).test(aside)), '1 처음엔 디자인만 보이고 나머지는 숨김');
-const IDS = ['st-themes', 'st-stages', 'st-density', 'st-density-v', 'st-fps', 'st-remeasure', 'st-pause', 'st-perm', 'st-approval', 'st-sandbox', 'st-notify', 'st-notify-os', 'st-notify-test', 'st-mods', 'st-auth-sec', 'st-auth', 'st-auth-act', 'st-update', 'st-update-act', 'st-update-auto', 'st-recovery', 'st-root', 'btn-shutdown', 'maker', 'st-close'];
+const IDS = ['st-themes', 'st-stages', 'st-density', 'st-density-v', 'st-fps', 'st-remeasure', 'st-pause', 'st-perm', 'st-approval', 'st-sandbox', 'st-notify', 'st-notify-os', 'st-notify-test', 'st-mods', 'st-auth-sec', 'st-auth', 'st-auth-act', 'st-update', 'st-update-act', 'st-update-auto', 'st-recovery', 'st-root', 'st-onto', 'st-tools', 'st-tutorial', 'btn-shutdown', 'maker', 'st-close'];
 const missing = IDS.filter(id => (aside.match(new RegExp(`id="${id}"`, 'g')) || []).length !== 1);
 ok(!missing.length, `1 기존 요소 id ${IDS.length}개 보존(각 1번)${missing.length ? ' — 빠짐: ' + missing.join(',') : ''}`);
 ok(!/class="st-foot"/.test(aside), '1 옛 바닥줄(st-foot) 없음 — 전부 종료는 목차 아래');
 const navIcons = [...aside.matchAll(/data-icon="([a-z]+)"/g)].map(m => m[1]);
-ok(navIcons.length === 6 && navIcons.every(n => new RegExp(`\\b${n}: '`).test(icons)), `1 목차 아이콘 = icons.js 이름 (${navIcons.join(',')})`);
+ok(navIcons.length === PANES.length && navIcons.every(n => new RegExp(`\\b${n}: '`).test(icons)), `1 목차 아이콘 = icons.js 이름 (${navIcons.join(',')})`);
 ok(/function startPreviews\(\) \{\s*destroyPreviews\(\); if \(!open \|\| pane !== 'design'\) return;/.test(js), '1 애니메이션 미리보기는 「디자인」 묶음이 보일 때만');
 ok(/if \(p === 'design'\) startPreviews\(\); else destroyPreviews\(\);/.test(js), '1 다른 묶음으로 가면 미리보기 정리');
 ok(/Settings\.show\('mods'\)/.test(main) && /Settings\.showPane\('mods'\)/.test(main), '1 헤더 모듈 버튼 → 「확장 모듈」 묶음');

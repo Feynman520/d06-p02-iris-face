@@ -174,6 +174,11 @@ export function relayReady(agent, { port = Number(process.env.IRIS_RELAY_PORT ||
   });
 }
 
+/** 루트 바로 밑에 역할 폴더(`R01-…`, `R02.00-…`)가 하나라도 있나 — 있으면 이미 구조가 있는 PC(튜토리얼 자동 표시 안 함). */
+export function rootHasRoles(root) {
+  try { return fs.readdirSync(root, { withFileTypes: true }).some((d) => d.isDirectory() && /^R\d{2}(?:\.\d{2})?-/.test(d.name)); } catch { return false; }
+}
+
 export class HandoffFlow {
   /** @param {{root:string, stateDir:string, sm:object, log?:Function, broadcast?:Function, spawnImpl?:Function, now?:Function}} o */
   constructor(o = {}) {
@@ -184,13 +189,6 @@ export class HandoffFlow {
     this.broadcast = o.broadcast || (() => {});
     this.spawnImpl = o.spawnImpl || spawn;
     this.now = o.now || (() => Date.now());
-    // v2.89(2026-10-19 신고: 코덱스만 고른 새 설치의 첫 세션이 "Reconnecting 1/5…5/5" 뒤 실패, 새 세션은 정상):
-    // 실행기는 중계기 켜기와 데몬 켜기를 동시에 하므로 데몬이 뜨자마자 보낸 첫 인사가 중계기보다 먼저 출발할 수 있다.
-    // relayReady(agent) 가 주어지면(= 중계기 도구가 있는 설치) 그 에이전트 계정이 중계기에 올라올 때까지 기다렸다가 보낸다.
-    this.relayReady = o.relayReady || null;
-    this.sleep = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
-    this.waitSlowMs = o.waitSlowMs ?? 90_000;   // 이만큼 지나면 카드 글을 "오래 걸린다"로
-    this.waitFastMs = o.waitFastMs ?? 180_000;  // 이만큼은 1초마다, 그 뒤로는 5초마다 계속 본다(포기하지 않는다)
     this.card = null;       // 지금 화면에 띄울 카드(없으면 null)
     this.last = null;       // 마지막 runOnce 결과
     this.ran = false;
@@ -214,6 +212,7 @@ export class HandoffFlow {
       leadAgent: r.handoff?.leadAgent === 'chatgpt' ? 'codex' : (r.handoff?.leadAgent === 'codex' ? 'codex' : (r.handoff?.leadAgent ? 'claude' : null)),
       card: this.card,
       greeted: this.readSeen().greetedFor === this.key(r.handoff) && !!r.handoff,
+      tutorial: { due: this.tutorialDue(r), doneAt: this.tutorialState().doneAt || null }, // v2.90: 화면이 이 값으로 튜토리얼을 띄운다
     };
   }
   publish() { try { this.broadcast({ type: 'handoff', ...this.info() }); } catch {} }
@@ -282,44 +281,29 @@ export class HandoffFlow {
       this.last = out; this.publish(); return out;
     }
 
-    // ---- ready: 주도 에이전트에게 첫 인사를 그대로 보낸다(창이 문장을 만들지 않는다) ----
-    const seen = this.readSeen();
-    const key = this.key(r.handoff);
-    const text = String(r.handoff.firstMessage || '').trim();
-    if (seen.greetedFor === key) out = { state: 'ready', action: 'already-greeted' };
-    else if (!text) { out = { state: 'ready', action: 'skip', reason: 'firstMessage 가 비어 있음' }; this.log('handoff: firstMessage 가 비어 있어 첫 인사를 건너뜁니다'); }
-    else if (!this.sm) out = { state: 'ready', action: 'skip', reason: 'session manager 없음' };
-    else {
-      // 설치기 2.0.24 까지는 구독 id 'chatgpt' 가 그대로 왔다(코덱스만 고른 설치의 첫 세션이 클로드로 열린 원인, 2026-09-19).
-      const agent = (r.handoff.leadAgent === 'codex' || r.handoff.leadAgent === 'chatgpt') ? 'codex' : 'claude';
-      if (this.relayReady) {
-        // 중계기 준비를 기다린 뒤 보낸다(v2.89). 그동안 「연결 준비」 카드, 끝나면 첫 인사 → 메신저 안내 순서는 그대로.
-        out = { state: 'ready', action: 'waiting-relay', agent };
-        this.card = this.relayCard(agent, false); this.last = out; this.publish();
-        this.log(`handoff: 첫 인사 전 중계기 준비 기다림 agent=${agent}`);
-        this.waiting = this.waitThenGreet(r, seen, key, text, agent);
-        return out;
-      }
-      out = this.greet(seen, key, text, agent);
-    }
-    this.messengerStep(r, out);
+    // ---- ready(v2.90, 2026-10-19 사용자 결정): 첫 세션을 자동으로 열지 않는다(firstMessage 는 무시 — 옛 설치기가 써도 그대로 둔다).
+    // 대신 화면이 튜토리얼(미리 써 둔 글·그림, AI 호출 0)을 띄운다. 메신저 안내는 튜토리얼이 끝난 뒤(finishTutorial).
+    if (this.tutorialDue(r)) { out = { state: 'ready', action: 'tutorial' }; this.card = null; this.log('handoff: 튜토리얼 표시 — 첫 세션 자동 시작 없음'); }
+    else { out = { state: 'ready', action: 'none' }; this.messengerStep(r, out); }
     this.last = out; this.publish(); return out;
   }
 
-  /** 첫 인사를 실제로 보낸다(같은 폴더에 살아 있는 세션이 있으면 거기로). 바빠서 미룬 것·실패는 "했다"고 적지 않는다 → 다음 실행 때 다시. */
-  greet(seen, key, text, agent) {
-    let out;
-    const dup = this.liveInRoot();
-    try {
-      if (dup && dup.status === 'busy') { out = { state: 'ready', action: 'busy-skip', reason: `세션 ${dup.id} 이 바쁨` }; }
-      else if (dup) { this.sm.send(dup.id, text); out = { state: 'ready', action: 'sent', id: dup.id }; }
-      else { const rec = this.sm.create({ cwd: this.root, agent, prompt: text }); out = { state: 'ready', action: 'created', id: rec.id }; }
-    } catch (e) { out = { state: 'ready', action: 'failed', reason: String(e?.message || e) }; this.log(`handoff: 첫 인사 실패 — ${out.reason}`); }
-    if (out.action === 'sent' || out.action === 'created') {
-      this.writeSeen({ ...seen, greetedFor: key, greetedAt: new Date(this.now()).toISOString(), action: out.action });
-      this.log(`handoff: 첫 인사 ${out.action} agent=${agent} id=${out.id}`);
-    }
-    return out;
+  // ---- 튜토리얼(v2.90) — 완료 기록 = state\tutorial.json { doneAt, skipped, count } ----
+  tutorialFile() { return path.join(this.stateDir, 'tutorial.json'); }
+  tutorialState() { return readJson(this.tutorialFile()) || {}; }
+  /** 자동 표시 = 설치·로그인 끝(ready) + 아직 안 함 + 루트에 역할(R) 폴더가 없음(업데이트한 PC·개발 PC 는 자동으로 띄우지 않는다). */
+  tutorialDue(r = resolveState(this.root)) { return r.state === 'ready' && !this.tutorialState().doneAt && !rootHasRoles(this.root); }
+  /** 끝까지 했거나 「나중에 하기」 — 기록하고, 미뤄 둔 메신저 안내를 이제 띄운다. */
+  finishTutorial({ skipped = false } = {}) {
+    const prev = this.tutorialState();
+    const rec = { doneAt: new Date(this.now()).toISOString(), skipped: !!skipped, count: (Number(prev.count) || 0) + 1 };
+    try { fs.mkdirSync(this.stateDir, { recursive: true }); fs.writeFileSync(this.tutorialFile(), JSON.stringify(rec, null, 2), 'utf8'); }
+    catch (e) { this.log(`handoff: 튜토리얼 기록 실패 ${e?.message || e}`); return { ok: false, reason: String(e?.message || e) }; }
+    this.log(`handoff: 튜토리얼 ${skipped ? '나중에 하기' : '완료'} (${rec.count}번째)`);
+    const r = resolveState(this.root);
+    if (r.state === 'ready' && r.handoff) { const out = this.last || { state: 'ready' }; this.messengerStep(r, out); }
+    this.publish();
+    return { ok: true, ...rec };
   }
 
   /** 메신저 로그인 안내: 설치돼 있고 아직 한 번도 보인 적 없을 때만, 보이는 즉시 표시했다고 적는다. */
@@ -333,45 +317,6 @@ export class HandoffFlow {
     } else this.card = null;
   }
 
-  /** 「연결 준비」 카드 — 사용자 글에 중계기 제품 이름을 쓰지 않는다. */
-  relayCard(agent, slow) {
-    const who = agent === 'codex' ? 'Codex' : 'Claude';
-    return {
-      kind: 'relay-wait', state: 'ready',
-      title: slow ? '연결 준비가 오래 걸리고 있습니다' : '연결을 준비하고 있습니다',
-      lines: slow ? [
-        `${who}에 연결해 주는 중계기가 아직 켜지는 중입니다.`,
-        '처음 실행할 때는 컴퓨터의 보안 검사 때문에 1~2분 더 걸릴 수 있습니다. 계속 기다리고 있으니 창을 닫지 마세요.',
-        '준비되는 즉시 첫 대화가 자동으로 시작됩니다.',
-      ] : [
-        `${who}에 연결해 주는 중계기가 켜지는 중입니다.`,
-        '준비되면 첫 대화가 자동으로 시작됩니다. 잠시만 기다려 주세요.',
-      ],
-      resume: false, later: true,
-    };
-  }
-
-  /** 중계기에 그 에이전트 계정이 올라올 때까지 기다렸다가(포기하지 않음) 첫 인사를 보낸다. */
-  async waitThenGreet(r, seen, key, text, agent) {
-    const t0 = this.now(); let slow = false, n = 0;
-    for (;;) {
-      let ok = false;
-      try { ok = !!(await this.relayReady(agent)); } catch { ok = false; }
-      if (ok || this.stopped) break;
-      const waited = this.now() - t0;
-      if (!slow && waited >= this.waitSlowMs) {
-        slow = true; this.log(`handoff: 중계기 준비가 ${Math.round(waited / 1000)}초째 안 됨 — 계속 기다림`);
-        if (this.card?.kind === 'relay-wait') { this.card = this.relayCard(agent, true); this.publish(); }
-      }
-      n++; await this.sleep(waited < this.waitFastMs ? 1000 : 5000);
-    }
-    if (this.stopped) return this.last;
-    this.log(`handoff: 중계기 준비 확인 (${Math.round((this.now() - t0) / 1000)}초, ${n}번 기다림) → 첫 인사`);
-    const out = this.greet(seen, key, text, agent);
-    this.messengerStep(r, out);
-    this.last = out; this.publish(); return out;
-  }
-  stop() { this.stopped = true; }
 
   /** 카드의 「나중에」 — 카드만 내린다. 상태 파일은 건드리지 않는다. */
   dismiss() { this.card = null; this.publish(); return { ok: true }; }
