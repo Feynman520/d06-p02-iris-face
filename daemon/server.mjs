@@ -334,7 +334,8 @@ const server = http.createServer(async (req, res) => {
       // 폴더 열기(튜토리얼 「폴더 열기」·온톨로지 노드): 영혼 폴더 안의 **폴더**만, explorer.exe 에 경로 하나만 넘긴다.
       const dir = path.resolve(WS_ROOT, String(b.rel || ''));
       if (!(dir + path.sep).toLowerCase().startsWith((path.resolve(WS_ROOT) + path.sep).toLowerCase()) || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return json(res, 404, { error: '영혼 폴더 안의 폴더만 열 수 있습니다' });
-      try { spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
+      // windowsHide 를 주지 않는다 — explorer.exe 는 받은 SW_HIDE 를 새 폴더 창에 그대로 써서 창이 "열렸지만 안 보이는" 상태가 된다(2026-10-21 실측·사용자 신고, v2.92).
+      try { spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref(); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
       catch (e) { return json(res, 500, { error: e.message }); }
     }
     if (req.method === 'GET' && p === '/api/relay/ready') {

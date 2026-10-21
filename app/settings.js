@@ -133,7 +133,7 @@ window.Settings = (() => {
     set('#st-sum-design', `${th.name} · ${st.name}`);
     set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}`);
     set('#st-sum-ontology', '역할 캐릭터 · 폴더 나무');
-    set('#st-sum-tools', '스킬 · MCP · 플러그인');
+    set('#st-sum-tools', 'Skill · MCP · Plugin');
     set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
     set('#st-sum-mods', modsSum);
     const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);

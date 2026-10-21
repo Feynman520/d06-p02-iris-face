@@ -70,14 +70,18 @@ ok(folderName('R01', '교사', 'Teacher') === 'R01-교사(Teacher)' && folderNam
   writeJson(path.join(cl, 'settings.json'), { enabledPlugins: { 'superpowers@claude-plugins-official': true } });
   fs.mkdirSync(cx, { recursive: true });
   fs.writeFileSync(path.join(cx, 'config.toml'), '[mcp_servers.hwp-automation]\ncommand = "C:\\\\py\\\\python.exe"\nargs = ["-m", "x"]\n[mcp_servers.hwp-automation.env]\nTOKEN = "SECRET-CODEX-9"\n[mcp_servers.canva]\nurl = "https://mcp.example/k"\n', 'utf8');
-  const t = listTools(r); const all = JSON.stringify(t);
+  const t = listTools(r, { home: path.join(r, 'home') }); const all = JSON.stringify(t);
   ok(t.counts.skills === 1 && t.skills[0].name === 'hwp' && t.skills[0].description === '한글 문서를 읽고 고친다', '3 스킬: 이름 · 접힌 설명 한 줄');
   ok(t.counts.mcp === 4 && t.mcp.find(m => m.agent === 'claude' && m.name === 'google-workspace').program === 'uvx.exe' && t.mcp.find(m => m.agent === 'codex' && m.name === 'canva').kind === 'http', '3 MCP: Claude·Codex 둘 다 · 실행 파일 이름만 · 종류');
   ok(!/SECRET|secret-arg|secret-token|mcp\.example|C:\\\\tools/.test(all), '3 env·인자·주소·전체 경로 값은 싣지 않는다');
   ok(t.plugins.length === 1 && t.plugins[0].name === 'superpowers' && t.plugins[0].enabled === true, '3 플러그인: 이름 · 켜짐');
   ok(skillMeta('---\nname: "a"\ndescription: \'b c\'\n---').description === 'b c' && skillMeta('본문만') === null, '3 SKILL 머리말: 따옴표 · 머리말 없음');
   ok(codexMcp('[mcp_servers.a]\ncommand = "x.exe"\n[other]\ncommand = "y.exe"').length === 1, '3 코덱스 MCP: 다른 절의 command 는 섞지 않는다');
-  ok(listTools(path.join(tmp, 'nothing')).counts.skills === 0, '3 설정이 없는 영혼 = 빈 목록(오류 없음)');
+  ok(listTools(path.join(tmp, 'nothing'), { home: path.join(tmp, 'nothing') }).counts.skills === 0, '3 설정이 없는 영혼 = 빈 목록(오류 없음)');
+  fs.mkdirSync(path.join(r, 'home', '.agents', 'skills', 'cx'), { recursive: true });
+  fs.writeFileSync(path.join(r, 'home', '.agents', 'skills', 'cx', 'SKILL.md'), '---\nname: cx-skill\ndescription: 코덱스 공용 자리\n---\n', 'utf8');
+  const th = listTools(r, { home: path.join(r, 'home') });
+  ok(th.counts.skills === 2 && th.skills.find(s => s.name === 'cx-skill')?.agent === 'codex', '3 사용자 폴더 .agents\\skills = Codex 스킬로 셈(v2.92)');
 }
 
 // ---------- 4) 온톨로지 그래프 ----------
@@ -119,9 +123,11 @@ else {
   const PORT = 3459, capDir = process.env.IRIS_CAPTURE_DIR || '';
   const soulR = makeSoul('e2e');
   const state = path.join(tmp, 'e2e-state'); const mods = path.join(tmp, 'e2e-mods'); fs.mkdirSync(state); fs.mkdirSync(mods);
+  const agentsHome = path.join(tmp, 'e2e-home'); fs.mkdirSync(path.join(agentsHome, '.agents', 'skills', 'chs'), { recursive: true }); // 가짜 사용자 폴더(실제 홈을 읽지 않게) + Codex 스킬 하나
+  fs.writeFileSync(path.join(agentsHome, '.agents', 'skills', 'chs', 'SKILL.md'), '---\nname: codex-home-skill\ndescription: 코덱스 전용 시험 스킬\n---\n', 'utf8');
   writeJson(path.join(state, 'settings.json'), { voice: { preload: false } }); fs.writeFileSync(path.join(state, 'sessions.json'), '[]', 'utf8');
   const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore',
-    env: { ...process.env, IRIS_ROOT: soulR, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' } });
+    env: { ...process.env, IRIS_ROOT: soulR, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0', IRIS_AGENTS_HOME: agentsHome } });
   let browser;
   try {
     let up = false; for (let i = 0; i < 60 && !up; i++) { await sleep(250); try { up = (await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok; } catch {} }
@@ -265,34 +271,42 @@ else {
     await shot('s-ontology-sel');
     await p.locator('#on-q').press('Escape'); await sleep(150);
     ok((await p.locator('#on-q').inputValue()) === '' && await p.locator('#ot-tree').isVisible(), '7 검색칸 Esc = 검색만 지움(트리는 그대로)');
-    // 관계 화면
-    const ends = new Set(api.links.flatMap(l => [l.from, l.to]));
+    // 관계 화면(v2.92): 문장 카드 — 종류 탭 · 「A」 ──화살표── 「B」 + 한 문장 · 형제는 묶음 카드
     await p.locator('#st-onto [data-mode="relation"]').click(); await sleep(400);
-    const nDot = await p.locator('#st-onto .on-n').count(), nLg = await p.locator('#st-onto .on-lg').count();
-    ok(nDot === ends.size && nDot > 0 && nLg === new Set(api.links.map(l => l.rel)).size && await p.locator('#on-fit').isVisible(), `7 관계 화면 = 관계 끝점 ${nDot}개 · 범례 ${nLg}종 · 「전체 보기」`);
+    const relKinds = [...new Set(api.links.map(l => l.rel))];
+    const nPair = api.links.filter(l => l.rel !== 'sibling_group').length;
+    const nCards = await p.locator('#st-onto .rl-card').count(), nTabs = await p.locator('#st-onto .rl-tabs [data-kind]').count();
+    ok(nTabs === relKinds.length + 1 && nCards >= nPair && nCards > 0, `7 관계 화면 = 종류 탭 ${nTabs - 1}개 + 「모두」 · 카드 ${nCards}장(방향 있는 관계 ${nPair}개 + 형제 묶음)`);
+    const say = await p.locator('#st-onto .rl-card .rl-say').first().textContent();
+    ok(/「[^」]+」(은|는|의|이|가) /.test(say) && /니다\.$/.test(say), `7 카드마다 쉬운 문장 (${say})`);
+    ok((await p.locator('#st-onto .on-svg').count()) === 0 && (await p.locator('#on-fit').count()) === 0, '7 원형 점·선 그래프와 「전체 보기」는 없음');
+    ok(await p.evaluate(() => [OntologyView._jo('「물리학」', '은', '는'), OntologyView._jo('「교사」', '은', '는'), OntologyView._jo('「인지–행동 시스템 〖화재〗」', '을', '를'), OntologyView._jo('「Web」', '이', '가')].join(',')) === '은,는,을,이(가)', '7 조사(은/는·을/를) = 받침에 맞춤, 태그·영어 끝은 괄호');
     await shot('s-ontology-rel');
-    const z0 = await p.locator('#on-g').getAttribute('transform');
-    const box = await p.locator('.on-svg').boundingBox();
-    await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.wheel(0, -600); await sleep(200);
-    const z1 = await p.locator('#on-g').getAttribute('transform');
-    ok(z0 !== z1 && /scale\(/.test(z1), '7 휠 = 확대');
-    await p.mouse.move(box.x + 30, box.y + 30); await p.mouse.down(); await p.mouse.move(box.x + 130, box.y + 90, { steps: 5 }); await p.mouse.up(); await sleep(100);
-    ok((await p.locator('#on-g').getAttribute('transform')) !== z1, '7 끌기 = 이동');
-    await p.locator('#on-fit').click(); await sleep(100);
-    const dot = p.locator('#st-onto .on-n circle').first(), db = await dot.boundingBox();
-    await p.mouse.click(db.x + db.width / 2, db.y + db.height / 2); await sleep(200);
-    ok(await p.locator('#on-info').isVisible() && /폴더 열기/.test(await p.locator('#on-info').textContent()) && (await p.locator('#on-info .on-i-rels li').count()) > 0, '7 점 누르기 = 정보(관계 목록 · 「폴더 열기」)');
-    const relSel = await p.locator('#st-onto .on-n.sel').getAttribute('data-id');
-    await p.locator('#on-info [data-on="to-tree"]').click(); await sleep(400);
-    ok(relSel === apiRoles.find(r => r.id === relSel)?.id ? (await p.locator('#ot-tree').count()) === 1 : (await p.locator(`#ot-tree .ot-row.sel[data-row="${relSel}"]`).count()) === 1, '7 「구조에서 보기」 = 그 폴더 줄');
+    const k1 = relKinds[0];
+    await p.locator(`#st-onto .rl-tabs [data-kind="${k1}"]`).click(); await sleep(150);
+    ok((await p.locator('#st-onto .rl-grp').count()) === 1 && (await p.locator(`#st-onto .rl-tabs [data-kind="${k1}"]`).getAttribute('aria-pressed')) === 'true', `7 종류 탭 = 그 종류만 (${k1})`);
+    await p.locator('#st-onto .rl-tabs [data-kind="all"]').click(); await sleep(150);
+    const chipA = p.locator('#st-onto .rl-card .rl-f').first(); const goId = await chipA.getAttribute('data-go');
+    await chipA.click(); await sleep(400);
+    ok((await p.locator('#st-onto [data-mode="structure"]').getAttribute('aria-pressed')) === 'true' && (apiRoles.some(r => r.id === goId) ? (await p.locator('#ot-tree').count()) === 1 : (await p.locator(`#ot-tree .ot-row.sel[data-row="${goId}"]`).count()) === 1), '7 카드의 폴더 누르기 = 구조 화면의 그 줄');
     const ring = p.locator('#st-onto .ot-ring').first();
     if (await ring.count()) {
       const rid = await ring.getAttribute('data-ring'); await ring.click(); await sleep(400);
-      ok((await p.locator('#st-onto [data-mode="relation"]').getAttribute('aria-pressed')) === 'true' && (await p.locator(`#st-onto .on-n.sel[data-id="${rid}"]`).count()) === 1, '7 관계 고리 = 관계 화면의 그 점');
+      const nMine = await p.locator('#st-onto .rl-card').count(), wantMine = api.links.filter(l => l.rel !== 'sibling_group' && (l.from === rid || l.to === rid)).length;
+      ok((await p.locator('#st-onto [data-mode="relation"]').getAttribute('aria-pressed')) === 'true' && /관계만 보는 중/.test(await p.locator('#st-onto .rl-focus').textContent()) && nMine >= wantMine && nMine <= wantMine + 1 && (await p.locator(`#st-onto .rl-f.me[data-go="${rid}"]`).count()) >= 1, `7 관계 고리 = 그 폴더의 관계만(${nMine}장)`);
     } else ok(false, '7 관계 고리가 트리에 없음');
     await p.keyboard.press('Escape'); await sleep(200);
-    ok((await p.locator('#st-onto .on-n.sel').count()) === 0 && await p.locator('#settings').isVisible(), '7 관계 화면 Esc = 선택만 풀기');
+    ok((await p.locator('#st-onto .rl-focus').count()) === 0 && await p.locator('#settings').isVisible(), '7 관계 화면 Esc = 한 폴더 보기만 풀기');
+    await p.locator('#on-q').fill('zzz-없는-이름'); await sleep(150);
+    ok((await p.locator('#st-onto .rl-card').count()) === 0 && /맞는 관계가 없습니다/.test(await p.locator('#st-onto').textContent()), '7 관계 화면 검색 = 카드 거르기');
+    await p.locator('#on-q').fill(''); await sleep(100);
     await p.locator('#st-onto [data-mode="structure"]').click(); await sleep(200);
+    // 상세 화면: 왼쪽 캐릭터 칸이 넓어지고(320px) 「모두 펼치기/접기」는 없음
+    if (await p.locator('#st-onto [data-on="back"]').count()) { await p.locator('#st-onto [data-on="back"]').click(); await sleep(200); } // 앞에서 고른 역할이 남아 있으면 격자로
+    await p.locator(`#st-onto .ps-fig[data-role="${apiRoles[0].id}"]`).click(); await sleep(1300);
+    const meW = await p.locator('#ot-me').evaluate(e => e.getBoundingClientRect().width), sideW = await p.locator('.ot-side').evaluate(e => e.getBoundingClientRect().width);
+    ok(sideW >= 300 && meW >= 200 && !/모두 펼치기|모두 접기/.test(await p.locator('#st-onto').textContent()), `7 상세: 왼쪽 칸 ${Math.round(sideW)}px · 캐릭터 ${Math.round(meW)}px · 펼치기/접기 단추 없음`);
+    await p.keyboard.press('Escape'); await sleep(200);
     const errsBefore = errs.length; // 아래 거절(404)은 일부러 낸 것 — 콘솔 오류 집계에서 뺀다
     const keep = await p.evaluate(async () => (await fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: '..\\..' }) })).status);
     ok(keep === 404, '7 폴더 열기 = 영혼 밖 경로 거절');
@@ -303,9 +317,25 @@ else {
     writeJson(path.join(soulR, '_agent', 'claude', '.claude.json'), { mcpServers: { 'demo-mcp': { command: 'C:\\x\\demo.exe', args: ['--token', 'SECRET-ARG-123'], env: { API_KEY: 'SECRET-ENV-456' } } } });
     await p.locator('#st-nav [data-pane="tools"]').click(); await sleep(800);
     const tt = await p.locator('#st-tools').textContent();
-    ok(/demo-skill/.test(tt) && /시험용 스킬 설명/.test(tt) && /demo-mcp/.test(tt) && /demo\.exe/.test(tt), '7 도구 탭 = 스킬·MCP 행');
+    ok(/demo-skill/.test(tt) && /시험용 스킬 설명/.test(tt) && /demo-mcp/.test(tt) && /demo\.exe/.test(tt) && /codex-home-skill/.test(tt), '7 도구 탭 = Skill·MCP 행(사용자 폴더 .agents\\skills 의 Codex 스킬 포함)');
     ok(!/SECRET-/.test(await p.content()), '7 MCP 의 인자·env 값은 화면에 없음');
-    ok((await p.locator('#st-tools .tl-card').count()) === 3 && /설치된 플러그인 없음/.test(tt), '7 카드 세 장(빈 카드는 안내)');
+    ok((await p.locator('#st-tools .tl-card').count()) === 3 && /설치된 Plugin 없음/.test(tt), '7 카드 세 장(빈 카드는 안내)');
+    const pills = await p.locator('#tl-sum .tl-pill').evaluateAll(bs => bs.map(b => b.textContent.replace(/\s*\d+$/, '').trim()).join(','));
+    ok(pills === 'All,Skill,MCP,Plugin' && !/도구 = 에이전트의 팔다리/.test(await p.locator('.st-pane[data-pane="tools"]').textContent()), `7 뱃지 이름 영어(${pills}) · 머리 부가설명 없음`);
+    await p.locator('#tl-sum [data-kind="mcp"]').click(); await sleep(100);
+    ok((await p.locator('#st-tools .tl-card').count()) === 1 && (await p.locator('#st-tools .tl-card[data-kind="mcp"]').count()) === 1, '7 MCP 뱃지 = MCP 만');
+    await p.locator('#tl-sum [data-kind="mcp"]').click(); await sleep(100);
+    ok((await p.locator('#st-tools .tl-card').count()) === 3, '7 같은 뱃지 다시 누르기 = 모두');
+    const tabs = await p.locator('#tl-agents [data-agent]').evaluateAll(bs => bs.map(b => b.textContent.replace(/\s*\d+$/, '').trim()).join(','));
+    ok(tabs === '전체,Claude 전용,Codex 전용,둘 다', `7 에이전트 탭 (${tabs})`);
+    await p.locator('#tl-agents [data-agent="codex"]').click(); await sleep(100);
+    const tc = await p.locator('#st-tools').textContent();
+    ok(/codex-home-skill/.test(tc) && !/demo-skill/.test(tc) && !/demo-mcp/.test(tc), '7 Codex 전용 탭 = Codex 에만 있는 것');
+    await p.locator('#tl-agents [data-agent="claude"]').click(); await sleep(100);
+    const tcl = await p.locator('#st-tools').textContent();
+    ok(/demo-skill/.test(tcl) && /demo-mcp/.test(tcl) && !/codex-home-skill/.test(tcl), '7 Claude 전용 탭 = Claude 에만 있는 것');
+    await shot('s-tools-claude');
+    await p.locator('#tl-agents [data-agent="all"]').click(); await sleep(100);
     await p.locator('#tl-q').fill('zzz-없음'); await sleep(100);
     ok(/찾는 이름이 없습니다/.test(await p.locator('#st-tools').textContent()), '7 도구 검색');
     await p.locator('#tl-q').fill(''); await shot('s-tools');

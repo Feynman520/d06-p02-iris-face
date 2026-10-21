@@ -6,6 +6,7 @@
 //  · listTools: 이 영혼의 Claude(`_agent\claude`)·Codex(`_agent\codex`) 스킬·MCP·플러그인을 **읽기만** — MCP 의 env·인자·주소 값은 싣지 않는다.
 // 설계 정본 = docs\설계-튜토리얼-2026-10-19.md
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -210,9 +211,10 @@ export function codexMcp(toml) {
   }
   return out;
 }
-export function listTools(root) {
+/** home = 사용자 폴더(시험에서는 임시 폴더). 코덱스는 `CODEX_HOME\skills` 말고도 `<사용자 폴더>\.agents\skills`(여러 에이전트 공용 자리 — 이 PC 는 180개가 여기 링크로 있음)를 읽으므로 둘 다 센다(v2.92). */
+export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.homedir() } = {}) { // IRIS_AGENTS_HOME = 시험용(가짜 사용자 폴더)
   const cl = path.join(root, '_agent', 'claude'), cx = path.join(root, '_agent', 'codex');
-  const skills = [...skillsIn(path.join(cl, 'skills'), 'claude'), ...skillsIn(path.join(cx, 'skills'), 'codex')];
+  const skills = [...skillsIn(path.join(cl, 'skills'), 'claude'), ...skillsIn(path.join(cx, 'skills'), 'codex'), ...(home ? skillsIn(path.join(home, '.agents', 'skills'), 'codex') : [])];
   const mcp = [];
   const cj = readJson(path.join(cl, '.claude.json'));
   for (const [name, v] of Object.entries(cj?.mcpServers || {})) mcp.push({ agent: 'claude', name, kind: v?.type === 'http' || v?.type === 'sse' || v?.url ? 'http' : 'stdio', program: v?.command ? path.basename(String(v.command)) : '' });
