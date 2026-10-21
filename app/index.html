@@ -39,7 +39,7 @@
     <div class="st-wrap">
     <div class="st-body"><div class="st-panes">
       <div class="st-pane" data-pane="design">
-        <div class="st-pane-h"><h2>디자인</h2><p>색과 중앙 애니메이션</p></div>
+        <div class="st-pane-h"><h2>디자인</h2></div>
         <!-- 헤더 이름·마크·글자체는 고정(v2.54, 2026-09-13 사용자 결정: 만든 사람의 정체성) — settings.js BRAND. -->
         <section class="st-grp"><h3>테마</h3><div id="st-themes" class="st-themes"></div></section>
         <section class="st-grp"><h3>중앙 애니메이션</h3><div id="st-stages" class="st-list"></div>
@@ -48,7 +48,7 @@
           <label class="st-opt"><span class="st-opt-text">대화를 보는 동안 멈춤<small>세션 화면이 덮으면 별을 그리지 않습니다</small></span><input id="st-pause" class="sw" type="checkbox"></label></section>
       </div>
       <div class="st-pane" data-pane="session" hidden>
-        <div class="st-pane-h"><h2>세션 기본값</h2><p>새로 여는 세션에 적용 · "설정 파일대로" = 터미널과 같음</p></div>
+        <div class="st-pane-h"><h2>세션 기본값</h2></div>
         <section class="st-grp"><h3><span class="chip claude">Claude</span></h3>
           <div class="st-opt"><span class="st-opt-text">권한 모드<small>도구를 쓰기 전에 물을지</small></span><select id="st-perm" class="pick"></select></div></section>
         <section class="st-grp"><h3><span class="chip codex">Codex</span></h3>
@@ -57,7 +57,7 @@
       </div>
       <!-- v2.91: 온톨로지(app/ontology.js — 구조 = 역할 캐릭터 격자 + 트리(app/persona.js), 관계 = 나무 밖 관계 그래프) · 도구(app/tools.js — 스킬·MCP·플러그인). 묶음을 처음 열 때 데몬에서 읽는다. -->
       <div class="st-pane wide" data-pane="ontology" hidden>
-        <div class="st-pane-h"><h2>온톨로지</h2><p>나의 역할들 — 역할 → 영역 → 프로젝트 · 나무 밖 관계</p></div>
+        <div class="st-pane-h"><h2>온톨로지</h2></div>
         <div id="st-onto" class="st-onto"></div>
       </div>
       <div class="st-pane" data-pane="tools" hidden>
@@ -66,17 +66,17 @@
       </div>
       <!-- 알림·모듈(v2.52, 2026-09-13): 한 줄 = 제목 + 한 줄 설명 + 오른쪽 스위치(.st-opt). 절 제목 오른쪽에 그 절의 유일한 행동 버튼. -->
       <div class="st-pane" data-pane="notify" hidden>
-        <div class="st-pane-h"><h2>알림</h2><p>작업이 끝났을 때 알려 주기</p></div>
+        <div class="st-pane-h"><h2>알림</h2></div>
         <section class="st-grp"><h3 class="st-h-row"><span>작업 완료</span><button id="st-notify-test" class="text-btn outline" title="예시 알림을 띄워 봅니다">미리보기</button></h3>
           <label class="st-opt"><span class="st-opt-text">작업이 끝나면 알림<small>세션이 대기·확인 필요·종료로 바뀔 때 창 오른쪽 아래에</small></span><input id="st-notify" class="sw" type="checkbox"></label>
           <label class="st-opt child"><span class="st-opt-text">윈도 알림도<small>IRIS 창이 뒤에 있거나 숨어 있을 때만</small></span><input id="st-notify-os" class="sw" type="checkbox"></label></section>
       </div>
       <div class="st-pane" data-pane="mods" hidden>
-        <div class="st-pane-h"><h2>확장 모듈</h2><p>IRIS에 기능 더하기</p></div>
+        <div class="st-pane-h"><h2>확장 모듈</h2></div>
         <section class="st-grp"><div id="st-mods" class="mods"></div></section>
       </div>
       <div class="st-pane" data-pane="account" hidden>
-        <div class="st-pane-h"><h2>계정·보안</h2><p>로그인 열쇠와 비밀 금고</p></div>
+        <div class="st-pane-h"><h2>계정·보안</h2></div>
         <!-- 인증(v2.84, 2026-10-15): 로그인 열쇠별 만료일 | 갱신 단추. 곧 만료(3일 안)는 주황, 만료는 빨강. 절 머리 단추 = 다시 확인. -->
         <!-- v2.90: 머리(로그인 열쇠 + 다시 확인) 아래 카드 세 장 = IRIS 열쇠 · Claude 열쇠 · Codex 열쇠(settings.js renderAuth 가 #st-auth 안에 section.st-grp 로 그림) -->
         <div id="st-auth-sec" class="st-keys" hidden><div class="st-keys-h"><span id="st-auth-h">인증</span><button id="st-auth-act" class="text-btn outline" type="button">다시 확인</button></div>
@@ -85,7 +85,7 @@
           <div class="st-opt"><span class="st-opt-text">복구 문구<small>세팅 때 창이 금고를 만들며 문구를 이 컴퓨터에 보관했습니다. USB로 옮기거나 다른 컴퓨터에서 열려면 그 전에 한 번 보고 종이에 적어 두세요(화면 창으로만 보입니다).</small></span></div></section>
       </div>
       <div class="st-pane" data-pane="about" hidden>
-        <div class="st-pane-h"><h2>업데이트·정보</h2><p>새 판 확인과 만든 사람</p></div>
+        <div class="st-pane-h"><h2>업데이트·정보</h2></div>
         <!-- 업데이트(v2.58, 2026-09-14): 절 머리의 단추 하나로 확인 → 내려받기 → 적용까지. 부품 행은 값만 보이는 .st-opt 모양. -->
         <section class="st-grp"><h3 class="st-h-row"><span id="st-update-h">업데이트</span><button id="st-update-act" class="text-btn outline" type="button">지금 확인</button></h3>
           <div id="st-update" class="upd"></div>
