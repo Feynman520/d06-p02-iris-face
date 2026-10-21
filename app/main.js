@@ -631,6 +631,7 @@
     if (renaming) { renaming.cancel(); return; }      // 이름 고치는 중 Esc = 고치기 취소만(작업 중단 아님, v2.85)
     if (Tutorial.isOpen()) return;                    // 튜토리얼 위에서 Esc 는 아무 일도 하지 않는다(작업 중단으로 새지 않게, v2.90)
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
+    if (Settings.isOpen() && window.OntologyView?.back?.()) return; // 온톨로지에서 역할을 골랐거나 검색 중이면 Esc = 한 단계 뒤로만(서랍은 그대로, v2.91)
     if (Settings.isOpen()) { Settings.hide(); return; }
     if (MemGauge.isOpen()) { MemGauge.close(); return; } // 메모리 계기판 펼침 = Esc 로 닫기만(중단 아님)
     if (!$('#dash').hidden) { closeDrawer(); return; }

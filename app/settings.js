@@ -132,7 +132,7 @@ window.Settings = (() => {
     const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0], st = R.STAGES.find(s => s.id === cfg.stage) || R.STAGES[0];
     set('#st-sum-design', `${th.name} · ${st.name}`);
     set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}`);
-    set('#st-sum-ontology', '폴더 구조 그래프');
+    set('#st-sum-ontology', '역할 캐릭터 · 폴더 나무');
     set('#st-sum-tools', '스킬 · MCP · 플러그인');
     set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
     set('#st-sum-mods', modsSum);

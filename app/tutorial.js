@@ -8,7 +8,7 @@ window.Tutorial = (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let opts = { onFirstChat: () => {}, onClose: () => {} };
-  let step = 0, info = null, autoShown = false, created = [], tools = null, planTimer = 0, lastPlan = null;
+  let step = 0, info = null, autoShown = false, created = [], tools = null, planTimer = 0, lastPlan = null, picked = false;
   const form = { role: { ko: '', en: '' }, domains: [{ ko: '', en: '', projects: [] }] };
   const el = () => $('#tutorial');
   const isOpen = () => !!el() && !el().hidden;
@@ -97,15 +97,26 @@ window.Tutorial = (() => {
   const FOLDER = '<svg class="tu-fic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>'; // 이모지 대신 선 아이콘
   const periods = () => { const y = info?.year || new Date().getFullYear(); return ['', `${y}년`, `${y}년.1학기`, `${y}년.2학기`, `${y + 1}년`]; };
   const inp = (k, v, ph, cls = '') => `<input class="tu-in ${cls}" data-k="${k}" value="${esc(v)}" placeholder="${esc(ph)}" maxlength="${cls.includes('en') ? 40 : 30}" spellcheck="false" autocomplete="off">`;
+  // v2.91: 역할 = 「별빛의 분신」 캐릭터(app/persona.js) — 고르기 격자 → 고르면 왼쪽으로 걸어가 이름 칸 위에 서고, 오른쪽에 영역·프로젝트 트리 편집.
+  const counts = () => { const ds = form.domains.filter(d => d.ko.trim()); return `영역 ${ds.length} · 프로젝트 ${ds.reduce((s, d) => s + d.projects.filter(p => p.ko.trim()).length, 0)}`; };
+  const meSvg = () => Persona.svg(form.role.ko, { sub: counts(), empty: !form.role.ko.trim(), placeholder: '이름 짓기' });
+  function pickHtml() {
+    return `<div class="tu-build tu-pick"><div class="tu-q"><h4><span class="tu-qn">1</span><span>어떤 <b>역할</b>로 일하시나요?</span> <small>캐릭터를 누르세요 — 가슴의 명찰이 역할입니다</small></h4>
+      <div class="ps-pick tu-grid">${ROLES.map(([k, e]) => `<button class="ps-fig ps-turned${form.role.ko === k ? ' cur' : ''}" type="button" data-act="role" data-ko="${k}" data-en="${e}" aria-label="${k} 역할 고르기">${Persona.svg(k, { sub: e })}</button>`).join('')}
+        <button class="ps-fig ps-turned tu-new" type="button" data-act="role-new" aria-label="새 역할 만들기">${Persona.svg('', { empty: true, placeholder: '새 역할' })}<span class="ps-tag">직접 이름 짓기</span></button></div>
+      <p class="tu-note">캐릭터는 하나, 명찰만 바뀝니다. 이름마다 몸의 별자리 무늬가 조금씩 달라요. 고른 뒤에도 이름은 마음대로 고칠 수 있습니다.</p></div></div>`;
+  }
   function buildHtml() {
+    if (!picked) return pickHtml();
     const sug = SUGGEST[form.role.ko] || [];
     const dRows = form.domains.map((d, i) => `<div class="tu-d"><div class="tu-row"><span class="tu-code">D${String(i + 1).padStart(2, '0')}</span>${inp(`d.${i}.ko`, d.ko, '영역 이름(예: 수업)')}${inp(`d.${i}.en`, d.en, 'English (선택)', 'en')}<button class="tu-x" data-act="rm-d" data-i="${i}" title="이 영역 빼기">×</button></div>
       ${d.projects.map((p, j) => `<div class="tu-row tu-p"><span class="tu-code">P${String(j + 1).padStart(2, '0')}</span>${inp(`p.${i}.${j}.ko`, p.ko, '프로젝트(예: 물리학)')}${inp(`p.${i}.${j}.en`, p.en, 'English (선택)', 'en')}<select class="tu-in tu-sel" data-k="p.${i}.${j}.period">${periods().map(o => `<option value="${esc(o)}"${o === (p.period || '') ? ' selected' : ''}>${o ? esc(o) : '기간 없음'}</option>`).join('')}</select><button class="tu-x" data-act="rm-p" data-i="${i}" data-j="${j}" title="이 프로젝트 빼기">×</button></div>`).join('')}
       ${d.projects.length < 5 ? `<button class="tu-add tu-add-p" data-act="add-p" data-i="${i}">+ 프로젝트</button>` : ''}</div>`).join('');
-    return `<div class="tu-build"><div class="tu-q">
-      <h4><span class="tu-qn">1</span><span>어떤 <b>역할</b>로 일하시나요?</span></h4>
-      <div class="tu-chips">${ROLES.map(([k, e]) => `<button class="tu-chip${form.role.ko === k ? ' cur' : ''}" data-act="role" data-ko="${k}" data-en="${e}">${k}</button>`).join('')}</div>
-      <div class="tu-row"><span class="tu-code">R</span>${inp('r.ko', form.role.ko, '역할 이름(직접 적어도 됩니다)')}${inp('r.en', form.role.en, 'English (선택)', 'en')}</div>
+    return `<div class="tu-build tu-picked"><div class="tu-me-col">
+        <button class="tu-link" type="button" data-act="unpick" title="Esc">← 다른 역할</button>
+        <div class="ps-fig chosen ps-turned tu-me" id="tu-me">${meSvg()}</div>
+        <label class="tu-lab"><span>역할 이름</span>${inp('r.ko', form.role.ko, '예: 교사')}</label><label class="tu-lab"><span>English <small>(선택)</small></span>${inp('r.en', form.role.en, 'Teacher', 'en')}</label>
+      </div><div class="tu-q">
       <h4><span class="tu-qn">2</span><span>계속 관리하는 <b>영역</b>은 무엇인가요?</span> <small>최대 5개</small></h4>
       ${sug.length ? `<div class="tu-chips">${sug.map(([k, e]) => `<button class="tu-chip${form.domains.some(d => d.ko === k) ? ' cur' : ''}" data-act="sug" data-ko="${k}" data-en="${e}">+ ${k}</button>`).join('')}</div>` : ''}
       <h4 class="tu-h3"><span class="tu-qn">3</span><span>영역마다 지금 하는 <b>프로젝트</b>를 적어 주세요</span> <small>없으면 비워 두세요</small></h4>
@@ -145,22 +156,38 @@ window.Tutorial = (() => {
       if (a[0] === 'r') form.role[a[1]] = v;
       else if (a[0] === 'd') form.domains[+a[1]][a[2]] = v;
       else if (a[0] === 'p') form.domains[+a[1]].projects[+a[2]][a[3]] = v;
-      if (k === 'r.ko') { root.querySelectorAll('[data-act="role"]').forEach(b => b.classList.toggle('cur', b.dataset.ko === v)); }
+      if (a[0] !== 'r' || a[1] === 'ko') paintMe(); // 이름·영역 수가 바뀌면 명찰(과 이름 무늬)을 바로 다시 그린다
       schedulePlan();
     });
     root.addEventListener('change', (e) => { if (e.target.dataset?.k) e.target.dispatchEvent(new Event('input', { bubbles: true })); });
     root.addEventListener('click', (e) => {
       const b = e.target.closest('[data-act]'); if (!b) return; const act = b.dataset.act; const i = +b.dataset.i, j = +b.dataset.j;
       if (act === 'make') return make();
-      if (act === 'role') { form.role = { ko: b.dataset.ko, en: b.dataset.en }; }
-      else if (act === 'sug') { const ex = form.domains.findIndex(d => d.ko === b.dataset.ko); if (ex >= 0) form.domains.splice(ex, 1); else { const empty = form.domains.findIndex(d => !d.ko.trim() && !d.projects.length); if (empty >= 0) form.domains[empty] = { ko: b.dataset.ko, en: b.dataset.en, projects: [] }; else if (form.domains.length < 5) form.domains.push({ ko: b.dataset.ko, en: b.dataset.en, projects: [] }); } if (!form.domains.length) form.domains.push({ ko: '', en: '', projects: [] }); }
+      if (act === 'role' || act === 'role-new') {
+        if (act === 'role') form.role = { ko: b.dataset.ko, en: b.dataset.en }; else if (ROLES.some(([k]) => k === form.role.ko)) form.role = { ko: '', en: '' };
+        const from = b.getBoundingClientRect(); b.classList.add('chosen'); b.closest('.ps-pick')?.classList.add('picking');
+        const go = () => { picked = true; repaint(); Persona.walkFrom($('#tu-me', root), from); if (act === 'role-new') $('[data-k="r.ko"]', root)?.focus(); schedulePlan(); };
+        if (matchMedia('(prefers-reduced-motion: reduce)').matches) go(); else setTimeout(go, 200);
+        return;
+      }
+      if (act === 'unpick') return unpick();
+      if (act === 'sug') { const ex = form.domains.findIndex(d => d.ko === b.dataset.ko); if (ex >= 0) form.domains.splice(ex, 1); else { const empty = form.domains.findIndex(d => !d.ko.trim() && !d.projects.length); if (empty >= 0) form.domains[empty] = { ko: b.dataset.ko, en: b.dataset.en, projects: [] }; else if (form.domains.length < 5) form.domains.push({ ko: b.dataset.ko, en: b.dataset.en, projects: [] }); } if (!form.domains.length) form.domains.push({ ko: '', en: '', projects: [] }); }
       else if (act === 'add-d') form.domains.push({ ko: '', en: '', projects: [] });
       else if (act === 'rm-d') { form.domains.splice(i, 1); if (!form.domains.length) form.domains.push({ ko: '', en: '', projects: [] }); }
       else if (act === 'add-p') form.domains[i].projects.push({ ko: '', en: '', period: '' });
       else if (act === 'rm-p') form.domains[i].projects.splice(j, 1);
       else return;
-      const host = $('.tu-q-host', el()); if (host) { host.innerHTML = buildHtml(); } schedulePlan();
+      repaint(); schedulePlan();
     });
+  }
+  /** ④ 장면 다시 그리기 — 캐릭터는 숨쉬기만(걷기는 고를 때 한 번). */
+  function repaint() { const host = $('.tu-q-host', el()); if (!host) return; host.innerHTML = buildHtml(); Persona.watch(host); Persona.fit(host); }
+  function paintMe() { const me = $('#tu-me', el()); if (!me) return; me.innerHTML = meSvg(); Persona.fit(me); }
+  /** 다른 역할 고르기(격자로) — 적은 영역·프로젝트는 그대로 둔다. Esc 도 같다. 처리했으면 true. */
+  function unpick() {
+    if (!picked || SCENES[step]?.id !== 'build') return false;
+    picked = false; repaint(); $(`.tu-q-host [data-act="role"][data-ko="${CSS.escape(form.role.ko)}"]`, el())?.focus();
+    return true;
   }
 
   // ---------- 그리기 ----------
@@ -170,7 +197,7 @@ window.Tutorial = (() => {
     return list.slice(0, 6).map(it => `<button class="tu-btn sm" data-open="${esc(it.rel)}" title="${esc(it.rel)}">${FOLDER}${esc(it.name)}</button>`).join('');
   };
   function sceneHtml(sc) {
-    if (sc.id === 'build') return `<div class="tu-text wide"><div class="tu-kicker">온톨로지 — 직접 해 보기</div><h2>${sc.title}</h2><p>세 가지 질문에 답하면 IRIS가 규칙에 맞는 폴더와 규칙 메모를 만들어 줍니다. 나중에 얼마든지 더하거나 고칠 수 있습니다.</p></div><div class="tu-q-host">${buildHtml()}</div>`;
+    if (sc.id === 'build') return `<div class="tu-text wide"><div class="tu-kicker">온톨로지 — 직접 해 보기</div><h2>${sc.title}</h2><p>역할 캐릭터를 고르고 영역·프로젝트를 적으면 IRIS가 규칙에 맞는 폴더와 규칙 메모를 만들어 줍니다. 나중에 얼마든지 더하거나 고칠 수 있습니다.</p></div><div class="tu-q-host">${buildHtml()}</div>`;
     const more = sc.more ? `<details class="tu-more"><summary>더 알아보기</summary><p>${sc.more}</p></details>` : '';
     let extra = '';
     if (sc.custom === 'ref') extra = `<div class="tu-extra"><div class="tu-extra-h">자료를 넣을 폴더 열기</div><div class="tu-btns">${folderBtns()}</div></div>`;
@@ -196,7 +223,7 @@ window.Tutorial = (() => {
     root.querySelector('[data-nav="prev"]').hidden = step === 0;
     root.querySelector('[data-nav="next"]').hidden = step === SCENES.length - 1;
     root.querySelector('[data-nav="next"]').textContent = step === 0 ? '시작하기' : '다음';
-    if (sc.id === 'build') { schedulePlan(); setTimeout(() => body.querySelector('[data-k="r.ko"]')?.focus(), 60); }
+    if (sc.id === 'build') { const h = $('.tu-q-host', body); Persona.watch(h); Persona.fit(h); schedulePlan(); setTimeout(() => (body.querySelector('[data-k="r.ko"]') || body.querySelector('.ps-fig'))?.focus(), 60); }
     if (sc.custom === 'tools' && !tools) fetch('/api/tools').then(r => r.json()).then(t => { tools = t; const h = $('#tu-tools'); if (h && t?.ok) h.innerHTML = toolsLine(); }).catch(() => { const h = $('#tu-tools'); if (h) h.innerHTML = '<div class="tu-dim">도구 목록을 읽지 못했습니다 — 설정 → 「도구」 탭에서 볼 수 있습니다.</div>'; });
   }
   const go = (n) => { step = Math.max(0, Math.min(SCENES.length - 1, n)); render(); };
@@ -226,7 +253,7 @@ window.Tutorial = (() => {
       <div class="tu-foot"><button class="tu-btn ghost" data-nav="later">나중에 하기</button><span class="tu-gap"></span><button class="tu-btn" data-nav="prev">이전</button><button class="tu-btn accent" data-nav="next">다음</button></div></div>`;
     document.body.appendChild(d);
     // 튜토리얼 안의 키는 문서로 올려 보내지 않는다 — 확인 카드 1~9·단축키·Esc(작업 중단)가 입력칸 글자에 반응하지 않게
-    d.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && e.target.matches?.('input')) e.preventDefault(); });
+    d.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && e.target.matches?.('input')) e.preventDefault(); if (e.key === 'Escape' && unpick()) e.preventDefault(); }); // Esc = ④에서 고른 역할 → 격자로만(튜토리얼은 닫지 않음)
     bindBuild(d);
     d.addEventListener('click', async (e) => {
       const nav = e.target.closest('[data-nav]')?.dataset.nav;

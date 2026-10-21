@@ -86,6 +86,18 @@
 .tu-add { font-size: 12.5px; color: var(--iris); padding: 4px 8px; border-radius: 7px; margin: 0 0 6px; }
 .tu-add:hover { background: var(--iris-soft); }
 .tu-add.tu-add-p { margin-left: 30px; } /* .sub 는 보조 작업 서랍(subagents.css)의 전역 이름 — 겹치면 버튼이 화면을 덮는다 */
+/* v2.91: 역할 고르기 = 캐릭터 격자(app/persona.js) → 고르면 왼쪽 열(캐릭터 + 이름 칸) · 가운데 영역/프로젝트 · 오른쪽 미리보기 */
+.tu-build.tu-pick { grid-template-columns: 1fr; }
+.tu-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; max-width: 900px; margin: 6px 0 4px; }
+.tu-grid .ps-fig { padding: 6px 4px 8px; } .tu-grid .ps-fig.cur::before { opacity: 1; }
+.tu-grid .ps-svg { max-width: 140px; }
+.tu-new .ps-tag { color: var(--iris); }
+.tu-build.tu-picked { grid-template-columns: 172px minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; }
+.tu-me-col { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.tu-me-col .tu-link { align-self: flex-start; }
+.tu-me { width: 128px; align-self: center; margin: 0 0 2px; cursor: default; }
+.tu-lab { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); }
+.tu-lab small { font-size: 11px; }
 .tu-prev { position: sticky; top: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--base); }
 .tu-tree { font-size: 12.5px; line-height: 1.5; color: var(--ink-2); max-height: 300px; overflow: auto; margin-bottom: 10px; }
 .tu-node { display: flex; align-items: center; padding: 3px 0; white-space: nowrap; }
@@ -99,7 +111,9 @@
 .tu-note { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; }
 @media (max-width: 900px) {
   .tu-body { grid-template-columns: 1fr; padding: 24px; gap: 18px; }
-  .tu-build { grid-template-columns: 1fr; }
+  .tu-build, .tu-build.tu-picked { grid-template-columns: 1fr; }
+  .tu-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tu-me { width: 110px; }
   .tu-art-svg { max-width: 360px; }
   .tu-steps li em { display: none; }
 }

@@ -141,10 +141,26 @@ else {
     ok(titles[0].includes('환영') && titles[1].includes('해 주는 AI') && titles[2].includes('3가지') && titles[3].includes('온톨로지'), `6 장면 순서 ⓪~③ (${titles.join(' / ')})`);
     ok((await p.locator('.tu-art-svg').count()) === 0 && await p.locator('.tu-build').isVisible(), '6 ④ 내 폴더 만들기 화면');
     await shot('4-pre');
+    // v2.91: 역할 = 캐릭터 격자(제안 5명 + 「새 역할」) → 고르면 왼쪽 캐릭터 + 이름 칸, 명찰이 입력을 따라감, Esc = 격자로
+    ok((await p.locator('.tu-grid .ps-fig').count()) === 6 && (await p.locator('#tu-make').count()) === 0, '6 ④ 처음 = 캐릭터 격자 6명(제안 5 + 새 역할)');
+    await p.locator('[data-act="role-new"]').click();
+    await p.waitForSelector('#tu-me', { timeout: 5000 }).catch(() => {});
+    const ph = await p.locator('#tu-me .ps-name').textContent().catch(() => '');
+    await p.locator('[data-k="r.ko"]').fill('상상력연구소장'); await sleep(100);
+    const nm = await p.locator('#tu-me .ps-name').textContent().catch(() => '');
+    const seedA = await p.locator('#tu-me .ps-svg').getAttribute('data-seed');
+    await p.locator('[data-k="r.ko"]').fill('교무부장'); await sleep(100);
+    const seedB = await p.locator('#tu-me .ps-svg').getAttribute('data-seed');
+    ok(ph === '이름 짓기' && nm === '상상력연구소장' && seedA && seedB && seedA !== seedB, `6 「새 역할」 = 빈 명찰 → 이름 칸을 따라 명찰·무늬가 바뀜 (${ph} → ${nm}, 시드 ${seedA}≠${seedB})`);
+    await shot('4-new-role');
+    await p.locator('[data-k="r.ko"]').press('Escape'); await sleep(150);
+    ok(await p.locator('#tutorial').isVisible() && (await p.locator('.tu-grid .ps-fig').count()) === 6, '6 Esc = 격자로 돌아감(튜토리얼은 그대로)');
     const chip = p.locator('[data-act="role"][data-ko="교사"]');
     const hit = await chip.evaluate((b) => { const r = b.getBoundingClientRect(); const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return top === b || b.contains(top) ? 'ok' : `${top?.tagName}.${top?.className}#${top?.id}`; }).catch((e) => 'err ' + e.message);
     ok(hit === 'ok', `6 역할 칩이 가려지지 않음 (${hit})`);
     await chip.click({ timeout: 5000 });
+    await p.waitForSelector('#tu-me', { timeout: 5000 }).catch(() => {});
+    ok(/교사/.test(await p.locator('#tu-me .ps-name').textContent().catch(() => '')) && (await p.locator('[data-k="r.ko"]').inputValue()) === '교사' && (await p.locator('[data-k="r.en"]').inputValue()) === 'Teacher', '6 「교사」를 고르면 왼쪽에 교사 명찰 캐릭터 + 이름 칸');
     await p.locator('[data-act="sug"][data-ko="수업"]').click(); await p.locator('[data-act="sug"][data-ko="담임"]').click();
     ok(await p.evaluate(() => [...document.querySelectorAll('#tutorial [class]')].every(e => !e.classList.contains('sub'))), '6 튜토리얼이 전역 클래스 .sub(보조 작업 서랍)를 쓰지 않음');
     await p.locator('[data-act="add-p"][data-i="0"]').click();
@@ -154,6 +170,8 @@ else {
     await sleep(600);
     const tree = await p.locator('#tu-tree').textContent();
     ok(/R01-교사\(Teacher\)/.test(tree) && /D01-수업\(Teaching\)/.test(tree) && /P01-물리학 〖\d{4}년\.2학기〗/.test(tree) && /D02-담임\(Homeroom\)/.test(tree), `6 미리보기 나무 (${tree.replace(/\s+/g, ' ').slice(0, 120)})`);
+    const sub = await p.locator('#tu-me .ps-sub').textContent().catch(() => '');
+    ok(sub === '영역 2 · 프로젝트 1', `6 명찰 둘째 줄 = 적은 영역·프로젝트 수 (${sub})`);
     await shot('4-build');
     await p.locator('#tu-make').click(); await p.waitForFunction(() => /완료/.test(document.querySelector('#tu-made')?.textContent || ''), null, { timeout: 30000 }).catch(() => {});
     ok(/완료 — 새 폴더 4개/.test(await p.locator('#tu-made').textContent()), '6 「폴더 만들기」 = 새 폴더 4개');
@@ -203,30 +221,78 @@ else {
     for (let d = path.dirname(ROOT); !realGraph && d !== path.dirname(d); d = path.dirname(d)) { const g = path.join(d, '_ontology', 'graph.json'); if (fs.existsSync(g)) realGraph = g; }
     const big = !!realGraph && fs.existsSync(realGraph);
     if (big) { fs.mkdirSync(path.join(soulR, '_ontology'), { recursive: true }); fs.copyFileSync(realGraph, path.join(soulR, '_ontology', 'graph.json')); } // 읽기만(사본은 임시 영혼 안, 끝나면 함께 지움)
-    else writeJson(path.join(soulR, '_ontology', 'graph.json'), { generated: '2026-10-20T09:00:00', nodes: { r: { type: 'role', path: 'R01-교사(Teacher)' }, d: { type: 'domain', path: 'R01-교사(Teacher)/D01-수업(Teaching)' }, p: { type: 'project', path: 'R01-교사(Teacher)/D01-수업(Teaching)/P01-물리학' } }, edges: [] });
+    else writeJson(path.join(soulR, '_ontology', 'graph.json'), { generated: '2026-10-20T09:00:00', nodes: { r: { type: 'role', path: 'R01-교사(Teacher)' }, d: { type: 'domain', path: 'R01-교사(Teacher)/D01-수업(Teaching)' }, p: { type: 'project', path: 'R01-교사(Teacher)/D01-수업(Teaching)/P01-물리학' }, d2: { type: 'domain', path: 'R01-교사(Teacher)/D02-담임(Homeroom)', lifecycle: 'dormant' } }, edges: [{ from: 'p', rel: 'canonical', to: 'd2' }] });
+    // v2.91: 구조 = 역할 캐릭터 격자 → 고르면 트리 · 관계 = 나무 밖 관계 그래프(설계 = docs\설계-온톨로지분신-2026-10-20.md)
     const t0 = Date.now();
     await p.locator('#on-rebuild').click();
-    await p.waitForSelector('#st-onto .on-svg', { timeout: 20000 }).catch(() => {});
+    await p.waitForSelector('#st-onto .ps-fig[data-role]', { timeout: 20000 }).catch(() => {});
     const drawMs = Date.now() - t0;
-    const nN = await p.locator('#st-onto .on-n').count();
-    const want = JSON.parse(await (await fetch(`http://127.0.0.1:${PORT}/api/ontology/graph`)).text()).nodes.length;
-    ok(nN > 0 && nN === want, `7 그래프 노드 ${nN}개 = API ${want}개${big ? ' (이 PC 그래프 사본)' : ''}`);
+    const api = JSON.parse(await (await fetch(`http://127.0.0.1:${PORT}/api/ontology/graph`)).text());
+    const apiRoles = api.nodes.filter(n => n.type === 'role' || !n.parent).sort((a, b) => a.path.localeCompare(b.path, 'ko'));
+    const kidsOf = (id) => api.nodes.filter(n => n.parent === id);
+    const nFig = await p.locator('#st-onto .ps-fig[data-role]').count();
+    ok(nFig > 0 && nFig === apiRoles.length, `7 격자 캐릭터 ${nFig}명 = 역할 ${apiRoles.length}개${big ? ' (이 PC 그래프 사본)' : ''}`);
+    const badge = await p.locator(`#st-onto .ps-fig[data-role="${apiRoles[0].id}"] .ps-name`).textContent();
+    const wantBadge = await p.evaluate((name) => OntologyView._short({ name }, 10), apiRoles[0].name);
+    ok(badge === wantBadge, `7 명찰 = 역할 이름 (${badge})`);
     ok(/그래프 도구\(_ontology\)가 없어/.test(await p.locator('#on-status').textContent()), '7 「다시 그리기」: 도구 없는 영혼이면 이유를 말하고 지금 그래프를 보여 줌');
     ok(drawMs < 6000, `7 다시 그리기→그림 ${drawMs}ms (6초 안)`);
     await shot('s-ontology');
+    // 영역이 가장 많은 역할을 고른다(이 PC = 저자, 접어서 시작) — 영역이 3개 이하인 역할은 펼쳐서 시작
+    const bigRole = apiRoles.slice().sort((a, b) => kidsOf(b.id).length - kidsOf(a.id).length)[0];
+    await p.locator(`#st-onto .ps-fig[data-role="${bigRole.id}"]`).click();
+    await p.waitForSelector('#ot-tree', { timeout: 5000 }).catch(() => {}); await sleep(1300);
+    const top = kidsOf(bigRole.id), rows0 = await p.locator('#ot-tree .ot-row').count();
+    const startOpen = top.length <= 3 ? top.reduce((s, d) => s + kidsOf(d.id).length, 0) : 0;
+    ok(rows0 === top.length + startOpen && /← 모든 역할/.test(await p.locator('#st-onto').textContent()), `7 고르면 트리: 첫 단 ${top.length}줄${startOpen ? ` + 펼친 ${startOpen}줄` : '(접힌 채)'} = ${rows0}`);
+    ok(await p.locator('#ot-me.ps-turned').count() === 1, '7 걸어간 뒤 캐릭터가 트리 쪽으로 몸을 돌림');
+    await shot('s-ontology-tree');
+    const dWith = top.find(d => kidsOf(d.id).length > 0);
+    if (dWith && top.length > 3) {
+      await p.locator(`#ot-tree .ot-row[data-row="${dWith.id}"]`).click(); await sleep(150);
+      ok((await p.locator('#ot-tree .ot-row').count()) === rows0 + kidsOf(dWith.id).length, `7 영역 누르기 = 펼침(+${kidsOf(dWith.id).length}줄)`);
+      await p.locator(`#ot-tree .ot-row[data-row="${dWith.id}"]`).press('Enter'); await sleep(150);
+      ok((await p.locator('#ot-tree .ot-row').count()) === rows0, '7 그 줄에서 Enter = 다시 접힘');
+    }
+    await p.keyboard.press('Escape'); await sleep(200);
+    ok((await p.locator('#st-onto .ps-fig[data-role]').count()) === nFig && await p.locator('#settings').isVisible(), '7 Esc = 격자로 돌아감(설정 서랍은 그대로)');
+    await p.locator('#on-q').fill('물리'); await p.locator('#on-q').press('1'); await p.locator('#on-q').press('Backspace'); await sleep(150);
+    const nHit = api.nodes.filter(n => n.path.toLowerCase().includes('물리')).length, nRes = await p.locator('#on-res .on-r').count();
+    ok(nHit > 0 && nRes === Math.min(30, nHit) && new RegExp(`${nHit}개`).test(await p.locator('#on-hits').textContent()), `7 검색 = 일치 ${nHit}개, 목록 ${nRes}줄(숫자 키는 입력칸에만)`);
+    await p.locator('#on-q').press('Enter'); await sleep(600);
+    const firstHit = api.nodes.find(n => n.path.toLowerCase().includes('물리'));
+    ok((await p.locator(`#ot-tree .ot-row.sel[data-row="${firstHit.id}"]`).count()) === 1 && await p.locator('#on-res').isHidden(), '7 Enter = 그 역할로 가서 그 줄을 펼쳐 고름');
+    await shot('s-ontology-sel');
+    await p.locator('#on-q').press('Escape'); await sleep(150);
+    ok((await p.locator('#on-q').inputValue()) === '' && await p.locator('#ot-tree').isVisible(), '7 검색칸 Esc = 검색만 지움(트리는 그대로)');
+    // 관계 화면
+    const ends = new Set(api.links.flatMap(l => [l.from, l.to]));
+    await p.locator('#st-onto [data-mode="relation"]').click(); await sleep(400);
+    const nDot = await p.locator('#st-onto .on-n').count(), nLg = await p.locator('#st-onto .on-lg').count();
+    ok(nDot === ends.size && nDot > 0 && nLg === new Set(api.links.map(l => l.rel)).size && await p.locator('#on-fit').isVisible(), `7 관계 화면 = 관계 끝점 ${nDot}개 · 범례 ${nLg}종 · 「전체 보기」`);
+    await shot('s-ontology-rel');
     const z0 = await p.locator('#on-g').getAttribute('transform');
     const box = await p.locator('.on-svg').boundingBox();
     await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.wheel(0, -600); await sleep(200);
     const z1 = await p.locator('#on-g').getAttribute('transform');
     ok(z0 !== z1 && /scale\(/.test(z1), '7 휠 = 확대');
-    await p.mouse.move(box.x + 60, box.y + 60); await p.mouse.down(); await p.mouse.move(box.x + 160, box.y + 120, { steps: 5 }); await p.mouse.up(); await sleep(100);
+    await p.mouse.move(box.x + 30, box.y + 30); await p.mouse.down(); await p.mouse.move(box.x + 130, box.y + 90, { steps: 5 }); await p.mouse.up(); await sleep(100);
     ok((await p.locator('#on-g').getAttribute('transform')) !== z1, '7 끌기 = 이동');
-    await p.locator('#on-q').fill('물리'); await p.locator('#on-q').press('1'); await p.locator('#on-q').press('Backspace'); await sleep(150);
-    const hits = await p.locator('#st-onto .on-n.hit').count();
-    ok(hits > 0 && /\d+개/.test(await p.locator('#on-hits').textContent()), `7 검색 = 일치 ${hits}개 강조(숫자 키는 입력칸에만)`);
-    await p.locator('#on-q').press('Enter'); await sleep(250);
-    ok(await p.locator('#on-info').isVisible() && /폴더 열기/.test(await p.locator('#on-info').textContent()), '7 Enter = 첫 일치로 이동 + 정보(「폴더 열기」)');
-    await shot('s-ontology-sel');
+    await p.locator('#on-fit').click(); await sleep(100);
+    const dot = p.locator('#st-onto .on-n circle').first(), db = await dot.boundingBox();
+    await p.mouse.click(db.x + db.width / 2, db.y + db.height / 2); await sleep(200);
+    ok(await p.locator('#on-info').isVisible() && /폴더 열기/.test(await p.locator('#on-info').textContent()) && (await p.locator('#on-info .on-i-rels li').count()) > 0, '7 점 누르기 = 정보(관계 목록 · 「폴더 열기」)');
+    const relSel = await p.locator('#st-onto .on-n.sel').getAttribute('data-id');
+    await p.locator('#on-info [data-on="to-tree"]').click(); await sleep(400);
+    ok(relSel === apiRoles.find(r => r.id === relSel)?.id ? (await p.locator('#ot-tree').count()) === 1 : (await p.locator(`#ot-tree .ot-row.sel[data-row="${relSel}"]`).count()) === 1, '7 「구조에서 보기」 = 그 폴더 줄');
+    const ring = p.locator('#st-onto .ot-ring').first();
+    if (await ring.count()) {
+      const rid = await ring.getAttribute('data-ring'); await ring.click(); await sleep(400);
+      ok((await p.locator('#st-onto [data-mode="relation"]').getAttribute('aria-pressed')) === 'true' && (await p.locator(`#st-onto .on-n.sel[data-id="${rid}"]`).count()) === 1, '7 관계 고리 = 관계 화면의 그 점');
+    } else ok(false, '7 관계 고리가 트리에 없음');
+    await p.keyboard.press('Escape'); await sleep(200);
+    ok((await p.locator('#st-onto .on-n.sel').count()) === 0 && await p.locator('#settings').isVisible(), '7 관계 화면 Esc = 선택만 풀기');
+    await p.locator('#st-onto [data-mode="structure"]').click(); await sleep(200);
     const errsBefore = errs.length; // 아래 거절(404)은 일부러 낸 것 — 콘솔 오류 집계에서 뺀다
     const keep = await p.evaluate(async () => (await fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: '..\\..' }) })).status);
     ok(keep === 404, '7 폴더 열기 = 영혼 밖 경로 거절');

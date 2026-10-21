@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/app/style.css">
 <link rel="stylesheet" href="/app/subagents.css">
 <link rel="stylesheet" href="/app/tutorial.css">
+<link rel="stylesheet" href="/app/persona.css">
 </head>
 <body>
 <div id="app">
@@ -54,9 +55,9 @@
           <div class="st-opt"><span class="st-opt-text">승인<small>명령을 실행하기 전에 물을지</small></span><select id="st-approval" class="pick"></select></div>
           <div class="st-opt"><span class="st-opt-text">샌드박스<small>파일·네트워크에 닿을 수 있는 범위</small></span><select id="st-sandbox" class="pick"></select></div></section>
       </div>
-      <!-- v2.90: 온톨로지(app/ontology.js — 방사형 나무 그래프) · 도구(app/tools.js — 스킬·MCP·플러그인). 묶음을 처음 열 때 데몬에서 읽는다. -->
+      <!-- v2.91: 온톨로지(app/ontology.js — 구조 = 역할 캐릭터 격자 + 트리(app/persona.js), 관계 = 나무 밖 관계 그래프) · 도구(app/tools.js — 스킬·MCP·플러그인). 묶음을 처음 열 때 데몬에서 읽는다. -->
       <div class="st-pane wide" data-pane="ontology" hidden>
-        <div class="st-pane-h"><h2>온톨로지</h2><p>내 폴더 구조 — 역할 → 영역 → 프로젝트</p></div>
+        <div class="st-pane-h"><h2>온톨로지</h2><p>나의 역할들 — 역할 → 영역 → 프로젝트 · 나무 밖 관계</p></div>
         <div id="st-onto" class="st-onto"></div>
       </div>
       <div class="st-pane" data-pane="tools" hidden>
@@ -225,6 +226,7 @@
 <script src="/app/transcript.js"></script>
 <script src="/app/subagents.js"></script>
 <script src="/app/folders.js"></script>
+<script src="/app/persona.js"></script>
 <script src="/app/ontology.js"></script>
 <script src="/app/tools.js"></script>
 <script src="/app/settings.js"></script>
