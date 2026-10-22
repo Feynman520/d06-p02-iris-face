@@ -1,6 +1,6 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // tutorial.mjs — 첫 실행 튜토리얼의 데몬 쪽(v2.90, 2026-10-19 사용자 결정: AI 첫 세션 자동 시작 폐기 → 기계적 튜토리얼).
-//  · planStructure/createStructure: 튜토리얼 질문·답(역할 1 · 영역 1~5 · 영역마다 프로젝트 0~5) → R/D/P 폴더 + 미니 AGENTS.md·CLAUDE.md
+//  · planStructure/createStructure: 튜토리얼 질문·답(역할 1~8(v2.94 spec.roles) · 영역 1~5 · 영역마다 프로젝트 0~5) → R/D/P 폴더 + 미니 AGENTS.md·CLAUDE.md
 //    (설치기 setup/structure.mjs 와 같은 틀) → `_ontology\build_graph.py --init --write` · `--compile`(있을 때만). 이미 있는 폴더·파일은 건드리지 않는다.
 //  · ontologyGraph: `_ontology\graph.json` 을 화면용으로 줄인 것(노드·관계만, 파일 내용 없음) — 설정 「온톨로지」 탭.
 //  · listTools: 이 영혼의 Claude(`_agent\claude`)·Codex(`_agent\codex`) 스킬·MCP·플러그인을 **읽기만** — MCP 의 env·인자·주소 값은 싣지 않는다.
@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 // ---------------- 폴더 만들기 ----------------
-export const LIMITS = Object.freeze({ domains: 5, projects: 5, ko: 30, en: 40 });
+export const LIMITS = Object.freeze({ roles: 8, domains: 5, projects: 5, ko: 30, en: 40 });
 const BAD_CHARS = /[\\/:*?"<>|[\]{}()〖〗\u0000-\u001f]/;
 const HAN_KANA = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/; // IRIS 폴더 이름은 한글·영어뿐(전역 경로 가드와 같은 규칙)
 const RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
@@ -49,6 +49,19 @@ const existingSame = (dir, letter, rest) => {
  * spec = { role:{ko,en}, domains:[{ ko, en, projects:[{ko,en,period}] }] }
  */
 export function planStructure(root, spec) {
+  // v2.94: 역할 여러 개 = spec.roles:[{ko,en,domains}] — 한 번에 계획(새 역할끼리 번호가 겹치지 않게). 옛 모양 { role, domains } 도 그대로 받는다.
+  if (Array.isArray(spec?.roles)) {
+    if (!spec.roles.length) return { ok: false, errors: [{ where: 'roles', message: '역할을 하나 이상 골라 주세요.' }] };
+    if (spec.roles.length > LIMITS.roles) return { ok: false, errors: [{ where: 'roles', message: `역할은 ${LIMITS.roles}개까지 만들 수 있습니다.` }] };
+    const errors = [], items = [], takenR = new Set(), seen = new Set();
+    spec.roles.forEach((r, k) => {
+      if (r?.ko && seen.has(r.ko)) errors.push({ where: `roles.${k}.ko`, message: `역할 이름 "${r.ko}"이(가) 두 번 있습니다.` }); seen.add(r?.ko);
+      const one = planStructure(root, { role: { ko: r?.ko, en: r?.en }, domains: r?.domains, _takenR: takenR });
+      if (!one.ok) errors.push(...one.errors.map((e) => ({ where: `roles.${k}.${e.where}`, message: `${r?.ko || `역할 ${k + 1}`}: ${e.message}` })));
+      else items.push(...one.items);
+    });
+    return errors.length ? { ok: false, errors } : { ok: true, items };
+  }
   const errors = []; const items = [];
   const err = (where, message) => errors.push({ where, message });
   const role = spec?.role || {}; const domains = Array.isArray(spec?.domains) ? spec.domains : [];
@@ -72,7 +85,9 @@ export function planStructure(root, spec) {
   if (errors.length) return { ok: false, errors };
   // 번호 매기기: 같은 이름이 이미 있으면 그 폴더를 쓴다(그 안에 더함), 없으면 비어 있는 첫 번호.
   const rRest = folderName('X', role.ko, role.en).slice(2);
-  const rName = existingSame(root, 'R', rRest) || folderName(nextCode(root, 'R'), role.ko, role.en);
+  const takenR = spec?._takenR instanceof Set ? spec._takenR : new Set();
+  let rName = existingSame(root, 'R', rRest);
+  if (!rName) { let c = nextCode(root, 'R'); while (takenR.has(c)) c = `R${String(Number(c.slice(1)) + 1).padStart(2, '0')}`; takenR.add(c); rName = folderName(c, role.ko, role.en); }
   const rDir = path.join(root, rName);
   items.push({ level: 'R', rel: rName, name: rName, ko: role.ko, exists: fs.existsSync(rDir) });
   const takenD = new Set();

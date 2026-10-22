@@ -1,141 +1,187 @@
 /* IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home */
-/* 첫 실행 튜토리얼(v2.90) — 창 전체 덮개 + 가운데 판. 색은 테마 변수만 쓴다(테마를 바꾸면 그림까지 따라 바뀐다). */
-.tu { position: fixed; inset: 0; z-index: 8000; display: grid; place-items: center; background: color-mix(in srgb, var(--base) 78%, transparent); backdrop-filter: blur(6px); padding: 24px; }
+/* 첫 실행 튜토리얼 — v2.94(2026-10-22 사용자 확정): 밝은 판(연수 「교사를 위한 에이전트」 슬라이드 색). IRIS 테마와 무관하게 .tu 안에서 색 변수를 다시 정한다
+   (안의 역할 캐릭터 persona.css 도 이 변수를 따른다). 시안 = docs\시안-튜토리얼v2-2026-10-22.html */
+.tu { --tu-bg: #F9FAFF; --tu-card: #fff; --tu-pale: #E7EDFF; --tu-ink: #151C30; --tu-ink-2: #5B6478; --tu-ink-3: #8a92a6; --tu-acc: #2149EF; --tu-acc-soft: rgba(33,73,239,.10); --tu-line: #E3E8F3; --tu-line-2: #D5DBEA; --tu-pill: rgba(17,25,39,.89); --tu-gold: #FFE27A;
+  --ink: var(--tu-ink); --ink-2: var(--tu-ink-2); --ink-3: var(--tu-ink-3); --iris: var(--tu-acc); --surface: var(--tu-bg); --raised: var(--tu-pale);
+  position: fixed; inset: 0; z-index: 8000; display: grid; place-items: center; background: rgba(8,10,20,.62); backdrop-filter: blur(6px); padding: 24px; color: var(--tu-ink); }
 .tu[hidden] { display: none; }
-.tu-panel { position: relative; width: min(1100px, 100%); height: min(720px, 100%); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.5); overflow: hidden; }
-/* v2.93 머리: [마크 IRIS 시작하기] | 가운데 단계(번호 원·잇는 선·이름) | 같은 폭 빈칸 — 양쪽 칸이 같은 1fr 이라 단계는 판의 정가운데에 선다 */
-.tu-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 14px 22px 12px; border-bottom: 1px solid var(--line); }
-.tu-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); white-space: nowrap; justify-self: start; min-width: 0; }
-.tu-mark { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; }
+.tu button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+.tu-panel { position: relative; width: min(1100px, 100%); height: min(720px, 100%); display: flex; flex-direction: column; background: var(--tu-bg); border: 1px solid var(--tu-line-2); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.45); overflow: hidden; }
+/* 머리: [마크 IRIS 시작하기] | 가운데 단계 | 같은 폭 빈칸 */
+.tu-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 14px 22px 12px; border-bottom: 1px solid var(--tu-line); }
+.tu-brand { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; justify-self: start; min-width: 0; }
+.tu-mark { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; color: var(--tu-acc); }
 .tu-mark:empty { display: none; }
-.tu-word { color: var(--ink); line-height: 1; }
-.tu-brand-sub { font-size: 13.5px; font-weight: 600; color: var(--ink-2); letter-spacing: -.01em; padding-left: 2px; }
+.tu-word { color: var(--tu-ink); line-height: 1; }
+.tu-brand-sub { font-size: 13.5px; font-weight: 600; color: var(--tu-ink-2); padding-left: 2px; }
 .tu-steps { display: flex; margin: 0; padding: 0; list-style: none; justify-self: center; }
 .tu-steps li { position: relative; width: 74px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
-.tu-steps li + li::before { content: ''; position: absolute; top: 12px; right: calc(50% + 15px); width: calc(100% - 30px); height: 2px; border-radius: 2px; background: var(--line-2); transition: background .25s; }
-.tu-steps li.done + li::before, .tu-steps li.done::before, .tu-steps li.cur::before { background: color-mix(in srgb, var(--iris) 60%, var(--line-2)); }
-.tu-dotn { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 600 12px/1 var(--sans); font-variant-numeric: tabular-nums; color: var(--ink-3); background: var(--surface); border: 1.5px solid var(--line-2); transition: background .2s, border-color .2s, color .2s, box-shadow .2s; }
-.tu-steps li:hover .tu-dotn { border-color: var(--iris); color: var(--ink); }
-.tu-steps li.done .tu-dotn { color: var(--iris); border-color: color-mix(in srgb, var(--iris) 60%, transparent); background: var(--iris-soft); }
-.tu-steps li.cur .tu-dotn { color: #0b0f1e; background: var(--iris); border-color: var(--iris); box-shadow: 0 0 0 4px var(--iris-soft); }
-.tu-steps li em { font-style: normal; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; text-align: center; }
-.tu-steps li.done em { color: var(--ink-2); }
-.tu-steps li.cur em { color: var(--ink); font-weight: 650; }
-.tu-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 34px; padding: 34px 40px 24px; align-items: center; }
-.tu-body.sc-build { grid-template-columns: 1fr; align-items: start; gap: 14px; padding-top: 26px; }
-.tu-kicker { font-size: 12px; color: var(--iris); font-weight: 600; letter-spacing: .02em; margin-bottom: 8px; }
-.tu-text h2 { margin: 0 0 16px; font-size: 26px; font-weight: 700; letter-spacing: -.02em; color: var(--ink); line-height: 1.3; }
-.tu-text p { margin: 0 0 10px; font-size: 15px; line-height: 1.7; color: var(--ink-2); }
-.tu-text p b, .tu-text li b { color: var(--ink); }
-.tu-text code { font: 13px var(--mono); color: var(--ink); background: var(--raised); padding: 1px 6px; border-radius: 5px; }
-.tu-text.wide p { max-width: 760px; }
-.tu-more { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 0 14px; background: var(--base); }
-.tu-more summary { cursor: pointer; padding: 10px 0; font-size: 13px; color: var(--ink-2); }
-.tu-more[open] summary { color: var(--ink); }
-.tu-more p { font-size: 13.5px; margin: 0 0 12px; }
-/* v2.93 그림 = 자기 배경(남색 밤)을 가진 둥근 카드 — 밝은 테마에서도 액자처럼 보인다 */
+.tu-steps li.lock { cursor: not-allowed; opacity: .55; }
+.tu-steps li + li::before { content: ''; position: absolute; top: 12px; right: calc(50% + 15px); width: calc(100% - 30px); height: 2px; border-radius: 2px; background: var(--tu-line-2); }
+.tu-steps li.done::before, .tu-steps li.cur::before { background: color-mix(in srgb, var(--tu-acc) 60%, var(--tu-line-2)); }
+.tu-dotn { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 600 12px/1 var(--sans); font-variant-numeric: tabular-nums; color: var(--tu-ink-3); background: var(--tu-bg); border: 1.5px solid var(--tu-line-2); }
+.tu-steps li:not(.lock):hover .tu-dotn { border-color: var(--tu-acc); color: var(--tu-ink); }
+.tu-steps li.done .tu-dotn { color: var(--tu-acc); border-color: color-mix(in srgb, var(--tu-acc) 50%, transparent); background: var(--tu-acc-soft); }
+.tu-steps li.cur .tu-dotn { color: #fff; background: var(--tu-acc); border-color: var(--tu-acc); box-shadow: 0 0 0 4px var(--tu-acc-soft); }
+.tu-steps li em { font-style: normal; font-size: 11.5px; color: var(--tu-ink-3); white-space: nowrap; }
+.tu-steps li.done em { color: var(--tu-ink-2); } .tu-steps li.cur em { color: var(--tu-ink); font-weight: 700; }
+/* 몸통 = 왼쪽 글 | 오른쪽 그림 + 아래 요점 띠 */
+.tu-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 40px; padding: 34px 46px 84px; align-items: center; }
+.tu-k { font-size: 13px; font-weight: 700; color: var(--tu-acc); display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.tu-k i { font-style: normal; display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 8px; border-radius: 12px; background: var(--tu-acc); color: #fff; font-size: 12px; font-weight: 800; }
+.tu h2 { margin: 0; font-size: 31px; line-height: 1.28; font-weight: 800; letter-spacing: -.025em; color: var(--tu-ink); }
+.tu h2 span, .tu h3 span { color: var(--tu-acc); }
+.tu h2.sm { font-size: 27px; }
+.tu-rule { width: 44px; height: 4px; border-radius: 2px; background: var(--tu-acc); margin: 20px 0 22px; }
+.tu-pts { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.tu-pts li { display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start; }
+.tu-pts li > b { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--tu-acc); color: #fff; font-size: 13px; font-weight: 800; }
+.tu-pts li > b.o { background: var(--tu-acc-soft); color: var(--tu-acc); }
+.tu-pts strong { display: block; font-size: 15.5px; font-weight: 700; color: var(--tu-ink); line-height: 1.35; }
+.tu-pts strong em { font-style: normal; color: var(--tu-acc); }
+.tu-pts small { display: block; margin-top: 3px; font-size: 13px; color: var(--tu-ink-2); line-height: 1.45; }
+.tu-pts.six { grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+.tu-chip-warn { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; padding: 6px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: #8a5a00; background: #fff3cf; border: 1px solid #f5d98a; }
+.tu-chip-warn::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #f0a500; }
+.tu-pill { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); white-space: nowrap; padding: 10px 22px; border-radius: 999px; background: var(--tu-pill); color: #fff; font-size: 14.5px; font-weight: 600; }
+.tu-pill b { color: var(--tu-gold); }
 .tu-art { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; }
-.tu-pic { margin: 0; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; border-radius: 16px; overflow: hidden; background: #141a2e; border: 1px solid var(--line-2); box-shadow: 0 18px 50px rgba(0,0,0,.35); }
-.tu-pic img { display: block; width: 100%; height: 100%; object-fit: cover; user-select: none; }
-.tu-pic.shot { max-width: none; aspect-ratio: 16 / 10; border-radius: 12px; background: var(--base); cursor: zoom-in; position: relative; }
-.tu-pic.shot img { object-fit: contain; }
+.tu-pic { margin: 0; width: 100%; border-radius: 16px; overflow: hidden; background: #fff; border: 1px solid var(--tu-line-2); box-shadow: 0 14px 40px rgba(20,30,70,.12); }
+.tu-pic img { display: block; width: 100%; height: auto; user-select: none; }
+.tu-pic.crop img { aspect-ratio: 16 / 8; object-fit: cover; object-position: 50% 40%; }
+.tu-pic.shot { cursor: zoom-in; position: relative; background: #0a0c14; }
 .tu-pic.shot::after { content: '크게 보기'; position: absolute; right: 10px; bottom: 10px; font-size: 11px; color: #e9ecf5; background: rgba(10,12,20,.72); border: 1px solid rgba(255,255,255,.14); padding: 3px 9px; border-radius: 999px; opacity: 0; transition: opacity .2s; }
 .tu-pic.shot:hover::after { opacity: 1; }
-.sc-rdp .tu-pic { max-width: 400px; }
-.sc-usage.tu-body { grid-template-columns: minmax(0, .82fr) minmax(0, 1.45fr); gap: 28px; }
-.sc-usage .tu-text p { font-size: 14px; line-height: 1.6; margin-bottom: 8px; }
-/* ③ 온톨로지 일러스트 아래 = 실제 폴더 이름 모양 */
-.tu-mini { width: 100%; max-width: 400px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--base); font-size: 12px; line-height: 1.4; color: var(--ink-2); }
-.tu-mini-row { display: flex; align-items: center; padding: 2px 0; white-space: nowrap; }
-.tu-mini-row.lv0 { color: var(--ink); font-weight: 650; }
-.tu-mini-row.lv1 { padding-left: 12px; color: var(--ink); } .tu-mini-row.lv2 { padding-left: 28px; } .tu-mini-row.lv3 { padding-left: 44px; }
-.tu-mini-row small { margin-left: 8px; font: 10px var(--mono); color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; }
-.tu-mini-flow { margin-top: 6px; font-size: 11.5px; color: var(--iris); }
-.tu-mini-flow::before { content: '↓ '; }
-/* ⑦ 사용법 캡처 크게 보기 */
-.tu-zoom { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--base) 92%, transparent); cursor: zoom-out; }
-.tu-zoom[hidden] { display: none; }
-.tu-zoom img { max-width: 100%; max-height: 100%; border-radius: 10px; border: 1px solid var(--line-2); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
-.tu-foot { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--line); }
+.tu-cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; }
+.tu-cmp .tu-pic { position: relative; }
+.tu-cmp .tu-pic img { aspect-ratio: 3 / 4; object-fit: cover; }
+.tu-tag { position: absolute; left: 10px; top: 10px; padding: 3px 10px; border-radius: 999px; background: #fff; color: var(--tu-acc); font-size: 11.5px; font-weight: 800; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.tu-cmp figcaption { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 12px 10px; background: linear-gradient(transparent, rgba(10,16,40,.78)); color: #fff; }
+.tu-cmp figcaption b { display: block; font-size: 15px; } .tu-cmp figcaption small { font-size: 11.5px; opacity: .9; }
+.tu-icons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
+.tu-icons div { position: relative; background: var(--tu-card); border: 1px solid var(--tu-line-2); border-radius: 14px; padding: 8px 8px 10px; text-align: center; }
+.tu-icons img { width: 56%; aspect-ratio: 1; object-fit: contain; border-radius: 10px; }
+.tu-icons b { display: block; font-size: 13.5px; margin-top: 4px; } .tu-icons small { display: block; font-size: 11.5px; color: var(--tu-ink-2); margin-top: 2px; }
+.sc-finish .tu-icons img { width: 72%; }
+.tu-icons.done div::after { content: ''; position: absolute; right: 10px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: var(--tu-acc) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat; }
+/* 레퍼런스 비교: 말로 100번 < 작년 파일 1개 */
+.tu-vs { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; width: 100%; }
+.tu-box { background: var(--tu-card); border: 1.5px solid var(--tu-line-2); border-radius: 14px; height: 210px; display: grid; place-items: center; padding: 14px; }
+.tu-dots { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; width: 100%; }
+.tu-dots i { aspect-ratio: 1; border-radius: 50%; background: var(--tu-line-2); }
+.tu-box.file { border-color: var(--tu-acc); box-shadow: 0 0 0 4px var(--tu-acc-soft); color: var(--tu-acc); text-align: center; }
+.tu-box.file svg { width: 64px; } .tu-box.file b { display: block; font-size: 13px; margin-top: 8px; color: var(--tu-ink); }
+.tu-lt { font-size: 42px; font-weight: 900; color: var(--tu-acc); }
+.tu-vs p { margin: 6px 0 0; text-align: center; font-size: 13px; font-weight: 700; } .tu-vs p small { display: block; font-weight: 400; color: var(--tu-ink-2); font-size: 11.5px; }
+.tu-mini { width: 100%; background: var(--tu-card); border: 1px solid var(--tu-line-2); border-radius: 12px; padding: 9px 12px 9px 14px; font-size: 12.5px; color: var(--tu-ink-2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tu-sp { flex: 1; }
+.tu-stat b { font-size: 18px; color: var(--tu-acc); margin-right: 3px; font-variant-numeric: tabular-nums; }
+.tu-fbtn { display: inline-flex; align-items: center; padding: 5px 11px; border-radius: 8px; border: 1px solid var(--tu-line-2); font-size: 12.5px; color: var(--tu-ink); background: var(--tu-bg); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tu .tu-fbtn:hover { border-color: var(--tu-acc); }
+.tu-fic { flex: none; vertical-align: -2px; margin-right: 6px; color: var(--tu-acc); }
+/* 마무리: 첫 대화 */
+.tu-first { padding: 14px 16px; border: 1px solid var(--tu-line-2); border-radius: 12px; background: var(--tu-card); }
+.tu-first > b { display: block; font-size: 13px; margin-bottom: 10px; }
+/* 단추·입력 공통 */
+.tu-foot { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--tu-line); }
 .tu-gap { flex: 1; }
-.tu-btn { padding: 8px 16px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--ink-2); background: var(--surface); font-size: 13.5px; display: inline-flex; align-items: center; gap: 7px; }
-.tu-btn:hover { color: var(--ink); background: var(--raised); }
-.tu-btn.accent { background: var(--iris); border-color: var(--iris); color: #0b0f1e; font-weight: 650; }
-.tu-btn.accent:hover { filter: brightness(1.08); }
-.tu-btn.accent:disabled { opacity: .6; cursor: progress; }
-.tu-btn.ghost { border-color: transparent; color: var(--ink-3); }
-.tu-btn.sm { padding: 6px 12px; font-size: 12.5px; }
+.tu-later-note, .tu-gate { font-size: 11.5px; color: var(--tu-ink-3); }
+.tu-gate[hidden] { display: none; }
+.tu .tu-btn { padding: 8px 18px; border-radius: 9px; border: 1px solid var(--tu-line-2); color: var(--tu-ink-2); background: var(--tu-bg); font-size: 13.5px; display: inline-flex; align-items: center; gap: 7px; }
+.tu .tu-btn:hover:not(:disabled) { color: var(--tu-ink); background: var(--tu-pale); }
+.tu .tu-btn.accent { background: var(--tu-acc); border-color: var(--tu-acc); color: #fff; font-weight: 700; }
+.tu .tu-btn.accent:hover:not(:disabled) { filter: brightness(1.1); background: var(--tu-acc); color: #fff; }
+.tu .tu-btn:disabled { opacity: .42; cursor: not-allowed; }
+.tu .tu-btn.ghost { border-color: transparent; color: var(--tu-ink-3); padding-left: 6px; padding-right: 6px; }
+.tu .tu-btn.sm { padding: 5px 12px; font-size: 12.5px; }
 .tu-btn[hidden] { display: none; }
-.tu-link { color: var(--iris); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
-.tu-extra { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--base); }
-.tu-extra-h { font-size: 12px; color: var(--ink-3); font-weight: 600; margin-bottom: 10px; }
-.tu-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.tu-stat { display: flex; gap: 18px; font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
-.tu-stat b { font-size: 20px; color: var(--iris); margin-right: 4px; font-variant-numeric: tabular-nums; }
-.tu-dim { font-size: 12.5px; color: var(--ink-3); margin: 6px 0; line-height: 1.55; }
-.tu-made { margin-top: 10px; font-size: 13px; color: var(--ink-2); line-height: 1.55; }
-.tu-made b { color: var(--ok); }
-.tu-fic { flex: none; vertical-align: -2px; margin-right: 6px; color: var(--iris); }
-/* 내 폴더 만들기 */
-.tu-q-host { min-width: 0; }
-.tu-build { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 22px; align-items: start; }
-.tu-q h4, .tu-prev h4 { margin: 18px 0 10px; font-size: 14px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 8px; }
-.tu-q h4:first-child, .tu-prev h4:first-child { margin-top: 0; }
-.tu-q h4 small { font-weight: 400; color: var(--ink-3); font-size: 12px; }
-.tu-qn { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--iris); color: #0b0f1e; font-size: 12px; font-weight: 700; flex: none; }
-.tu-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.tu-chip { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); font-size: 12.5px; background: var(--surface); }
-.tu-chip:hover { color: var(--ink); border-color: rgba(255,255,255,.24); }
-.tu-chip.cur { border-color: var(--iris); color: var(--ink); background: var(--iris-soft); }
-.tu-chip.ro { cursor: default; font-size: 11.5px; padding: 3px 10px; }
-.tu-chips.small { margin-bottom: 4px; }
-.tu-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.tu-row.tu-p { margin-left: 30px; }
-.tu-code { flex: none; width: 34px; font: 12px var(--mono); color: var(--ink-3); text-align: right; }
-.tu-in { flex: 1; min-width: 0; font: 13.5px var(--sans); color: var(--ink); background: var(--base); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 10px; outline: none; }
-.tu-in:focus { border-color: var(--iris); box-shadow: 0 0 0 3px var(--iris-soft); }
-.tu-in.en { flex: .8; }
-.tu-sel { flex: none; width: auto; padding-right: 6px; cursor: pointer; }
-.tu-sel.wide { flex: 1; }
-.tu-x { flex: none; width: 26px; height: 26px; border-radius: 7px; color: var(--ink-3); font-size: 16px; }
-.tu-x:hover { background: var(--raised); color: var(--bad); }
-.tu-d { padding: 10px 10px 4px; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; background: var(--base); }
-.tu-d .tu-in { background: var(--surface); }
-.tu-add { font-size: 12.5px; color: var(--iris); padding: 4px 8px; border-radius: 7px; margin: 0 0 6px; }
-.tu-add:hover { background: var(--iris-soft); }
-.tu-add.tu-add-p { margin-left: 30px; } /* .sub 는 보조 작업 서랍(subagents.css)의 전역 이름 — 겹치면 버튼이 화면을 덮는다 */
-/* v2.91: 역할 고르기 = 캐릭터 격자(app/persona.js) → 고르면 왼쪽 열(캐릭터 + 이름 칸) · 가운데 영역/프로젝트 · 오른쪽 미리보기 */
-.tu-build.tu-pick { grid-template-columns: 1fr; }
-.tu-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; max-width: 900px; margin: 6px 0 4px; }
-.tu-grid .ps-fig { padding: 6px 4px 8px; } .tu-grid .ps-fig.cur::before { opacity: 1; }
-.tu-grid .ps-svg { max-width: 140px; }
-.tu-new .ps-tag { color: var(--iris); }
-.tu-build.tu-picked { grid-template-columns: 172px minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; }
-.tu-me-col { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
-.tu-me-col .tu-link { align-self: flex-start; }
-.tu-me { width: 128px; align-self: center; margin: 0 0 2px; cursor: default; }
-.tu-lab { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); }
-.tu-lab small { font-size: 11px; }
-.tu-prev { position: sticky; top: 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--base); }
-.tu-tree { font-size: 12.5px; line-height: 1.5; color: var(--ink-2); max-height: 300px; overflow: auto; margin-bottom: 10px; }
-.tu-node { display: flex; align-items: center; padding: 3px 0; white-space: nowrap; }
-.tu-node.root { color: var(--ink); font-weight: 600; }
-.tu-node.lv-R { padding-left: 14px; color: var(--ink); font-weight: 600; }
-.tu-node.lv-D { padding-left: 30px; }
-.tu-node.lv-P { padding-left: 46px; }
-.tu-node small { margin-left: 8px; font-size: 10.5px; color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 6px; }
-.tu-node.ex { color: var(--ink-3); }
-.tu-errs { color: var(--warn); font-size: 12.5px; line-height: 1.6; margin-bottom: 8px; }
-.tu-note { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.55; }
+.tu-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .tu-btns.end { justify-content: flex-end; margin-top: 16px; }
+.tu-row { display: flex; align-items: center; gap: 8px; }
+.tu-in { flex: 1; min-width: 0; font: 13.5px var(--sans); color: var(--tu-ink); background: var(--tu-bg); border: 1px solid var(--tu-line-2); border-radius: 8px; padding: 7px 10px; outline: none; }
+.tu-in:focus { border-color: var(--tu-acc); box-shadow: 0 0 0 3px var(--tu-acc-soft); }
+.tu-sel { flex: none; width: auto; cursor: pointer; } .tu-sel.wide { flex: 1; }
+.tu .tu-link { color: var(--tu-acc); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
+.tu-made { margin-top: 10px; font-size: 13px; color: var(--tu-ink-2); line-height: 1.55; }
+.tu-errs { color: #b4321f; font-size: 12.5px; line-height: 1.6; margin-top: 4px; }
+/* ⑤ 내 폴더: 역할 카드 */
+.tu-body.sc-build { display: block; padding: 28px 40px 22px; }
+.tu-q-host { height: 100%; min-height: 0; }
+.tu-q-host.v-grid { display: flex; flex-direction: column; gap: 16px; }
+.tu-q-host.v-tree { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 30px; }
+.tu-lead { margin: 10px 0 0; font-size: 14px; color: var(--tu-ink-2); } .tu-lead b { color: var(--tu-acc); }
+.tu-rg { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; flex: 1; min-height: 0; overflow: auto; align-content: start; padding: 4px; }
+.tu-rc { position: relative; border-radius: 16px; border: 1.5px solid var(--tu-line-2); background: var(--tu-card); padding: 10px 6px 6px; cursor: pointer; transition: border-color .15s, transform .15s; outline: none; }
+.tu-rc:hover, .tu-rc:focus-visible { border-color: var(--tu-acc); transform: translateY(-2px); }
+.tu-rc.filled { border-color: var(--tu-acc); box-shadow: 0 0 0 4px var(--tu-acc-soft); }
+.tu-rc .ps-fig { pointer-events: none; } .tu-rc .ps-svg { max-width: 120px; margin: 0 auto; display: block; }
+.tu .tu-rx { position: absolute; right: 8px; top: 8px; z-index: 2; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: var(--tu-ink-2); background: var(--tu-bg); border: 1px solid var(--tu-line-2); }
+.tu .tu-rx:hover, .tu .tu-tx:hover { color: #fff; background: #d6453d; border-color: #d6453d; }
+.tu-rok { position: absolute; left: 8px; top: 8px; width: 24px; height: 24px; border-radius: 50%; background: var(--tu-acc); color: #fff; display: grid; place-items: center; }
+.tu .tu-radd { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1.5px dashed color-mix(in srgb, var(--tu-acc) 55%, transparent); min-height: 230px; color: var(--tu-acc); background: var(--tu-card); }
+.tu-radd.on { cursor: default; padding: 14px; } .tu-radd.on .tu-in { width: 100%; flex: none; text-align: center; }
+.tu-plus { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; font-size: 32px; font-weight: 300; background: var(--tu-acc-soft); border: 1.5px dashed var(--tu-acc); }
+.tu-radd b { font-size: 14px; } .tu-radd small { font-size: 11.5px; color: var(--tu-ink-3); }
+.tu-bbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--tu-card); border: 1px solid var(--tu-line-2); font-size: 13.5px; color: var(--tu-ink-2); }
+.tu-bbar b { color: var(--tu-ink); }
+.tu-bbar.ok { border-color: #3fa66a; background: #eaf8ef; color: #245c3b; } .tu-bbar.ok b { color: #1d5a35; }
+.tu-okc { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #3fa66a; color: #fff; }
+.tu-bbar.warn { border-color: #e0a32e; background: #fff7e6; } .tu-bbar.warn b { color: #9a6200; }
+.tu-toast { position: absolute; left: 50%; bottom: 88px; transform: translateX(-50%); padding: 9px 16px; border-radius: 999px; background: var(--tu-pill); color: #fff; font-size: 13px; z-index: 3; }
+.tu .tu-toast button { color: var(--tu-gold); font-weight: 700; margin-left: 8px; }
+/* ⑤ 내 폴더: 폴더 나무 편집기 */
+.tu-dl { display: flex; flex-direction: column; gap: 10px; }
+.tu .tu-back { align-self: flex-start; color: var(--tu-acc); font-size: 12.5px; }
+.tu-me .ps-svg { max-width: 170px; display: block; margin: 0 auto; }
+.tu-dr { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; height: 100%; }
+.tu-dr .tu-k { margin: 0; }
+.tu h3 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+.tu-howto { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 11px 16px; border-radius: 12px; background: var(--tu-acc); color: #fff; font-size: 14.5px; font-weight: 600; }
+.tu-howto > span { display: inline-flex; align-items: center; gap: 7px; } .tu-howto b { font-weight: 800; }
+.tu-howto i { font-style: normal; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #fff; color: var(--tu-acc); font-weight: 900; font-size: 15px; }
+.tu-howto i.x { color: #d6453d; }
+.tu-howto small { flex-basis: 100%; font-size: 12px; font-weight: 500; opacity: .85; }
+.tu-tree { flex: 1 1 auto; min-height: 0; overflow: auto; border: 1px solid var(--tu-line-2); border-radius: 14px; background: var(--tu-card); padding: 10px 14px 8px; }
+.tu-tr { position: relative; display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 6px 0 calc(var(--d) * 28px + 6px); border-radius: 9px; font-size: 14px; }
+.tu-tr:not(.add):hover { background: var(--tu-acc-soft); }
+.tu-tr.lv0 { --d: 0; } .tu-tr.lv1 { --d: 1; } .tu-tr.lv2 { --d: 2; } .tu-tr.lv3 { --d: 3; }
+.tu-tr:not(.lv0)::before { content: ''; position: absolute; left: calc(var(--d) * 28px - 14px); top: -8px; height: 25px; width: 14px; border-left: 1.5px solid var(--tu-line-2); border-bottom: 1.5px solid var(--tu-line-2); border-bottom-left-radius: 6px; }
+.tu-tfic { flex: none; width: 22px; height: 18px; } .tu-tfic.l0 { color: #8a92a6; } .tu-tfic.l1 { color: #2149EF; } .tu-tfic.l2 { color: #4f74f5; } .tu-tfic.l3 { color: #86a3fb; }
+.tu-cd { font: 600 12.5px ui-monospace, Consolas, monospace; color: var(--tu-ink-3); margin-right: -5px; }
+.tu-tn, .tu-tper { field-sizing: content; }
+.tu-tn { font: 600 14px var(--sans); color: var(--tu-ink); background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 4px 6px; min-width: 3em; outline: none; }
+.tu-tr.lv1 .tu-tn { font-weight: 800; }
+.tu-tn:hover { border-color: var(--tu-line-2); background: var(--tu-bg); }
+.tu-tn:focus { border-color: var(--tu-acc); background: var(--tu-bg); box-shadow: 0 0 0 3px var(--tu-acc-soft); }
+.tu-tn:placeholder-shown { border-color: var(--tu-acc); font-weight: 500; }
+.tu-ten { color: var(--tu-ink-3); font-size: 13px; margin-left: -6px; }
+.tu-tper { font: 12.5px var(--sans); color: var(--tu-acc); background: var(--tu-acc-soft); border: 0; border-radius: 999px; padding: 3px 6px; cursor: pointer; }
+.tu-exist { font-size: 10.5px; color: var(--tu-ink-3); border: 1px solid var(--tu-line-2); border-radius: 999px; padding: 0 7px; }
+.tu-tlv { margin-left: auto; font-size: 11px; color: var(--tu-ink-3); padding: 0 6px; }
+.tu .tu-tx { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: var(--tu-ink-3); border: 1px solid var(--tu-line-2); background: var(--tu-bg); }
+.tu-tr.add { min-height: 32px; }
+.tu .tu-tadd { padding: 4px 12px; border-radius: 999px; border: 1.5px dashed color-mix(in srgb, var(--tu-acc) 55%, transparent); color: var(--tu-acc); font-size: 12.5px; font-weight: 700; }
+.tu .tu-tadd:hover { background: var(--tu-acc-soft); }
+.tu-qa { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 11.5px; color: var(--tu-ink-3); }
+.tu .tu-sg { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--tu-line-2); font-size: 12px; color: var(--tu-ink-2); background: var(--tu-card); }
+.tu .tu-sg:hover { border-color: var(--tu-acc); color: var(--tu-acc); }
+/* 확인 창 · 크게 보기 */
+.tu-modal { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(15,20,40,.45); backdrop-filter: blur(2px); }
+.tu-mbox { width: min(540px, 92%); background: var(--tu-bg); border: 1px solid var(--tu-line-2); border-radius: 16px; box-shadow: 0 30px 80px rgba(0,0,0,.35); padding: 22px 24px 18px; }
+.tu-mbox h4 { margin: 0 0 8px; font-size: 19px; font-weight: 800; }
+.tu-mbox p { margin: 0 0 12px; font-size: 13.5px; color: var(--tu-ink-2); line-height: 1.6; } .tu-mbox p b { color: var(--tu-ink); }
+.tu-mlist { max-height: 280px; overflow: auto; border: 1px solid var(--tu-line-2); border-radius: 10px; background: var(--tu-card); padding: 8px 12px; font-size: 13px; line-height: 1.9; }
+.tu-mlist div { display: flex; align-items: center; gap: 7px; white-space: nowrap; } .tu-mlist .tu-tfic { width: 18px; height: 15px; }
+.tu-mlist small { font-size: 10.5px; color: var(--tu-ink-3); border: 1px solid var(--tu-line-2); border-radius: 999px; padding: 0 6px; }
+.tu-zoom { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 18px; background: rgba(15,20,40,.6); cursor: zoom-out; }
+.tu-zoom[hidden] { display: none; }
+.tu-zoom img { max-width: 100%; max-height: 100%; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 @media (max-width: 900px) {
-  .tu-body { grid-template-columns: 1fr; padding: 24px; gap: 18px; }
-  .tu-build, .tu-build.tu-picked { grid-template-columns: 1fr; }
-  .tu-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .tu-me { width: 110px; }
-  .tu-pic { max-width: 380px; }
-  .sc-usage.tu-body { grid-template-columns: 1fr; }
+  .tu-body { grid-template-columns: 1fr; padding: 24px 24px 80px; gap: 18px; overflow: auto; }
+  .tu-q-host.v-tree { grid-template-columns: 1fr; }
+  .tu-dl { display: none; }
   .tu-head { grid-template-columns: auto minmax(0, 1fr); }
   .tu-head-end { display: none; }
   .tu-steps li { width: 34px; }
   .tu-steps li em { display: none; }
+  .tu-pill { white-space: normal; text-align: center; width: calc(100% - 48px); }
 }

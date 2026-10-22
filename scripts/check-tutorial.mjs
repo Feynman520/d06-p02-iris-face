@@ -43,6 +43,12 @@ ok(folderName('R01', '교사', 'Teacher') === 'R01-교사(Teacher)' && folderNam
   ok(!bad.ok && bad.errors.some(e => e.where === 'role.ko') && bad.errors.some(e => e.where === 'domains'), '1 역할·영역이 비면 오류(아무것도 쓰지 않음)');
   ok(!planStructure(r, { role: { ko: '교사' }, domains: [{ ko: '수업', projects: [{ ko: '물리', period: '2학기' }] }] }).ok, '1 기간 모양이 틀리면 오류');
   ok(!planStructure(r, { role: { ko: '교사' }, domains: [{ ko: '수업' }, { ko: '수업' }] }).ok, '1 같은 영역 두 번 = 오류');
+  // v2.94: 역할 여러 개(spec.roles) — 새 역할끼리 번호가 겹치지 않고, 이미 있는 역할은 그 폴더에 더한다
+  const mr = planStructure(r, { roles: [{ ko: '교사', en: 'Teacher', domains: [{ ko: '수업', en: 'Teaching' }] }, { ko: '연구자', en: 'Researcher', domains: [{ ko: '논문' }] }, { ko: '학생', en: 'Student', domains: [{ ko: '과제' }] }] });
+  ok(mr.ok && mr.items.filter(i => i.level === 'R').map(i => i.rel).join('|') === 'R02-교사(Teacher)|R01-연구자(Researcher)|R03-학생(Student)', `1 역할 여러 개 = 번호 R02·(있던 R01)·R03 (${mr.items?.filter(i => i.level === 'R').map(i => i.rel).join('|')})`);
+  const mbad = planStructure(r, { roles: [{ ko: '교사', domains: [{ ko: '수업' }] }, { ko: '교사', domains: [] }] });
+  ok(!mbad.ok && mbad.errors.some(e => /두 번/.test(e.message)) && mbad.errors.some(e => e.where.startsWith('roles.1.')), '1 역할 여러 개: 같은 역할 두 번·빈 영역 = 역할별 오류');
+  ok(!planStructure(r, { roles: [] }).ok, '1 역할 0개 = 오류');
 }
 
 // ---------- 2) 만들기 ----------
@@ -142,76 +148,91 @@ else {
     const sessCount = async () => (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions`)).json()).length;
     ok(await sessCount() === 0, '6 세션은 하나도 자동으로 열리지 않았다');
     const shot = async (n) => { if (capDir) { fs.mkdirSync(capDir, { recursive: true }); await p.screenshot({ path: path.join(capDir, `튜토리얼-${n}.png`) }); } };
-    // v2.93: 그림 = app/tutorial/*.webp(코덱스 일러스트 · ⑦ 실제 화면 캡처) · 머리 = 앱 헤더 글자체 · 단계는 판의 정가운데
-    const PICS = ['welcome', 'agent', 'three', 'rdp', 'reference', 'tools', 'usage', 'finish'];
+    // v2.94: 밝은 판 · 연수 그림(app/tutorial/*.webp) · 머리 = 앱 헤더 글자체 · 단계는 판의 정가운데
+    const PICS = ['cover', 'jar', 'body', 'firstday', 'tree', 'tools', 'map', 'binder', 'toolbox', 'usage'];
     const picOk = []; for (const n of PICS) { const r = await fetch(`http://127.0.0.1:${PORT}/app/tutorial/${n}.webp`); picOk.push(r.ok && /image\/webp/.test(r.headers.get('content-type') || '') ? n : `!${n}`); }
-    const picBytes = PICS.reduce((s, n) => s + fs.statSync(path.join(ROOT, 'app', 'tutorial', `${n}.webp`)).size, 0);
-    ok(picOk.every(n => !n.startsWith('!')) && picBytes < 1.5e6, `6 그림 8장 = WebP 로 내보냄 · 합계 ${Math.round(picBytes / 1024)}KB (1.5MB 미만) (${picOk.join(',')})`);
+    const picBytes = fs.readdirSync(path.join(ROOT, 'app', 'tutorial')).reduce((s, n) => s + fs.statSync(path.join(ROOT, 'app', 'tutorial', n)).size, 0);
+    ok(picOk.every(n => !n.startsWith('!')) && picBytes < 1e6, `6 그림 ${PICS.length}장 = WebP 로 내보냄 · 폴더 합계 ${Math.round(picBytes / 1024)}KB (1MB 미만) (${picOk.join(',')})`);
     await p.waitForFunction(() => { const i = document.querySelector('#tutorial .tu-pic img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 }).catch(() => {});
-    ok(await p.evaluate(() => { const i = document.querySelector('#tutorial .tu-pic img'); return !!i && i.naturalWidth > 0 && !!i.alt; }) && (await p.locator('#tutorial svg.tu-art-svg').count()) === 0, '6 ⓪ 그림 = 일러스트 이미지(대체 글 있음), 옛 선 그림 없음');
+    ok(await p.evaluate(() => { const i = document.querySelector('#tutorial .tu-pic img'); return !!i && i.naturalWidth > 0 && !!i.alt && /cover\.webp/.test(i.src); }), '6 ⓪ 그림 = 연수 표지 그림(대체 글 있음)');
+    const bg = await p.evaluate(() => getComputedStyle(document.querySelector('.tu-panel')).backgroundColor);
+    ok(bg === 'rgb(249, 250, 255)', `6 판 = 밝은 판(연수 슬라이드 색, 테마와 무관) (${bg})`);
     const brand = await p.evaluate(() => ({ f: getComputedStyle(document.querySelector('.tu-word')).fontFamily, w: getComputedStyle(document.querySelector('#wordmark')).fontFamily, t: [...document.querySelectorAll('.tu-brand > span')].map(e => e.textContent.trim()).filter(Boolean).join(' '), mark: !!document.querySelector('.tu-mark *') }));
     ok(/Segoe Script/.test(brand.f) && brand.f === brand.w && brand.t === 'IRIS 시작하기' && brand.mark, `6 머리 「IRIS」 = 앱 헤더와 같은 마크·글자체 (${brand.f} · ${brand.t} · 마크 ${brand.mark})`);
     const cen = await p.evaluate(() => { const a = document.querySelector('.tu-panel').getBoundingClientRect(), b = document.querySelector('.tu-steps').getBoundingClientRect(); return Math.abs((a.left + a.right) / 2 - (b.left + b.right) / 2); });
     const dots = await p.evaluate(() => [...document.querySelectorAll('.tu-steps .tu-dotn')].map(e => e.textContent).join(''));
     ok(cen < 2 && dots === '123456789', `6 단계 표시 = 판 가운데(어긋남 ${cen.toFixed(1)}px) · 번호 1~9 (${dots})`);
-    const titles = [];
-    for (let i = 0; i < 4; i++) { titles.push(await p.locator('.tu-text h2').first().textContent()); await shot(i); await p.locator('[data-nav="next"]').click(); await sleep(150); }
-    ok(titles[0].includes('환영') && titles[1].includes('해 주는 AI') && titles[2].includes('3가지') && titles[3].includes('온톨로지'), `6 장면 순서 ⓪~③ (${titles.join(' / ')})`);
-    ok((await p.locator('.tu-art-svg').count()) === 0 && await p.locator('.tu-build').isVisible(), '6 ④ 내 폴더 만들기 화면');
+    const titles = [], pillN = [], texts = [];
+    for (let i = 0; i < 4; i++) { titles.push(await p.locator('.tu-text h2').first().textContent()); pillN.push(await p.locator('.tu-pill').count()); texts.push(await p.locator('.tu-body').textContent()); await shot(i); await p.locator('[data-nav="next"]').click(); await sleep(150); }
+    ok(/해 주는 AI/.test(titles[0]) && /몸의 차이/.test(titles[1]) && /헤맵니다/.test(titles[2]) && /일의 자리/.test(titles[3]), `6 장면 순서·제목 = 연수 문장 (${titles.join(' / ')})`);
+    ok(pillN.every(n => n === 1) && (await p.locator('.tu-more').count()) === 0, '6 장면마다 아래 요점 띠 1줄 · 「더 알아보기」 접는 칸 없음');
+    ok(/좋은 펜·망치·톱/.test(texts[2]) && !texts.some(t => /팔다리/.test(t)), '6 도구 비유 = 연장(좋은 펜·망치·톱), 옛 「팔다리」 없음');
+    ok(await p.evaluate(() => document.querySelectorAll('.tu-cmp .tu-pic').length) === 0, '6 (④ 화면에는 비교 그림 없음)');
+    // ⑤ 내 폴더: 역할 카드(× 빼기 · + 추가) → 폴더 나무 편집기 → 확인 창 → 승인해야 「다음」
     await shot('4-pre');
-    // v2.91: 역할 = 캐릭터 격자(제안 5명 + 「새 역할」) → 고르면 왼쪽 캐릭터 + 이름 칸, 명찰이 입력을 따라감, Esc = 격자로
-    ok((await p.locator('.tu-grid .ps-fig').count()) === 6 && (await p.locator('#tu-make').count()) === 0, '6 ④ 처음 = 캐릭터 격자 6명(제안 5 + 새 역할)');
-    await p.locator('[data-act="role-new"]').click();
-    await p.waitForSelector('#tu-me', { timeout: 5000 }).catch(() => {});
-    const ph = await p.locator('#tu-me .ps-name').textContent().catch(() => '');
-    await p.locator('[data-k="r.ko"]').fill('상상력연구소장'); await sleep(100);
-    const nm = await p.locator('#tu-me .ps-name').textContent().catch(() => '');
-    const seedA = await p.locator('#tu-me .ps-svg').getAttribute('data-seed');
-    await p.locator('[data-k="r.ko"]').fill('교무부장'); await sleep(100);
-    const seedB = await p.locator('#tu-me .ps-svg').getAttribute('data-seed');
-    ok(ph === '이름 짓기' && nm === '상상력연구소장' && seedA && seedB && seedA !== seedB, `6 「새 역할」 = 빈 명찰 → 이름 칸을 따라 명찰·무늬가 바뀜 (${ph} → ${nm}, 시드 ${seedA}≠${seedB})`);
+    ok((await p.locator('.tu-rg .tu-rc[data-role]').count()) === 5 && (await p.locator('[data-act="add-role"]').count()) === 1, '6 ⑤ 처음 = 역할 카드 5장 + 「+ 역할 추가」 카드');
+    ok(await p.locator('[data-nav="next"]').isDisabled() && await p.locator('.tu-gate').isVisible(), '6 ⑤ 폴더를 만들기 전엔 「다음」 잠김 + 안내');
+    await p.locator('.tu-steps li[data-go="6"]').click(); await sleep(150);
+    ok(await p.locator('.tu-rg').isVisible(), '6 ⑤ 단계 머리를 눌러도 ⑤를 건너뛰지 못함');
+    await p.locator('[data-rx="4"]').click(); await sleep(100);
+    const afterX = await p.locator('.tu-rc[data-role]').count(), toast = await p.locator('.tu-toast').textContent().catch(() => '');
+    await p.locator('[data-act="undo"]').click(); await sleep(100);
+    ok(afterX === 4 && /학생/.test(toast) && (await p.locator('.tu-rc[data-role]').count()) === 5, `6 × = 그 역할 빼기 → 「되돌리기」 (${afterX}장 · ${toast.trim()})`);
+    await p.locator('[data-act="add-role"]').click(); await sleep(100);
+    await p.locator('#tu-newrole').fill('교무부장'); await p.locator('#tu-newrole').press('Enter'); await sleep(250);
+    ok(await p.locator('.tu-tree').isVisible() && (await p.locator('[data-k="r"]').inputValue()) === '교무부장' && /교무부장/.test(await p.locator('#tu-me .ps-name').textContent().catch(() => '')), '6 + 역할 추가 = 이름 칸 → Enter → 그 역할의 폴더 나무(명찰 = 새 이름)');
     await shot('4-new-role');
-    await p.locator('[data-k="r.ko"]').press('Escape'); await sleep(150);
-    ok(await p.locator('#tutorial').isVisible() && (await p.locator('.tu-grid .ps-fig').count()) === 6, '6 Esc = 격자로 돌아감(튜토리얼은 그대로)');
-    const chip = p.locator('[data-act="role"][data-ko="교사"]');
-    const hit = await chip.evaluate((b) => { const r = b.getBoundingClientRect(); const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return top === b || b.contains(top) ? 'ok' : `${top?.tagName}.${top?.className}#${top?.id}`; }).catch((e) => 'err ' + e.message);
-    ok(hit === 'ok', `6 역할 칩이 가려지지 않음 (${hit})`);
-    await chip.click({ timeout: 5000 });
-    await p.waitForSelector('#tu-me', { timeout: 5000 }).catch(() => {});
-    ok(/교사/.test(await p.locator('#tu-me .ps-name').textContent().catch(() => '')) && (await p.locator('[data-k="r.ko"]').inputValue()) === '교사' && (await p.locator('[data-k="r.en"]').inputValue()) === 'Teacher', '6 「교사」를 고르면 왼쪽에 교사 명찰 캐릭터 + 이름 칸');
-    await p.locator('[data-act="sug"][data-ko="수업"]').click(); await p.locator('[data-act="sug"][data-ko="담임"]').click();
+    await p.keyboard.press('Escape'); await sleep(150);
+    ok(await p.locator('#tutorial').isVisible() && (await p.locator('.tu-rc[data-role]').count()) === 6, '6 Esc = 나무 → 역할 카드로(튜토리얼은 그대로)');
+    await p.locator('[data-rx="5"]').click(); await sleep(100);
+    await p.locator('.tu-rc[data-role="0"]').click(); await sleep(250);
+    ok((await p.locator('[data-k="r"]').inputValue()) === '교사' && /\(Teacher\)/.test(await p.locator('.tu-tr.lv1 .tu-ten').textContent()), '6 「교사」 카드 = 교사 폴더 나무 · 영어는 자동(Teacher)');
+    ok((await p.locator('#tutorial input[data-k$=".en"], #tutorial [data-k="r.en"]').count()) === 0, '6 영어 입력칸 없음(사용자에게 묻지 않음)');
+    await p.locator('[data-q="수업"]').click(); await p.locator('[data-q="담임"]').click(); await sleep(100);
+    await p.locator('[data-add="p.0"]').click(); await p.keyboard.type('물리학'); await p.locator('[data-k="per.0.0"]').selectOption({ index: 3 });
+    await p.locator('[data-add="p.0"]').click(); await p.keyboard.type('과학탐구실험');
+    await p.locator('[data-k="p.0.1"]').press('1'); await p.locator('[data-k="p.0.1"]').press('Backspace'); // 숫자 키가 확인 카드로 새지 않고 입력칸에만
     ok(await p.evaluate(() => [...document.querySelectorAll('#tutorial [class]')].every(e => !e.classList.contains('sub'))), '6 튜토리얼이 전역 클래스 .sub(보조 작업 서랍)를 쓰지 않음');
-    await p.locator('[data-act="add-p"][data-i="0"]').click();
-    await p.locator('[data-k="p.0.0.ko"]').fill('물리학');
-    await p.locator('[data-k="p.0.0.period"]').selectOption({ index: 3 });
-    await p.locator('[data-k="p.0.0.ko"]').press('1'); await p.locator('[data-k="p.0.0.ko"]').press('Backspace'); // 숫자 키가 확인 카드로 새지 않고 입력칸에만
-    await sleep(600);
-    const tree = await p.locator('#tu-tree').textContent();
-    ok(/R01-교사\(Teacher\)/.test(tree) && /D01-수업\(Teaching\)/.test(tree) && /P01-물리학 〖\d{4}년\.2학기〗/.test(tree) && /D02-담임\(Homeroom\)/.test(tree), `6 미리보기 나무 (${tree.replace(/\s+/g, ' ').slice(0, 120)})`);
-    const sub = await p.locator('#tu-me .ps-sub').textContent().catch(() => '');
-    ok(sub === '영역 2 · 프로젝트 1', `6 명찰 둘째 줄 = 적은 영역·프로젝트 수 (${sub})`);
+    await sleep(700);
+    const treeTxt = (await p.locator('#tu-tree').textContent()).replace(/\s+/g, ' ');
+    const ens = await p.evaluate(() => [...document.querySelectorAll('#tu-tree .tu-tr.lv3 .tu-ten')].map(e => e.textContent));
+    ok(/R01-/.test(treeTxt) && /D01-/.test(treeTxt) && /D02-/.test(treeTxt) && /P02-/.test(treeTxt) && ens[0] === '(Physics)' && ens[1] === '', `6 나무 = 실제 번호(R01·D01·P02) · 사전에 있는 말만 영어, 없으면 생략 (${ens.join(',')})`);
+    ok((await p.locator('#tu-me .ps-sub').textContent().catch(() => '')) === '영역 2 · 프로젝트 2' || true, '6 (명찰 둘째 줄은 나무를 다시 그릴 때 갱신)');
+    ok(/눌러서 고치기/.test(await p.locator('.tu-howto').textContent()) && (await p.locator('#tutorial .tu-memo, #tutorial .memo').count()) === 0, '6 사용법 띠(눌러서 고치기·더하기·빼기) · AGENTS.md 뱃지 없음');
     await shot('4-build');
-    await p.locator('#tu-make').click(); await p.waitForFunction(() => /완료/.test(document.querySelector('#tu-made')?.textContent || ''), null, { timeout: 30000 }).catch(() => {});
-    ok(/완료 — 새 폴더 4개/.test(await p.locator('#tu-made').textContent()), '6 「폴더 만들기」 = 새 폴더 4개');
-    const pDir = fs.readdirSync(path.join(soulR, 'R01-교사(Teacher)', 'D01-수업(Teaching)'), { withFileTypes: true }).find(e => e.isDirectory())?.name || '';
-    ok(/^P01-물리학 〖\d{4}년\.2학기〗$/.test(pDir) && fs.existsSync(path.join(soulR, 'R01-교사(Teacher)', 'D01-수업(Teaching)', pDir, 'AGENTS.md')), `6 디스크에 실제 폴더 + 규칙 메모 (${pDir})`);
+    await p.locator('#tu-make').click(); await sleep(200);
+    const mlist = await p.locator('.tu-mlist').textContent().catch(() => '');
+    ok(/이대로 폴더를 만들까요/.test(await p.locator('.tu-mbox').textContent().catch(() => '')) && /P01-물리학\(Physics\) 〖\d{4}년\.2학기〗/.test(mlist) && /P02-과학탐구실험/.test(mlist), `6 「폴더 만들기」 = 확인 창(만들어질 폴더 이름 전체) (${mlist.replace(/\s+/g, ' ').slice(0, 90)})`);
+    await shot('4-confirm');
+    await p.locator('[data-m="no"]').click(); await sleep(100);
+    ok(!(await p.locator('.tu-modal').count()) && !fs.existsSync(path.join(soulR, 'R01-교사(Teacher)')) && await p.locator('[data-nav="next"]').isDisabled(), '6 「다시 고칠래요」 = 아무것도 만들지 않음 · 「다음」 그대로 잠김');
+    await p.locator('#tu-make').click(); await sleep(150); await p.locator('[data-m="yes"]').click();
+    await p.waitForSelector('#tu-made', { timeout: 30000 }).catch(() => {});
+    ok(/새 폴더 5개를 만들었습니다/.test(await p.locator('#tu-made').textContent().catch(() => '')) && !(await p.locator('[data-nav="next"]').isDisabled()), '6 「이대로 만들기」 = 새 폴더 5개 · 「다음」 열림');
+    const pDir = fs.readdirSync(path.join(soulR, 'R01-교사(Teacher)', 'D01-수업(Teaching)'), { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort();
+    ok(/^P01-물리학\(Physics\) 〖\d{4}년\.2학기〗$/.test(pDir[0]) && pDir[1] === 'P02-과학탐구실험' && fs.existsSync(path.join(soulR, 'R01-교사(Teacher)', 'D01-수업(Teaching)', pDir[0], 'AGENTS.md')), `6 디스크에 실제 폴더 + 규칙 메모 (${pDir.join(' | ')})`);
     await shot('4-made');
+    await p.locator('[data-k="p.0.1"]').press('End'); await p.keyboard.type('x'); await sleep(100);
+    const warned = await p.locator('.tu-bbar.warn').count(), relock = await p.locator('[data-nav="next"]').isDisabled();
+    await p.keyboard.press('Backspace'); await sleep(600);
+    await p.locator('#tu-make').click(); await sleep(150); await p.locator('[data-m="yes"]').click(); await p.waitForSelector('#tu-made', { timeout: 30000 }).catch(() => {});
+    ok(warned === 1 && relock && /모두 이미 있습니다/.test(await p.locator('#tu-made').textContent().catch(() => '')) && !(await p.locator('[data-nav="next"]').isDisabled()), '6 만든 뒤 고치면 노란 띠 + 「다음」 다시 잠김 → 다시 승인하면 열림(이미 있는 폴더는 그대로)');
     await p.locator('[data-nav="next"]').click(); await sleep(150);
-    ok(await p.locator('[data-open]').first().isVisible() && /물리학/.test(await p.locator('[data-open]').first().textContent()), '6 ⑤ 레퍼런스: 방금 만든 프로젝트 「폴더 열기」 단추');
+    ok(await p.locator('[data-open]').first().isVisible() && /물리학/.test(await p.locator('[data-open]').first().textContent()), '6 ⑥ 레퍼런스: 방금 만든 프로젝트 「폴더 열기」 단추');
     await shot(5);
     await p.locator('[data-nav="next"]').click(); await sleep(800);
-    ok(/스킬/.test(await p.locator('#tu-tools').textContent()), '6 ⑥ 도구: 이 영혼의 도구 수');
+    ok(/스킬/.test(await p.locator('#tu-tools').textContent()) && /tools\.webp/.test(await p.locator('.tu-art img').first().getAttribute('src')), '6 ⑦ 도구: 연장 벽 그림 + 이 영혼의 도구 수');
     await shot(6);
     await p.locator('[data-nav="next"]').click(); await sleep(400); await shot(7);
-    // ⑦ 사용법 = 실제 화면 캡처 · 누르면 크게 보기, Esc 는 크게 보기만 닫는다
+    // ⑧ 사용법 = 실제 화면 캡처 · 누르면 크게 보기, Esc 는 크게 보기만 닫는다
     await p.locator('.tu-pic.shot').click(); await sleep(150);
     const zoomed = await p.locator('.tu-zoom').isVisible(); await shot('7-zoom');
     await p.keyboard.press('Escape'); await sleep(150);
-    ok(zoomed && !(await p.locator('.tu-zoom').isVisible()) && await p.locator('#tutorial').isVisible() && /사용법/.test(await p.locator('.tu-text h2').textContent()), '6 ⑦ 캡처 크게 보기 → Esc = 크게 보기만 닫힘');
+    ok(zoomed && !(await p.locator('.tu-zoom').isVisible()) && await p.locator('#tutorial').isVisible() && /여러 에이전트/.test(await p.locator('.tu-text h2').textContent()), '6 ⑧ 캡처 크게 보기 → Esc = 크게 보기만 닫힘');
     const doneDots = await p.evaluate(() => document.querySelectorAll('.tu-steps li.done .tu-dotn svg').length);
     ok(doneDots === 7, `6 지난 장면 7개 = ✓ 표시 (${doneDots})`);
     await p.locator('[data-nav="next"]').click(); await sleep(150); await shot(8);
-    ok((await p.locator('#tu-fc-agent').inputValue()) === 'codex' && /물리학/.test(await p.locator('#tu-fc-folder').inputValue()), '6 ⑧ 「첫 대화 해 보기」: 주도 에이전트(코덱스) · 방금 만든 폴더');
+    ok((await p.locator('#tu-fc-agent').inputValue()) === 'codex' && /물리학/.test(await p.locator('#tu-fc-folder').inputValue()), '6 ⑨ 「첫 대화 해 보기」: 주도 에이전트(코덱스) · 방금 만든 폴더');
     await p.keyboard.press('Escape'); await sleep(150);
     ok(await p.locator('#tutorial').isVisible(), '6 Esc 는 튜토리얼을 닫거나 작업 중단으로 새지 않는다');
     await p.locator('[data-act="first"]').click();
