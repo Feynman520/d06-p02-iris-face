@@ -2,17 +2,25 @@
 /* 첫 실행 튜토리얼(v2.90) — 창 전체 덮개 + 가운데 판. 색은 테마 변수만 쓴다(테마를 바꾸면 그림까지 따라 바뀐다). */
 .tu { position: fixed; inset: 0; z-index: 8000; display: grid; place-items: center; background: color-mix(in srgb, var(--base) 78%, transparent); backdrop-filter: blur(6px); padding: 24px; }
 .tu[hidden] { display: none; }
-.tu-panel { width: min(1100px, 100%); height: min(720px, 100%); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.5); overflow: hidden; }
-.tu-head { display: flex; align-items: center; gap: 18px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
-.tu-brand { font-weight: 650; font-size: 14px; color: var(--ink); white-space: nowrap; }
-.tu-steps { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; flex: 1; min-width: 0; overflow: hidden; }
-.tu-steps li { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
-.tu-steps li::before { content: ''; height: 4px; border-radius: 4px; background: var(--raised); transition: background .2s; }
-.tu-steps li.done::before { background: color-mix(in srgb, var(--iris) 55%, var(--raised)); }
-.tu-steps li.cur::before { background: var(--iris); }
-.tu-steps li span { display: none; }
-.tu-steps li em { font-style: normal; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tu-steps li.cur em { color: var(--ink); font-weight: 600; }
+.tu-panel { position: relative; width: min(1100px, 100%); height: min(720px, 100%); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 30px 90px rgba(0,0,0,.5); overflow: hidden; }
+/* v2.93 머리: [마크 IRIS 시작하기] | 가운데 단계(번호 원·잇는 선·이름) | 같은 폭 빈칸 — 양쪽 칸이 같은 1fr 이라 단계는 판의 정가운데에 선다 */
+.tu-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 14px 22px 12px; border-bottom: 1px solid var(--line); }
+.tu-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); white-space: nowrap; justify-self: start; min-width: 0; }
+.tu-mark { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; }
+.tu-mark:empty { display: none; }
+.tu-word { color: var(--ink); line-height: 1; }
+.tu-brand-sub { font-size: 13.5px; font-weight: 600; color: var(--ink-2); letter-spacing: -.01em; padding-left: 2px; }
+.tu-steps { display: flex; margin: 0; padding: 0; list-style: none; justify-self: center; }
+.tu-steps li { position: relative; width: 74px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
+.tu-steps li + li::before { content: ''; position: absolute; top: 12px; right: calc(50% + 15px); width: calc(100% - 30px); height: 2px; border-radius: 2px; background: var(--line-2); transition: background .25s; }
+.tu-steps li.done + li::before, .tu-steps li.done::before, .tu-steps li.cur::before { background: color-mix(in srgb, var(--iris) 60%, var(--line-2)); }
+.tu-dotn { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 600 12px/1 var(--sans); font-variant-numeric: tabular-nums; color: var(--ink-3); background: var(--surface); border: 1.5px solid var(--line-2); transition: background .2s, border-color .2s, color .2s, box-shadow .2s; }
+.tu-steps li:hover .tu-dotn { border-color: var(--iris); color: var(--ink); }
+.tu-steps li.done .tu-dotn { color: var(--iris); border-color: color-mix(in srgb, var(--iris) 60%, transparent); background: var(--iris-soft); }
+.tu-steps li.cur .tu-dotn { color: #0b0f1e; background: var(--iris); border-color: var(--iris); box-shadow: 0 0 0 4px var(--iris-soft); }
+.tu-steps li em { font-style: normal; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; text-align: center; }
+.tu-steps li.done em { color: var(--ink-2); }
+.tu-steps li.cur em { color: var(--ink); font-weight: 650; }
 .tu-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 34px; padding: 34px 40px 24px; align-items: center; }
 .tu-body.sc-build { grid-template-columns: 1fr; align-items: start; gap: 14px; padding-top: 26px; }
 .tu-kicker { font-size: 12px; color: var(--iris); font-weight: 600; letter-spacing: .02em; margin-bottom: 8px; }
@@ -25,19 +33,29 @@
 .tu-more summary { cursor: pointer; padding: 10px 0; font-size: 13px; color: var(--ink-2); }
 .tu-more[open] summary { color: var(--ink); }
 .tu-more p { font-size: 13.5px; margin: 0 0 12px; }
-.tu-art { display: grid; place-items: center; min-width: 0; }
-.tu-art-svg { width: 100%; max-width: 480px; height: auto; overflow: visible; }
-.tu-art-svg .tu-ln { fill: none; stroke: var(--ink-3); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.tu-art-svg .tu-acc { fill: none; stroke: var(--iris); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.tu-art-svg .thin { stroke-width: 1.3; }
-.tu-art-svg .dash { stroke-dasharray: 4 5; }
-.tu-art-svg .tu-fill { fill: var(--iris-soft); stroke: var(--iris); stroke-width: 1.4; }
-.tu-art-svg .tu-dot { fill: var(--iris); opacity: .8; }
-.tu-art-svg .tu-num { fill: var(--iris); }
-.tu-art-svg .tu-t { fill: var(--ink-2); font-family: var(--sans); font-size: 12px; }
-.tu-art-svg .tu-t.acc { fill: var(--iris); font-weight: 600; }
-.tu-art-svg .tu-t.dim { fill: var(--ink-3); }
-.tu-art-svg .tu-t.num { fill: #0b0f1e; font-weight: 700; }
+/* v2.93 그림 = 자기 배경(남색 밤)을 가진 둥근 카드 — 밝은 테마에서도 액자처럼 보인다 */
+.tu-art { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; }
+.tu-pic { margin: 0; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; border-radius: 16px; overflow: hidden; background: #141a2e; border: 1px solid var(--line-2); box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+.tu-pic img { display: block; width: 100%; height: 100%; object-fit: cover; user-select: none; }
+.tu-pic.shot { max-width: none; aspect-ratio: 16 / 10; border-radius: 12px; background: var(--base); cursor: zoom-in; position: relative; }
+.tu-pic.shot img { object-fit: contain; }
+.tu-pic.shot::after { content: '크게 보기'; position: absolute; right: 10px; bottom: 10px; font-size: 11px; color: #e9ecf5; background: rgba(10,12,20,.72); border: 1px solid rgba(255,255,255,.14); padding: 3px 9px; border-radius: 999px; opacity: 0; transition: opacity .2s; }
+.tu-pic.shot:hover::after { opacity: 1; }
+.sc-rdp .tu-pic { max-width: 400px; }
+.sc-usage.tu-body { grid-template-columns: minmax(0, .82fr) minmax(0, 1.45fr); gap: 28px; }
+.sc-usage .tu-text p { font-size: 14px; line-height: 1.6; margin-bottom: 8px; }
+/* ③ 온톨로지 일러스트 아래 = 실제 폴더 이름 모양 */
+.tu-mini { width: 100%; max-width: 400px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--base); font-size: 12px; line-height: 1.4; color: var(--ink-2); }
+.tu-mini-row { display: flex; align-items: center; padding: 2px 0; white-space: nowrap; }
+.tu-mini-row.lv0 { color: var(--ink); font-weight: 650; }
+.tu-mini-row.lv1 { padding-left: 12px; color: var(--ink); } .tu-mini-row.lv2 { padding-left: 28px; } .tu-mini-row.lv3 { padding-left: 44px; }
+.tu-mini-row small { margin-left: 8px; font: 10px var(--mono); color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; }
+.tu-mini-flow { margin-top: 6px; font-size: 11.5px; color: var(--iris); }
+.tu-mini-flow::before { content: '↓ '; }
+/* ⑦ 사용법 캡처 크게 보기 */
+.tu-zoom { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--base) 92%, transparent); cursor: zoom-out; }
+.tu-zoom[hidden] { display: none; }
+.tu-zoom img { max-width: 100%; max-height: 100%; border-radius: 10px; border: 1px solid var(--line-2); box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 .tu-foot { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--line); }
 .tu-gap { flex: 1; }
 .tu-btn { padding: 8px 16px; border-radius: 9px; border: 1px solid var(--line-2); color: var(--ink-2); background: var(--surface); font-size: 13.5px; display: inline-flex; align-items: center; gap: 7px; }
@@ -114,6 +132,10 @@
   .tu-build, .tu-build.tu-picked { grid-template-columns: 1fr; }
   .tu-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tu-me { width: 110px; }
-  .tu-art-svg { max-width: 360px; }
+  .tu-pic { max-width: 380px; }
+  .sc-usage.tu-body { grid-template-columns: 1fr; }
+  .tu-head { grid-template-columns: auto minmax(0, 1fr); }
+  .tu-head-end { display: none; }
+  .tu-steps li { width: 34px; }
   .tu-steps li em { display: none; }
 }

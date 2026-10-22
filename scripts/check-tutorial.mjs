@@ -142,6 +142,18 @@ else {
     const sessCount = async () => (await (await fetch(`http://127.0.0.1:${PORT}/api/sessions`)).json()).length;
     ok(await sessCount() === 0, '6 세션은 하나도 자동으로 열리지 않았다');
     const shot = async (n) => { if (capDir) { fs.mkdirSync(capDir, { recursive: true }); await p.screenshot({ path: path.join(capDir, `튜토리얼-${n}.png`) }); } };
+    // v2.93: 그림 = app/tutorial/*.webp(코덱스 일러스트 · ⑦ 실제 화면 캡처) · 머리 = 앱 헤더 글자체 · 단계는 판의 정가운데
+    const PICS = ['welcome', 'agent', 'three', 'rdp', 'reference', 'tools', 'usage', 'finish'];
+    const picOk = []; for (const n of PICS) { const r = await fetch(`http://127.0.0.1:${PORT}/app/tutorial/${n}.webp`); picOk.push(r.ok && /image\/webp/.test(r.headers.get('content-type') || '') ? n : `!${n}`); }
+    const picBytes = PICS.reduce((s, n) => s + fs.statSync(path.join(ROOT, 'app', 'tutorial', `${n}.webp`)).size, 0);
+    ok(picOk.every(n => !n.startsWith('!')) && picBytes < 1.5e6, `6 그림 8장 = WebP 로 내보냄 · 합계 ${Math.round(picBytes / 1024)}KB (1.5MB 미만) (${picOk.join(',')})`);
+    await p.waitForFunction(() => { const i = document.querySelector('#tutorial .tu-pic img'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 5000 }).catch(() => {});
+    ok(await p.evaluate(() => { const i = document.querySelector('#tutorial .tu-pic img'); return !!i && i.naturalWidth > 0 && !!i.alt; }) && (await p.locator('#tutorial svg.tu-art-svg').count()) === 0, '6 ⓪ 그림 = 일러스트 이미지(대체 글 있음), 옛 선 그림 없음');
+    const brand = await p.evaluate(() => ({ f: getComputedStyle(document.querySelector('.tu-word')).fontFamily, w: getComputedStyle(document.querySelector('#wordmark')).fontFamily, t: [...document.querySelectorAll('.tu-brand > span')].map(e => e.textContent.trim()).filter(Boolean).join(' '), mark: !!document.querySelector('.tu-mark *') }));
+    ok(/Segoe Script/.test(brand.f) && brand.f === brand.w && brand.t === 'IRIS 시작하기' && brand.mark, `6 머리 「IRIS」 = 앱 헤더와 같은 마크·글자체 (${brand.f} · ${brand.t} · 마크 ${brand.mark})`);
+    const cen = await p.evaluate(() => { const a = document.querySelector('.tu-panel').getBoundingClientRect(), b = document.querySelector('.tu-steps').getBoundingClientRect(); return Math.abs((a.left + a.right) / 2 - (b.left + b.right) / 2); });
+    const dots = await p.evaluate(() => [...document.querySelectorAll('.tu-steps .tu-dotn')].map(e => e.textContent).join(''));
+    ok(cen < 2 && dots === '123456789', `6 단계 표시 = 판 가운데(어긋남 ${cen.toFixed(1)}px) · 번호 1~9 (${dots})`);
     const titles = [];
     for (let i = 0; i < 4; i++) { titles.push(await p.locator('.tu-text h2').first().textContent()); await shot(i); await p.locator('[data-nav="next"]').click(); await sleep(150); }
     ok(titles[0].includes('환영') && titles[1].includes('해 주는 AI') && titles[2].includes('3가지') && titles[3].includes('온톨로지'), `6 장면 순서 ⓪~③ (${titles.join(' / ')})`);
@@ -190,7 +202,14 @@ else {
     await p.locator('[data-nav="next"]').click(); await sleep(800);
     ok(/스킬/.test(await p.locator('#tu-tools').textContent()), '6 ⑥ 도구: 이 영혼의 도구 수');
     await shot(6);
-    await p.locator('[data-nav="next"]').click(); await sleep(150); await shot(7);
+    await p.locator('[data-nav="next"]').click(); await sleep(400); await shot(7);
+    // ⑦ 사용법 = 실제 화면 캡처 · 누르면 크게 보기, Esc 는 크게 보기만 닫는다
+    await p.locator('.tu-pic.shot').click(); await sleep(150);
+    const zoomed = await p.locator('.tu-zoom').isVisible(); await shot('7-zoom');
+    await p.keyboard.press('Escape'); await sleep(150);
+    ok(zoomed && !(await p.locator('.tu-zoom').isVisible()) && await p.locator('#tutorial').isVisible() && /사용법/.test(await p.locator('.tu-text h2').textContent()), '6 ⑦ 캡처 크게 보기 → Esc = 크게 보기만 닫힘');
+    const doneDots = await p.evaluate(() => document.querySelectorAll('.tu-steps li.done .tu-dotn svg').length);
+    ok(doneDots === 7, `6 지난 장면 7개 = ✓ 표시 (${doneDots})`);
     await p.locator('[data-nav="next"]').click(); await sleep(150); await shot(8);
     ok((await p.locator('#tu-fc-agent').inputValue()) === 'codex' && /물리학/.test(await p.locator('#tu-fc-folder').inputValue()), '6 ⑧ 「첫 대화 해 보기」: 주도 에이전트(코덱스) · 방금 만든 폴더');
     await p.keyboard.press('Escape'); await sleep(150);

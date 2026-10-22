@@ -2,7 +2,9 @@
 /* 첫 실행 튜토리얼(v2.90, 2026-10-19 사용자 결정): AI 첫 세션 자동 시작을 없애고, 미리 써 둔 글·그림으로만 진행한다(AI 호출 0).
    흐름 = 연수 「교사를 위한 에이전트」 1편: ⓪ 환영 → ① 에이전트란 → ② 일을 잘하게 하는 3가지 → ③ 온톨로지 R/D/P → ④ 내 폴더 만들기
    → ⑤ 레퍼런스 → ⑥ 도구 → ⑦ 사용법 → ⑧ 마무리(「첫 대화 해 보기」는 사용자가 누를 때만, 보내기도 사용자).
-   관통 비유 = 두뇌+팔다리=몸(에이전트) · 전입 첫날(학교 지도와 내 책상 / 작년 서류철 / 팔다리). 그림은 테마 색을 따르는 선 그림(SVG).
+   관통 비유 = 두뇌+팔다리=몸(에이전트) · 전입 첫날(학교 지도와 내 책상 / 작년 서류철 / 팔다리).
+   그림(v2.93, 2026-10-22 사용자 "선 그림이 매우 구림") = 코덱스 일러스트(따뜻한 평면 화풍, 그림 속 글자 없음) WebP `app/tutorial/*.webp`(합계 약 0.6MB),
+   ⑦ 사용법만 실제 화면 캡처 + 번호 표. 원본 PNG·프롬프트 = docs\튜토리얼그림-원본\(패키지·공개 저장소 제외). 그림은 자기 배경을 가진 둥근 카드라 밝은 테마에서도 액자처럼 보인다.
    데몬: GET /api/tutorial · POST /api/tutorial/{plan,structure,done} · POST /api/open-folder · GET /api/tools · GET /api/relay/ready. 설계 = docs\설계-튜토리얼-2026-10-19.md */
 window.Tutorial = (() => {
   const $ = (s, r = document) => r.querySelector(s);
@@ -13,48 +15,22 @@ window.Tutorial = (() => {
   const el = () => $('#tutorial');
   const isOpen = () => !!el() && !el().hidden;
 
-  // ---------- 그림(선 그림 SVG — 색은 테마 변수: 선 = --ink-3, 강조 = --iris, 면 = --raised) ----------
-  const S = (inner, vb = '0 0 440 300') => `<svg class="tu-art-svg" viewBox="${vb}" role="img" aria-hidden="true">${inner}</svg>`;
-  const T = (x, y, s, o = {}) => `<text x="${x}" y="${y}" class="tu-t${o.c ? ' ' + o.c : ''}" text-anchor="${o.a || 'middle'}"${o.size ? ` font-size="${o.size}"` : ''}>${esc(s)}</text>`;
-  // 두뇌 = 타원 + 가운데 홈 + 주름 두 줄(단순한 아이콘)
-  const brain = (cx, cy, r = 26) => `<ellipse cx="${cx}" cy="${cy}" rx="${r}" ry="${r * .8}" class="tu-acc"/><path class="tu-acc thin" d="M${cx} ${cy - r * .8}v${r * 1.6}M${cx - r * .62} ${cy - r * .2}q${r * .3} ${r * .25} 0 ${r * .5}M${cx + r * .62} ${cy - r * .2}q-${r * .3} ${r * .25} 0 ${r * .5}"/>`;
-  const fileIc = (x, y, label, acc) => `<g transform="translate(${x} ${y})"><path class="${acc ? 'tu-acc' : 'tu-ln'}" d="M0 0h34l12 12v46H0z"/><path class="tu-ln thin" d="M34 0v12h12M8 24h28M8 33h28M8 42h20"/>${T(23, 76, label, { size: 11 })}</g>`;
+  // ---------- 그림(코덱스 일러스트 · 사용법은 실제 화면 캡처) — 대체 글은 화면 읽기 프로그램용 ----------
   const ART = {
-    welcome: S(`<circle cx="220" cy="150" r="96" class="tu-ln thin dash"/><circle cx="220" cy="150" r="62" class="tu-ln thin"/>
-      ${[[220, 54], [316, 150], [124, 150], [286, 82], [154, 218], [262, 236]].map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="${i % 2 ? 3 : 5}" class="tu-dot"/>`).join('')}
-      <path class="tu-acc" d="M220 112l32 18v38l-32 18-32-18v-38z M188 130l32 18 32-18 M220 148v38"/>${T(220, 290, '설치 · 로그인 완료 → 이제 쓰는 법만 남았습니다', { size: 13, c: 'dim' })}`),
-    agent: S(`<rect x="40" y="50" width="130" height="150" rx="40" class="tu-ln"/><path class="tu-ln thin" d="M58 50h94"/>${brain(105, 125, 28)}
-      <path class="tu-ln" d="M150 70h70a10 10 0 0 1 10 10v24a10 10 0 0 1-10 10h-44l-12 12v-12h-14z"/>${T(193, 99, '이렇게 하세요', { size: 11 })}
-      ${T(105, 232, '말해 주는 AI(챗봇)', { size: 13 })}
-      ${brain(330, 74, 24)}<path class="tu-acc" d="M330 100v70M330 120l-36 26M330 120l40 18M330 170l-26 46M330 170l26 46"/>
-      <g transform="translate(372 120)"><path class="tu-acc" d="M0 0h30l8 8v36H0z"/><path class="tu-acc thin" d="M7 20l7 7 14-14"/></g>
-      ${T(330, 252, '해 주는 AI(에이전트)', { size: 13, c: 'acc' })}${T(330, 272, '두뇌 + 팔다리 = 몸', { size: 11, c: 'dim' })}`),
-    three: S(`${[['학교 지도와 내 책상', '온톨로지', 'M-22 -14h44v28h-44z M-22 -4h44 M-6 -14v28'], ['작년 서류철', '레퍼런스', 'M-18 -20h30l8 8v32h-38z M-10 -4h22 M-10 4h22 M-10 12h14'], ['팔다리', '도구', 'M-8 -22v14 M8 -22v14 M-16 -8h32v10a16 16 0 0 1-32 0z M0 18v8']]
-      .map(([sub, name, d], i) => { const x = 80 + i * 140; return `<rect x="${x - 58}" y="70" width="116" height="150" rx="16" class="tu-ln"/><g transform="translate(${x} 122)"><path class="tu-acc" d="${d}"/></g>${T(x, 180, name, { size: 15, c: 'acc' })}${T(x, 202, sub, { size: 11, c: 'dim' })}`; }).join('')}
-      ${T(220, 40, '전입 첫날, 똑똑한 선생님도 헤맵니다', { size: 13 })}${T(220, 258, '이 세 가지를 갖추면 처음 온 곳에서도 일을 잘합니다', { size: 11, c: 'dim' })}`),
-    rdp: S(`${[['IRIS', 24, 20, 'root'], ['R01-교사', 56, 70, 'R'], ['D01-수업', 96, 120, 'D'], ['P01-물리학 〖2026년.2학기〗', 136, 170, 'P'], ['D02-담임', 96, 220, 'D'], ['P01-담임 〖2026년 1학년 3반〗', 136, 270, 'P']]
-      .map(([t, x, y, lv]) => `<g transform="translate(${x} ${y})"><path class="${lv === 'root' ? 'tu-ln' : 'tu-acc'}" d="M0 -9h10l4 4h18v18H0z"/>${T(40, 5, t, { a: 'start', size: 13 })}${lv !== 'root' ? `<g transform="translate(${t.length * 9 + 58} -10)"><path class="tu-ln thin" d="M0 0h16l5 5v15H0z M4 9h12 M4 14h8"/>${T(28, 14, 'AGENTS.md', { a: 'start', size: 10, c: 'dim' })}</g>` : ''}</g>`).join('')}
-      <path class="tu-ln thin" d="M33 32v38h18M65 82v38h26M105 132v38h26M65 82v138h26M105 232v38h26"/>
-      <path class="tu-acc thin" d="M408 50v200"/><path class="tu-acc" d="M400 240l8 12 8-12"/>${T(398, 150, '규칙이 아래로', { a: 'end', size: 11, c: 'acc' })}`),
-    reference: S(`${fileIc(30, 60, '작년 계획서', 1)}${fileIc(90, 60, '양식')}${fileIc(150, 60, '좋은 예시')}
-      <rect x="20" y="40" width="190" height="110" rx="12" class="tu-ln thin dash"/>${T(115, 172, '프로젝트 폴더에 넣어 두기', { size: 11, c: 'dim' })}
-      <path class="tu-acc" d="M222 96h46M260 88l10 8-10 8"/>${brain(312, 88, 20)}<path class="tu-acc" d="M312 108v40M312 120l-22 16M312 120l22 16"/>
-      <g transform="translate(360 64)"><path class="tu-acc" d="M0 0h34l12 12v46H0z"/><path class="tu-acc thin" d="M8 24h28M8 33h28M8 42h20"/></g>${T(383, 140, '같은 모양으로', { size: 11, c: 'acc' })}
-      ${T(220, 230, '말로 100번 설명하는 것보다', { size: 14 })}${T(220, 254, '작년 파일 1개가 낫습니다', { size: 14, c: 'acc' })}`),
-    tools: S(`${brain(220, 70, 22)}<path class="tu-acc" d="M220 92v60M220 110l-30 22M220 110l30 22M220 152l-20 36M220 152l20 36"/>
-      ${[['한글(HWP)', 70, 80], ['엑셀·워드', 60, 170], ['PDF', 110, 250], ['구글 드라이브', 370, 80], ['인터넷 검색', 380, 170], ['메일', 330, 250]]
-      .map(([t, x, y]) => `<rect x="${x - 46}" y="${y - 16}" width="92" height="32" rx="9" class="tu-ln"/>${T(x, y + 5, t, { size: 12 })}<path class="tu-ln thin dash" d="M${x < 220 ? x + 46 : x - 46} ${y}L${x < 220 ? 192 : 248} ${y < 120 ? 120 : 150}"/>`).join('')}
-      <g transform="translate(211 242)"><path class="tu-acc" d="M4 0v8M14 0v8M0 8h18v6a9 9 0 0 1-18 0z"/></g>${T(220, 288, 'MCP = 에이전트용 콘센트', { size: 11, c: 'acc' })}`),
-    usage: S(`<rect x="10" y="10" width="420" height="270" rx="12" class="tu-ln"/><path class="tu-ln thin" d="M10 40h420M120 40v240"/>
-      ${[0, 1, 2].map(i => `<rect x="20" y="${52 + i * 34}" width="90" height="26" rx="6" class="${i === 0 ? 'tu-fill' : 'tu-ln thin'}"/>`).join('')}
-      <rect x="140" y="56" width="270" height="60" rx="8" class="tu-ln thin"/><rect x="140" y="128" width="200" height="44" rx="8" class="tu-ln thin"/>
-      <rect x="140" y="184" width="270" height="44" rx="8" class="tu-acc"/>${T(275, 211, '확인 카드: 1 허락 · 2 거절', { size: 11, c: 'acc' })}
-      <rect x="140" y="240" width="270" height="28" rx="8" class="tu-ln"/>${T(150, 259, '폴더 · Claude/Codex · 요청…', { a: 'start', size: 11, c: 'dim' })}
-      <path class="tu-ln thin" d="M340 25h40M392 25h26"/>
-      ${[[24, 104, 1], [126, 254, 2], [134, 196, 3], [360, 48, 4], [404, 18, 5], [228, 144, 6]].map(([x, y, n]) => `<circle cx="${x}" cy="${y}" r="10" class="tu-num"/>${T(x, y + 4, String(n), { size: 11, c: 'num' })}`).join('')}`),
-    finish: S(`${[['온톨로지', '내 폴더 구조를 만들었습니다'], ['레퍼런스', '자료를 폴더에 넣는 법을 알았습니다'], ['도구', '에이전트의 팔다리를 알았습니다']]
-      .map(([a, b], i) => `<g transform="translate(70 ${70 + i * 66})"><circle cx="0" cy="0" r="16" class="tu-acc"/><path class="tu-acc" d="M-7 0l5 5 9-10"/>${T(32, -2, a, { a: 'start', size: 15, c: 'acc' })}${T(32, 18, b, { a: 'start', size: 12, c: 'dim' })}</g>`).join('')}`),
+    welcome: '밤의 책상에서 선생님이 노트북의 IRIS 큐브를 바라보고, 작은 도우미 로봇이 노트북 뒤에서 웃고 있는 그림',
+    agent: '왼쪽은 말풍선 속 두뇌만 있어 선생님이 서류를 혼자 떠안은 모습, 오른쪽은 같은 두뇌를 머리에 넣은 로봇이 직접 서류를 처리하고 선생님은 차를 마시는 모습',
+    three: '새 학교 복도에 선 선생님 위로 학교 지도, 작년 서류철, 도구를 든 로봇 팔이 세 개의 빛나는 원 안에 떠 있는 그림',
+    rdp: '맨 위 큰 폴더에서 아래 폴더들로 가지가 뻗고, 폴더마다 붙은 메모를 따라 빛이 아래로 흘러가는 폴더 나무 그림',
+    reference: '선생님이 작년 계획서·양식·좋은 예시를 프로젝트 상자에 넣고, 로봇이 예시를 보고 같은 모양의 새 문서를 만드는 그림',
+    tools: '로봇이 멀티탭에 케이블을 꽂아 문서, 표, PDF, 클라우드, 검색, 메일을 직접 다루는 그림',
+    usage: 'IRIS 화면 캡처: ① 작업목록 ② 새 요청(+) ③ 확인 카드 ④ 대화/터미널 전환 ⑤ 설정 ⑥ 입력창에 번호가 붙어 있다',
+    finish: '새벽빛 속에서 선생님과 로봇이 기뻐하고, 지도·서류철·도구 세 개에 체크 표시가 떠 있는 그림',
   };
+  const pic = (id) => `<figure class="tu-pic${id === 'usage' ? ' shot' : ''}"${id === 'usage' ? ' data-act="zoom" title="크게 보기"' : ''}><img src="/app/tutorial/${id}.webp" alt="${esc(ART[id])}" decoding="async" draggable="false"></figure>`;
+  // ③ 온톨로지: 일러스트 아래에 실제 폴더 이름 모양(그림 속 글자는 틀릴 수 있어 글은 HTML 로)
+  const MINI_TREE = [['IRIS', 0], ['R01-교사(Teacher)', 1], ['D01-수업(Teaching)', 2], ['P01-물리학 〖2026년.2학기〗', 3], ['D02-담임(Homeroom)', 2], ['P01-담임 〖2026년 1학년 3반〗', 3]];
+  const miniTree = () => `<div class="tu-mini" aria-label="폴더 이름 예시">${MINI_TREE.map(([t, lv]) => `<div class="tu-mini-row lv${lv}">${lv ? FOLDER : ''}<span>${esc(t)}</span>${lv ? '<small>AGENTS.md</small>' : ''}</div>`).join('')}<div class="tu-mini-flow">규칙 메모는 위에서 아래로 물려 내려갑니다</div></div>`;
+  // v2.90 의 선 그림(SVG)은 v2.93 에서 일러스트로 바꾸며 지웠다 — 옛 코드는 git v2.92.1
 
   // ---------- 장면 글(본문 4줄 + 접는 「더 알아보기」) ----------
   const SCENES = [
@@ -78,7 +54,7 @@ window.Tutorial = (() => {
       body: ['파일 읽고 쓰기, 명령 실행, 인터넷 검색은 기본으로 할 수 있습니다.', '<b>MCP</b>는 에이전트용 콘센트입니다. 꽂으면 한글·엑셀·구글 드라이브 같은 프로그램을 직접 다룹니다.', '<b>스킬</b>은 정해진 일을 잘하는 요령을 묶어 둔 설명서입니다.'],
       more: '어떤 도구가 있는지는 설정 → 「도구」 탭에서 언제든 볼 수 있습니다. 민감한 자료는 인터넷으로 보내지 않고 이 컴퓨터 안에서만 처리하는 도구를 고를 수도 있습니다.' },
     { id: 'usage', label: '사용법', title: 'IRIS 화면 사용법', art: 'usage',
-      body: ['<b>① 작업목록</b>: 열린 대화들. 이름에 마우스를 올리면 연필로 이름을 바꿀 수 있습니다.', '<b>② 새 요청</b>: 폴더를 고르고 → Claude/Codex와 모델을 고르고 → 요청을 적어 보냅니다.', '<b>③ 확인 카드</b>: 중요한 일 전에 허락을 묻습니다. 숫자(1, 2…)나 단추로 답합니다.', '<b>④ 대화/터미널</b> 전환 · <b>⑤ 설정(⚙)</b>과 사용량 · <b>⑥ Esc</b> = 하던 일 멈추기'],
+      body: ['<b>① 작업목록</b>: 열린 대화들. 이름에 마우스를 올리면 연필로 이름을 바꿀 수 있습니다.', '<b>② 새 요청(+)</b>: 폴더를 고르고 → Claude/Codex와 모델을 고르고 → 요청을 적어 보냅니다.', '<b>③ 확인 카드</b>: 중요한 일 전에 허락을 묻습니다. 숫자(1, 2…)나 단추로 답합니다.', '<b>④ 대화/터미널</b> 전환 · <b>⑤ 설정(⚙)</b> · <b>⑥ 입력창</b>(이어서 시킬 일, 파일 끌어다 놓기) · <b>Esc</b> = 하던 일 멈추기'],
       more: '요청은 길게 쓰지 않아도 됩니다. "무엇을, 어떤 모양으로" 두 가지만 분명하면 충분합니다. 작업이 끝나면 창 오른쪽 아래에 알림이 뜹니다. 설정에서 디자인·권한·알림·온톨로지(폴더 지도)·도구를 볼 수 있습니다.' },
     { id: 'finish', label: '마무리', title: '준비가 끝났습니다', art: 'finish', custom: 'finish',
       body: ['이제 폴더를 골라 첫 요청을 보내 보세요.', '「첫 대화 해 보기」를 누르면 방금 만든 폴더와 예시 요청이 채워집니다. <b>보내기는 직접</b> 누르면 됩니다.'],
@@ -95,6 +71,7 @@ window.Tutorial = (() => {
     학생: [['수업', 'Classes'], ['과제', 'Assignments'], ['진로', 'Career']],
   };
   const FOLDER = '<svg class="tu-fic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>'; // 이모지 대신 선 아이콘
+  const CHECK = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const periods = () => { const y = info?.year || new Date().getFullYear(); return ['', `${y}년`, `${y}년.1학기`, `${y}년.2학기`, `${y + 1}년`]; };
   const inp = (k, v, ph, cls = '') => `<input class="tu-in ${cls}" data-k="${k}" value="${esc(v)}" placeholder="${esc(ph)}" maxlength="${cls.includes('en') ? 40 : 30}" spellcheck="false" autocomplete="off">`;
   // v2.91: 역할 = 「별빛의 분신」 캐릭터(app/persona.js) — 고르기 격자 → 고르면 왼쪽으로 걸어가 이름 칸 위에 서고, 오른쪽에 영역·프로젝트 트리 편집.
@@ -203,7 +180,7 @@ window.Tutorial = (() => {
     if (sc.custom === 'ref') extra = `<div class="tu-extra"><div class="tu-extra-h">자료를 넣을 폴더 열기</div><div class="tu-btns">${folderBtns()}</div></div>`;
     if (sc.custom === 'tools') extra = `<div class="tu-extra" id="tu-tools">${tools ? toolsLine() : '<div class="tu-dim">이 컴퓨터의 도구를 세는 중…</div>'}</div>`;
     if (sc.custom === 'finish') extra = finishHtml();
-    return `<div class="tu-text"><div class="tu-kicker">${step}/${SCENES.length - 1} · ${esc(sc.label)}</div><h2>${sc.title}</h2>${sc.body.map(l => `<p>${l}</p>`).join('')}${more}${extra}</div><div class="tu-art">${ART[sc.art] || ''}</div>`;
+    return `<div class="tu-text"><div class="tu-kicker">${step + 1}/${SCENES.length} · ${esc(sc.label)}</div><h2>${sc.title}</h2>${sc.body.map(l => `<p>${l}</p>`).join('')}${more}${extra}</div><div class="tu-art">${ART[sc.art] ? pic(sc.art) : ''}${sc.id === 'rdp' ? miniTree() : ''}</div>`;
   }
   const toolsLine = () => `<div class="tu-extra-h">이 컴퓨터에 있는 도구</div><div class="tu-stat"><span><b>${tools.counts.skills}</b> 스킬</span><span><b>${tools.counts.mcp}</b> MCP</span><span><b>${tools.counts.plugins}</b> 플러그인</span></div>
     <div class="tu-chips small">${[...new Set(tools.mcp.map(m => m.name))].slice(0, 8).map(n => `<span class="tu-chip ro">${esc(n)}</span>`).join('')}</div><div class="tu-dim">전체 목록 = 설정 → 「도구」 탭</div>`;
@@ -218,7 +195,8 @@ window.Tutorial = (() => {
   function render() {
     const root = el(); if (!root) return;
     const sc = SCENES[step];
-    root.querySelector('.tu-steps').innerHTML = SCENES.map((s, i) => `<li class="${i === step ? 'cur' : i < step ? 'done' : ''}" data-go="${i}" title="${esc(s.label)}"><span>${i}</span><em>${esc(s.label)}</em></li>`).join('');
+    // v2.93: 번호 원 + 잇는 선 + 이름(가운데 정렬) — 지난 장면 = ✓, 지금 = 채운 원
+    root.querySelector('.tu-steps').innerHTML = SCENES.map((s, i) => `<li class="${i === step ? 'cur' : i < step ? 'done' : ''}" data-go="${i}" title="${esc(s.label)}"${i === step ? ' aria-current="step"' : ''}><span class="tu-dotn">${i < step ? CHECK : i + 1}</span><em>${esc(s.label)}</em></li>`).join('');
     const body = root.querySelector('.tu-body'); body.className = `tu-body sc-${sc.id}`; body.innerHTML = sceneHtml(sc); body.scrollTop = 0;
     root.querySelector('[data-nav="prev"]').hidden = step === 0;
     root.querySelector('[data-nav="next"]').hidden = step === SCENES.length - 1;
@@ -249,11 +227,12 @@ window.Tutorial = (() => {
   function ensureDom() {
     if (el()) return;
     const d = document.createElement('div'); d.id = 'tutorial'; d.className = 'tu'; d.hidden = true;
-    d.innerHTML = `<div class="tu-panel" role="dialog" aria-label="IRIS 시작하기"><div class="tu-head"><span class="tu-brand">IRIS 시작하기</span><ol class="tu-steps"></ol></div><div class="tu-body"></div>
+    d.innerHTML = `<div class="tu-panel" role="dialog" aria-label="IRIS 시작하기"><div class="tu-head"><span class="tu-brand"><span class="tu-mark" aria-hidden="true"></span><span class="tu-word">IRIS</span><span class="tu-brand-sub">시작하기</span></span><ol class="tu-steps"></ol><span class="tu-head-end"></span></div><div class="tu-body"></div>
+      <div class="tu-zoom" hidden data-act="unzoom"><img alt="" src=""></div>
       <div class="tu-foot"><button class="tu-btn ghost" data-nav="later">나중에 하기</button><span class="tu-gap"></span><button class="tu-btn" data-nav="prev">이전</button><button class="tu-btn accent" data-nav="next">다음</button></div></div>`;
     document.body.appendChild(d);
     // 튜토리얼 안의 키는 문서로 올려 보내지 않는다 — 확인 카드 1~9·단축키·Esc(작업 중단)가 입력칸 글자에 반응하지 않게
-    d.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && e.target.matches?.('input')) e.preventDefault(); if (e.key === 'Escape' && unpick()) e.preventDefault(); }); // Esc = ④에서 고른 역할 → 격자로만(튜토리얼은 닫지 않음)
+    d.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && e.target.matches?.('input')) e.preventDefault(); if (e.key === 'Escape' && (unzoom() || unpick())) e.preventDefault(); }); // Esc = 크게 보기 닫기 / ④에서 고른 역할 → 격자로만(튜토리얼은 닫지 않음)
     bindBuild(d);
     d.addEventListener('click', async (e) => {
       const nav = e.target.closest('[data-nav]')?.dataset.nav;
@@ -263,13 +242,23 @@ window.Tutorial = (() => {
       const g = e.target.closest('[data-go]'); if (g) return go(+g.dataset.go);
       const o = e.target.closest('[data-open]'); if (o) { try { await fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: o.dataset.open }) }); } catch {} return; }
       const a = e.target.closest('[data-act]')?.dataset.act;
+      if (a === 'zoom') { const z = $('.tu-zoom', d), img = e.target.closest('.tu-pic')?.querySelector('img'); if (z && img) { z.querySelector('img').src = img.src; z.querySelector('img').alt = img.alt; z.hidden = false; } return; }
+      if (a === 'unzoom') return unzoom();
       if (a === 'first') return firstChat();
       if (a === 'first-anyway') { const m = $('#tu-fc-msg'); if (m) m.dataset.anyway = '1'; return; }
       if (a === 'home') { await done(false); close(); }
     });
   }
+  /** 크게 보기(⑦ 사용법 캡처)를 닫는다. 닫았으면 true. */
+  function unzoom() { const z = el() && $('.tu-zoom', el()); if (!z || z.hidden) return false; z.hidden = true; return true; }
+  /** 머리 「IRIS」 = 앱 헤더와 같은 마크·글자체(settings.js BRAND 가 #mark-slot·#wordmark 에 적용한 것을 그대로 빌린다 — 원천은 BRAND 하나). */
+  function paintBrand() {
+    const mark = $('.tu-mark', el()), word = $('.tu-word', el()), wm = $('#wordmark'), slot = $('#mark-slot');
+    if (mark && slot) mark.innerHTML = slot.innerHTML;
+    if (word && wm) word.style.cssText = wm.style.cssText;
+  }
   async function open({ replay = false } = {}) {
-    ensureDom();
+    ensureDom(); paintBrand(); unzoom();
     try { info = await (await fetch('/api/tutorial')).json(); } catch { info = info || {}; }
     if (replay) step = 0;
     el().hidden = false; document.body.classList.add('tu-open'); render();
@@ -279,5 +268,7 @@ window.Tutorial = (() => {
   function maybeOpen(h) { if (!autoShown && h?.tutorial?.due && !isOpen()) { autoShown = true; open(); } }
   function init(o) { opts = { ...opts, ...(o || {}) }; ensureDom(); }
 
-  return { init, open, close, isOpen, maybeOpen };
+  /** Esc(문서·Electron 중계 길): 크게 보기 닫기 → 역할 다시 고르기. 튜토리얼 자체는 닫지 않는다. */
+  const back = () => unzoom() || unpick();
+  return { init, open, close, isOpen, maybeOpen, back };
 })();
