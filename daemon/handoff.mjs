@@ -212,7 +212,7 @@ export class HandoffFlow {
       leadAgent: r.handoff?.leadAgent === 'chatgpt' ? 'codex' : (r.handoff?.leadAgent === 'codex' ? 'codex' : (r.handoff?.leadAgent ? 'claude' : null)),
       card: this.card,
       greeted: this.readSeen().greetedFor === this.key(r.handoff) && !!r.handoff,
-      tutorial: { due: this.tutorialDue(r), doneAt: this.tutorialState().doneAt || null }, // v2.90: 화면이 이 값으로 튜토리얼을 띄운다
+      tutorial: { due: this.tutorialDue(r), doneAt: this.tutorialState().doneAt || null, gender: this.tutorialState().gender || null, step: this.tutorialState().step || null, hasRoles: rootHasRoles(this.root) }, // v2.90: 화면이 이 값으로 튜토리얼을 띄운다 · v2.95 성별·보던 쪽·역할 폴더 유무
     };
   }
   publish() { try { this.broadcast({ type: 'handoff', ...this.info() }); } catch {} }
@@ -296,7 +296,7 @@ export class HandoffFlow {
   /** 끝까지 했거나 「나중에 하기」 — 기록하고, 미뤄 둔 메신저 안내를 이제 띄운다. */
   finishTutorial({ skipped = false } = {}) {
     const prev = this.tutorialState();
-    const rec = { doneAt: new Date(this.now()).toISOString(), skipped: !!skipped, count: (Number(prev.count) || 0) + 1 };
+    const rec = { doneAt: new Date(this.now()).toISOString(), skipped: !!skipped, count: (Number(prev.count) || 0) + 1, ...(prev.gender ? { gender: prev.gender } : {}), ...(prev.step ? { step: prev.step } : {}) };
     try { fs.mkdirSync(this.stateDir, { recursive: true }); fs.writeFileSync(this.tutorialFile(), JSON.stringify(rec, null, 2), 'utf8'); }
     catch (e) { this.log(`handoff: 튜토리얼 기록 실패 ${e?.message || e}`); return { ok: false, reason: String(e?.message || e) }; }
     this.log(`handoff: 튜토리얼 ${skipped ? '나중에 하기' : '완료'} (${rec.count}번째)`);
@@ -304,6 +304,16 @@ export class HandoffFlow {
     if (r.state === 'ready' && r.handoff) { const out = this.last || { state: 'ready' }; this.messengerStep(r, out); }
     this.publish();
     return { ok: true, ...rec };
+  }
+
+  /** v2.95: 튜토리얼 취향 — 역할 그림의 성별(m·f, 설정 온톨로지도 같은 그림)·보던 쪽(다시 보기 = 이어서). 완료 기록(doneAt)은 건드리지 않는다. */
+  setTutorialPrefs({ gender, step } = {}) {
+    const cur = this.tutorialState(), next = { ...cur };
+    if (gender === 'm' || gender === 'f') next.gender = gender;
+    if (typeof step === 'string' && /^[\w-]{1,24}$/.test(step)) next.step = step;
+    try { fs.mkdirSync(this.stateDir, { recursive: true }); fs.writeFileSync(this.tutorialFile(), JSON.stringify(next, null, 2), 'utf8'); }
+    catch (e) { return { ok: false, reason: String(e?.message || e) }; }
+    return { ok: true, gender: next.gender || null, step: next.step || null };
   }
 
   /** 메신저 로그인 안내: 설치돼 있고 아직 한 번도 보인 적 없을 때만, 보이는 즉시 표시했다고 적는다. */

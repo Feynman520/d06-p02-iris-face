@@ -1,6 +1,8 @@
 /* IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home */
 /* 첫 실행 튜토리얼 — v2.94(2026-10-22 사용자 확정): 밝은 판(연수 「교사를 위한 에이전트」 슬라이드 색). IRIS 테마와 무관하게 .tu 안에서 색 변수를 다시 정한다
-   (안의 역할 캐릭터 persona.css 도 이 변수를 따른다). 시안 = docs\시안-튜토리얼v2-2026-10-22.html */
+   (안의 역할 캐릭터 persona.css 도 이 변수를 따른다). 시안 = docs\시안-튜토리얼v2-2026-10-22.html
+   v2.95: 본문 = 연수 덱 그대로(.tu-deck 그림자 DOM, 원본 CSS = app/tutorial/deck/deck.css). 덱 글꼴 선언은 그림자 DOM 안에서 먹지 않아 여기서 한다. */
+@font-face { font-family: 'IRIS Deck KR'; src: url(/app/tutorial/deck/deck-kr.woff2) format('woff2'); font-weight: 100 900; font-display: block; }
 .tu { --tu-bg: #F9FAFF; --tu-card: #fff; --tu-pale: #E7EDFF; --tu-ink: #151C30; --tu-ink-2: #5B6478; --tu-ink-3: #8a92a6; --tu-acc: #2149EF; --tu-acc-soft: rgba(33,73,239,.10); --tu-line: #E3E8F3; --tu-line-2: #D5DBEA; --tu-pill: rgba(17,25,39,.89); --tu-gold: #FFE27A;
   --ink: var(--tu-ink); --ink-2: var(--tu-ink-2); --ink-3: var(--tu-ink-3); --iris: var(--tu-acc); --surface: var(--tu-bg); --raised: var(--tu-pale);
   position: fixed; inset: 0; z-index: 8000; display: grid; place-items: center; background: rgba(8,10,20,.62); backdrop-filter: blur(6px); padding: 24px; color: var(--tu-ink); }
@@ -25,6 +27,16 @@
 .tu-steps li.cur .tu-dotn { color: #fff; background: var(--tu-acc); border-color: var(--tu-acc); box-shadow: 0 0 0 4px var(--tu-acc-soft); }
 .tu-steps li em { font-style: normal; font-size: 11.5px; color: var(--tu-ink-3); white-space: nowrap; }
 .tu-steps li.done em { color: var(--tu-ink-2); } .tu-steps li.cur em { color: var(--tu-ink); font-weight: 700; }
+.tu-panel:focus { outline: none; } /* 열 때 키를 받으려고 판에 초점을 준다(테두리는 그리지 않음) */
+/* 머리 오른쪽: 쪽수 · 처음부터 · × 닫기 */
+.tu-head-end { justify-self: end; display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.tu-pno { font: 600 12.5px/1 var(--sans); font-variant-numeric: tabular-nums; color: var(--tu-ink-3); white-space: nowrap; }
+.tu .tu-x { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: var(--tu-ink-2); border: 1px solid var(--tu-line-2); background: var(--tu-card); }
+.tu .tu-x:hover { color: #fff; background: #d6453d; border-color: #d6453d; }
+/* 무대 = 덱(그림자 DOM, 1920×1080 을 줄여 가운데) 또는 IRIS 장면 */
+.tu-stage { position: relative; flex: 1; min-height: 0; display: flex; }
+.tu-deck { position: absolute; inset: 0; overflow: hidden; background: #F9FAFF; }
+.tu-deck[hidden], .tu-body[hidden] { display: none; }
 /* 몸통 = 왼쪽 글 | 오른쪽 그림 + 아래 요점 띠 */
 .tu-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 40px; padding: 34px 46px 84px; align-items: center; }
 .tu-k { font-size: 13px; font-weight: 700; color: var(--tu-acc); display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -85,7 +97,7 @@
 /* 단추·입력 공통 */
 .tu-foot { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--tu-line); }
 .tu-gap { flex: 1; }
-.tu-later-note, .tu-gate { font-size: 11.5px; color: var(--tu-ink-3); }
+.tu-gate { font-size: 11.5px; color: var(--tu-ink-3); }
 .tu-gate[hidden] { display: none; }
 .tu .tu-btn { padding: 8px 18px; border-radius: 9px; border: 1px solid var(--tu-line-2); color: var(--tu-ink-2); background: var(--tu-bg); font-size: 13.5px; display: inline-flex; align-items: center; gap: 7px; }
 .tu .tu-btn:hover:not(:disabled) { color: var(--tu-ink); background: var(--tu-pale); }
@@ -113,7 +125,21 @@
 .tu-rc { position: relative; border-radius: 16px; border: 1.5px solid var(--tu-line-2); background: var(--tu-card); padding: 10px 6px 6px; cursor: pointer; transition: border-color .15s, transform .15s; outline: none; }
 .tu-rc:hover, .tu-rc:focus-visible { border-color: var(--tu-acc); transform: translateY(-2px); }
 .tu-rc.filled { border-color: var(--tu-acc); box-shadow: 0 0 0 4px var(--tu-acc-soft); }
-.tu-rc .ps-fig { pointer-events: none; } .tu-rc .ps-svg { max-width: 120px; margin: 0 auto; display: block; }
+.tu-rc .ps-fig { pointer-events: none; } .tu-rc .ps-pp { max-width: 128px; margin: 0 auto; }
+.tu-rc.exist { border-style: dashed; }
+.tu-rex { position: absolute; right: 8px; top: 8px; z-index: 2; font-size: 10.5px; color: var(--tu-ink-3); background: var(--tu-bg); border: 1px solid var(--tu-line-2); border-radius: 999px; padding: 1px 8px; }
+.tu .ps-name:empty { display: none; }
+/* 성별 고르기(내 폴더 첫 화면) · 머리의 작은 바꾸기 */
+.tu-q-host.v-gender { display: flex; flex-direction: column; gap: 18px; }
+.tu-gpick { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; flex: 1; min-height: 0; align-content: start; }
+.tu .tu-gcard { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 14px 14px; border-radius: 18px; border: 1.5px solid var(--tu-line-2); background: var(--tu-card); transition: border-color .15s, transform .15s, box-shadow .15s; }
+.tu .tu-gcard:hover, .tu .tu-gcard:focus-visible { border-color: var(--tu-acc); transform: translateY(-2px); box-shadow: 0 0 0 4px var(--tu-acc-soft); outline: none; }
+.tu-gstrip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 100%; }
+.tu-gstrip .ps-fig { padding: 0; cursor: inherit; pointer-events: none; }
+.tu-gcard b { font-size: 18px; font-weight: 800; }
+.tu-gsw { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; font-size: 11.5px; font-weight: 600; color: var(--tu-ink-3); }
+.tu .tu-gsw button { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--tu-line-2); font-size: 11.5px; color: var(--tu-ink-2); background: var(--tu-card); }
+.tu .tu-gsw button[aria-pressed="true"] { background: var(--tu-acc); border-color: var(--tu-acc); color: #fff; }
 .tu .tu-rx { position: absolute; right: 8px; top: 8px; z-index: 2; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: var(--tu-ink-2); background: var(--tu-bg); border: 1px solid var(--tu-line-2); }
 .tu .tu-rx:hover, .tu .tu-tx:hover { color: #fff; background: #d6453d; border-color: #d6453d; }
 .tu-rok { position: absolute; left: 8px; top: 8px; width: 24px; height: 24px; border-radius: 50%; background: var(--tu-acc); color: #fff; display: grid; place-items: center; }
@@ -131,7 +157,16 @@
 /* ⑤ 내 폴더: 폴더 나무 편집기 */
 .tu-dl { display: flex; flex-direction: column; gap: 10px; }
 .tu .tu-back { align-self: flex-start; color: var(--tu-acc); font-size: 12.5px; }
-.tu-me .ps-svg { max-width: 170px; display: block; margin: 0 auto; }
+.tu-me .ps-pp { max-width: 180px; margin: 0 auto; }
+.tu .tu-rmrole { align-self: center; color: #b4321f; }
+/* 이미 있는 폴더 줄 = 잠김(회색, 이름 칸 없음) */
+.tu-tr.ro { color: var(--tu-ink-2); }
+.tu-tr.ro:hover { background: none; }
+.tu-tn.ro { padding: 4px 6px; font-weight: 600; color: var(--tu-ink-2); }
+.tu-tr.lv1.ro .tu-tn.ro { font-weight: 800; }
+.tu-tr.ro .tu-tfic { opacity: .55; }
+.tu-ttag { font-size: 12px; color: var(--tu-ink-3); margin-left: -6px; }
+.tu-tr.more .tu-more { font-size: 12px; color: var(--tu-ink-3); }
 .tu-dr { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; height: 100%; }
 .tu-dr .tu-k { margin: 0; }
 .tu h3 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
@@ -179,8 +214,8 @@
   .tu-body { grid-template-columns: 1fr; padding: 24px 24px 80px; gap: 18px; overflow: auto; }
   .tu-q-host.v-tree { grid-template-columns: 1fr; }
   .tu-dl { display: none; }
-  .tu-head { grid-template-columns: auto minmax(0, 1fr); }
-  .tu-head-end { display: none; }
+  .tu-head { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .tu-pno, .tu .tu-head-end [data-nav="restart"] { display: none; } /* 좁은 창에서도 × 는 남긴다 */
   .tu-steps li { width: 34px; }
   .tu-steps li em { display: none; }
   .tu-pill { white-space: normal; text-align: center; width: calc(100% - 48px); }

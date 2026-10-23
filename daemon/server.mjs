@@ -27,7 +27,7 @@ import { Updater } from './update.mjs';
 import { Finalizer } from './finalize.mjs';
 import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
-import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools } from './tutorial.mjs';
+import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -210,14 +210,24 @@ function buildHandoff(items, rec) {
 }
 
 // ---- http ----
-const MIME = { '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.map': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.csv': 'text/plain; charset=utf-8', '.ttf': 'font/ttf', '.woff': 'font/woff', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.map': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.csv': 'text/plain; charset=utf-8', '.ttf': 'font/ttf', '.woff': 'font/woff', '.woff2': 'font/woff2', '.mp4': 'video/mp4' };
 const VENDOR = {
   '/vendor/xterm.js': path.join(ROOT, 'node_modules/@xterm/xterm/lib/xterm.js'),
   '/vendor/xterm.css': path.join(ROOT, 'node_modules/@xterm/xterm/css/xterm.css'),
   '/vendor/addon-fit.js': path.join(ROOT, 'node_modules/@xterm/addon-fit/lib/addon-fit.js'),
 };
-function serveFile(res, file) {
+function serveFile(res, file, req = null) {
   if (!fs.existsSync(file)) { res.writeHead(404); return res.end('not found'); }
+  // 영상(튜토리얼 덱 시연, v2.95)은 구간 요청(Range)을 받아야 재생 막대로 건너뛸 수 있다
+  const m = path.extname(file) === '.mp4' && /^bytes=(\d*)-(\d*)$/.exec(req?.headers?.range || '');
+  if (m) {
+    const size = fs.statSync(file).size; let a = m[1] === '' ? size - Number(m[2]) : Number(m[1]); let b = m[1] !== '' && m[2] !== '' ? Number(m[2]) : size - 1;
+    a = Math.max(0, a); b = Math.min(size - 1, b);
+    if (!(a <= b)) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+    res.writeHead(206, { 'Content-Type': 'video/mp4', 'Content-Range': `bytes ${a}-${b}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': b - a + 1, 'Cache-Control': 'no-store' });
+    return fs.createReadStream(file, { start: a, end: b }).pipe(res);
+  }
+  if (path.extname(file) === '.mp4') res.setHeader('Accept-Ranges', 'bytes');
   res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   fs.createReadStream(file).pipe(res);
 }
@@ -259,7 +269,7 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
   try {
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveFile(res, path.join(APP, 'index.html'));
-    if (req.method === 'GET' && p.startsWith('/app/')) return serveFile(res, path.join(APP, path.normalize(p.slice(5)).replace(/^([.][.][\\/])+/, '')));
+    if (req.method === 'GET' && p.startsWith('/app/')) return serveFile(res, path.join(APP, path.normalize(p.slice(5)).replace(/^([.][.][\\/])+/, '')), req);
     if (req.method === 'GET' && VENDOR[p]) return serveFile(res, VENDOR[p]);
     if (req.method === 'GET' && p === '/favicon.ico') { res.writeHead(204); return res.end(); }
     if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features() });
@@ -319,11 +329,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/handoff') return json(res, 200, handoff.info());
     // ---- 튜토리얼·온톨로지·도구(v2.90, 설계 = docs\설계-튜토리얼-2026-10-19.md). 쓰는 길은 전부 같은 출처만. ----
     if (req.method === 'GET' && p === '/api/tutorial') return json(res, 200, { ...handoff.info().tutorial, root: WS_ROOT, rootName: path.basename(WS_ROOT), leadAgent: handoff.info().leadAgent, year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
-    if (req.method === 'POST' && (p === '/api/tutorial/plan' || p === '/api/tutorial/structure' || p === '/api/tutorial/done' || p === '/api/ontology/rebuild' || p === '/api/open-folder')) {
+    if (req.method === 'GET' && p === '/api/tutorial/existing') return json(res, 200, listExisting(WS_ROOT)); // v2.95 다시 보기 = 이미 있는 R/D/P(읽기만)
+    if (req.method === 'POST' && (p === '/api/tutorial/plan' || p === '/api/tutorial/structure' || p === '/api/tutorial/done' || p === '/api/tutorial/prefs' || p === '/api/ontology/rebuild' || p === '/api/open-folder')) {
       if (!sameOrigin(req)) { log(`403 ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       const b = await readBody(req);
       if (p === '/api/tutorial/plan') return json(res, 200, planStructure(WS_ROOT, b.spec));
       if (p === '/api/tutorial/done') return json(res, 200, handoff.finishTutorial({ skipped: !!b.skipped }));
+      if (p === '/api/tutorial/prefs') return json(res, 200, handoff.setTutorialPrefs(b)); // v2.95 성별·보던 쪽
       if (p === '/api/tutorial/structure') {
         let r; try { r = createStructure(WS_ROOT, b.spec, { log }); } catch (e) { log(`tutorial structure 실패: ${e?.message || e}`); return json(res, 500, { ok: false, errors: [{ where: '', message: `폴더를 만들지 못했습니다: ${e?.message || e}` }] }); }
         if (!r.ok) return json(res, 400, r);

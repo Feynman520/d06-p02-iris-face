@@ -39,10 +39,47 @@ const nextCode = (dir, letter) => {
   for (let i = 1; i < 100; i++) if (!used.has(i)) return `${letter}${String(i).padStart(2, '0')}`;
   return null;
 };
-/** 같은 이름(번호 뒤)의 폴더가 이미 있으면 그 이름을 돌려준다 — 다시 만들지 않고 그 안에 더한다. */
-const existingSame = (dir, letter, rest) => {
-  try { return fs.readdirSync(dir, { withFileTypes: true }).find((d) => d.isDirectory() && new RegExp(`^${letter}\\d{2}(?:\\.\\d{2})?-`).test(d.name) && d.name.replace(/^[A-Z]\d{2}(?:\.\d{2})?-/, '') === rest)?.name || null; } catch { return null; }
+/** 폴더 이름 풀기: [〖그룹〗]코드-한글(영어) 〖태그〗… → { group, letter, code, ko, en, tags }. 위계 이름이 아니면 null. */
+export function parseFolder(name) {
+  const m = /^(〖[^〗]*〗)?([RDP])(\d{2}(?:\.\d{2})?)-(.+)$/.exec(String(name || ''));
+  if (!m) return null;
+  const rest = m[4], tags = [...rest.matchAll(/〖([^〗]*)〗/g)].map((x) => x[1]);
+  const ko = rest.replace(/〖[^〗]*〗/g, '').replace(/\(.*$/, '').trim();
+  const en = (/\(([^)]*)\)/.exec(rest.replace(/〖[^〗]*〗/g, '')) || [])[1] || '';
+  return { group: m[1] ? m[1].slice(1, -1) : '', letter: m[2], code: `${m[2]}${m[3]}`, ko, en, tags };
+}
+/**
+ * 같은 폴더 찾기(v2.95, 2026-10-23 사용자 결정): 번호를 뗀 **한글 이름**(+ 프로젝트는 기간 태그)이 같으면 같은 폴더 — 영어가 달라도 그 안에 더한다.
+ * (옛 규칙 = 번호 뒤 전체가 같아야 함 → 「담임」이 `D05-담임(Homeroom Teacher)` 옆에 `D10-담임(Homeroom)` 을 새로 만들었다.)
+ * 그룹 접두(〖교재〗D01)는 별개 번호 줄이라 대상에서 뺀다. 기간 아닌 태그가 붙은 폴더(〖화재〗 등)는 다른 폴더로 본다.
+ */
+const existingSame = (dir, letter, ko, period = '') => {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
+      .find((n) => { const f = parseFolder(n); return f && !f.group && f.letter === letter && f.ko === ko && f.tags.join('|') === (period || ''); }) || null;
+  } catch { return null; }
 };
+/** spec 의 `existing`(이미 있는 폴더 이름) 검사 — 그 부모 바로 아래 실제 폴더이고 위계 이름일 때만 그 이름을 돌려준다. */
+const existingNamed = (dir, letter, name) => {
+  const n = String(name || '');
+  if (!n || /[\\/]/.test(n) || n.startsWith('.') || parseFolder(n)?.letter !== letter) return null;
+  try { return fs.statSync(path.join(dir, n)).isDirectory() ? n : null; } catch { return null; }
+};
+
+/** 이미 있는 R/D/P 구조(읽기만, v2.95) — 튜토리얼 다시 보기가 「이미 있음」으로 깔아 둔다. 서랍·`_` 폴더·파일은 뺀다. */
+export function listExisting(root, { maxD = 40, maxP = 80 } = {}) {
+  const dirs = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort((a, b) => a.localeCompare(b, 'ko')); } catch { return []; } };
+  const pick = (d, letter) => dirs(d).map((n) => ({ n, f: parseFolder(n) })).filter((x) => x.f?.letter === letter)
+    .sort((a, b) => (a.f.group ? 1 : 0) - (b.f.group ? 1 : 0) || a.n.localeCompare(b.n, 'ko')); // 그룹 접두(〖교재〗D01) 묶음은 맨 아래
+  const roles = pick(root, 'R').filter((x) => !x.f.group).map(({ n, f }) => ({
+    name: n, code: f.code, ko: f.ko, tags: f.tags,
+    domains: pick(path.join(root, n), 'D').slice(0, maxD).map(({ n: dn, f: df }) => ({
+      name: dn, code: df.code, ko: df.ko, group: df.group, tags: df.tags,
+      projects: pick(path.join(root, n, dn), 'P').slice(0, maxP).map(({ n: pn, f: pf }) => ({ name: pn, code: pf.code, ko: pf.ko, tags: pf.tags })),
+    })),
+  }));
+  return { ok: true, roles };
+}
 
 /**
  * 질문·답 → 만들 폴더 계획(아직 아무것도 쓰지 않는다). 오류가 있으면 { ok:false, errors:[{where, message}] }.
@@ -52,11 +89,13 @@ export function planStructure(root, spec) {
   // v2.94: 역할 여러 개 = spec.roles:[{ko,en,domains}] — 한 번에 계획(새 역할끼리 번호가 겹치지 않게). 옛 모양 { role, domains } 도 그대로 받는다.
   if (Array.isArray(spec?.roles)) {
     if (!spec.roles.length) return { ok: false, errors: [{ where: 'roles', message: '역할을 하나 이상 골라 주세요.' }] };
-    if (spec.roles.length > LIMITS.roles) return { ok: false, errors: [{ where: 'roles', message: `역할은 ${LIMITS.roles}개까지 만들 수 있습니다.` }] };
+    // 상한은 **새 역할**에만(v2.95: 이미 있는 역할 안에 더하는 것은 세지 않는다 — 이 PC 처럼 역할이 13개여도 다시 보기에서 더할 수 있게)
+    if (spec.roles.filter((r) => !r?.existing).length > LIMITS.roles || spec.roles.length > 60) return { ok: false, errors: [{ where: 'roles', message: `역할은 ${LIMITS.roles}개까지 만들 수 있습니다.` }] };
     const errors = [], items = [], takenR = new Set(), seen = new Set();
     spec.roles.forEach((r, k) => {
-      if (r?.ko && seen.has(r.ko)) errors.push({ where: `roles.${k}.ko`, message: `역할 이름 "${r.ko}"이(가) 두 번 있습니다.` }); seen.add(r?.ko);
-      const one = planStructure(root, { role: { ko: r?.ko, en: r?.en }, domains: r?.domains, _takenR: takenR });
+      const key = r?.existing || r?.ko;
+      if (key && seen.has(key)) errors.push({ where: `roles.${k}.ko`, message: `역할 이름 "${r.ko || r.existing}"이(가) 두 번 있습니다.` }); seen.add(key);
+      const one = planStructure(root, { role: { ko: r?.ko, en: r?.en, existing: r?.existing }, domains: r?.domains, _takenR: takenR });
       if (!one.ok) errors.push(...one.errors.map((e) => ({ where: `roles.${k}.${e.where}`, message: `${r?.ko || `역할 ${k + 1}`}: ${e.message}` })));
       else items.push(...one.items);
     });
@@ -66,13 +105,18 @@ export function planStructure(root, spec) {
   const err = (where, message) => errors.push({ where, message });
   const role = spec?.role || {}; const domains = Array.isArray(spec?.domains) ? spec.domains : [];
   const chk = (v, lang, label, where) => { const m = checkName(v, { lang, label }); if (m) err(where, m); return !m; };
-  chk(role.ko, 'ko', '역할 이름', 'role.ko'); chk(role.en || '', 'en', '역할 영어 이름', 'role.en');
+  // v2.95: role/domain 의 `existing` = 이미 있는 폴더 이름(튜토리얼 다시 보기) — 이름 검사 대신 실제 폴더인지 본다
+  const rEx = role.existing ? existingNamed(root, 'R', role.existing) : null;
+  if (role.existing && !rEx) err('role.existing', `이미 있는 역할 폴더 "${role.existing}"을(를) 찾지 못했습니다.`);
+  if (!role.existing) { chk(role.ko, 'ko', '역할 이름', 'role.ko'); chk(role.en || '', 'en', '역할 영어 이름', 'role.en'); }
   if (!domains.length) err('domains', '영역을 하나 이상 적어 주세요.');
-  if (domains.length > LIMITS.domains) err('domains', `영역은 ${LIMITS.domains}개까지 만들 수 있습니다.`);
+  if (domains.filter((d) => !d?.existing).length > LIMITS.domains || domains.length > 60) err('domains', `영역은 ${LIMITS.domains}개까지 만들 수 있습니다.`);
   const seenD = new Set();
   domains.forEach((d, i) => {
-    chk(d?.ko, 'ko', `영역 ${i + 1} 이름`, `domains.${i}.ko`); chk(d?.en || '', 'en', `영역 ${i + 1} 영어 이름`, `domains.${i}.en`);
-    if (d?.ko && seenD.has(d.ko)) err(`domains.${i}.ko`, `영역 이름 "${d.ko}"이(가) 두 번 있습니다.`); seenD.add(d?.ko);
+    if (d?.existing) { if (rEx && !existingNamed(path.join(root, rEx), 'D', d.existing)) err(`domains.${i}.existing`, `이미 있는 영역 폴더 "${d.existing}"을(를) 찾지 못했습니다.`); }
+    else { chk(d?.ko, 'ko', `영역 ${i + 1} 이름`, `domains.${i}.ko`); chk(d?.en || '', 'en', `영역 ${i + 1} 영어 이름`, `domains.${i}.en`); }
+    const dk = d?.existing || d?.ko;
+    if (dk && seenD.has(dk)) err(`domains.${i}.ko`, `영역 이름 "${d.ko || d.existing}"이(가) 두 번 있습니다.`); seenD.add(dk);
     const ps = Array.isArray(d?.projects) ? d.projects : [];
     if (ps.length > LIMITS.projects) err(`domains.${i}.projects`, `영역 하나에 프로젝트는 ${LIMITS.projects}개까지입니다.`);
     const seenP = new Set();
@@ -83,24 +127,21 @@ export function planStructure(root, spec) {
     });
   });
   if (errors.length) return { ok: false, errors };
-  // 번호 매기기: 같은 이름이 이미 있으면 그 폴더를 쓴다(그 안에 더함), 없으면 비어 있는 첫 번호.
-  const rRest = folderName('X', role.ko, role.en).slice(2);
+  // 번호 매기기: 같은 한글 이름이 이미 있으면 그 폴더를 쓴다(그 안에 더함), 없으면 비어 있는 첫 번호.
   const takenR = spec?._takenR instanceof Set ? spec._takenR : new Set();
-  let rName = existingSame(root, 'R', rRest);
+  let rName = rEx || existingSame(root, 'R', role.ko);
   if (!rName) { let c = nextCode(root, 'R'); while (takenR.has(c)) c = `R${String(Number(c.slice(1)) + 1).padStart(2, '0')}`; takenR.add(c); rName = folderName(c, role.ko, role.en); }
   const rDir = path.join(root, rName);
-  items.push({ level: 'R', rel: rName, name: rName, ko: role.ko, exists: fs.existsSync(rDir) });
+  items.push({ level: 'R', rel: rName, name: rName, ko: role.ko || parseFolder(rName)?.ko || '', exists: fs.existsSync(rDir) });
   const takenD = new Set();
   for (const d of domains) {
-    const dRest = folderName('X', d.ko, d.en).slice(2);
-    let dName = existingSame(rDir, 'D', dRest);
+    let dName = (d.existing && existingNamed(rDir, 'D', d.existing)) || existingSame(rDir, 'D', d.ko);
     if (!dName) { let c = nextCode(rDir, 'D'); while (takenD.has(c)) c = `D${String(Number(c.slice(1)) + 1).padStart(2, '0')}`; takenD.add(c); dName = folderName(c, d.ko, d.en); }
     const dRel = path.join(rName, dName); const dDir = path.join(root, dRel);
-    items.push({ level: 'D', rel: dRel, name: dName, ko: d.ko, exists: fs.existsSync(dDir) });
+    items.push({ level: 'D', rel: dRel, name: dName, ko: d.ko || parseFolder(dName)?.ko || '', exists: fs.existsSync(dDir) });
     const takenP = new Set();
     for (const p of (d.projects || [])) {
-      const pRest = folderName('X', p.ko, p.en, p.period).slice(2);
-      let pName = existingSame(dDir, 'P', pRest);
+      let pName = existingSame(dDir, 'P', p.ko, p.period);
       if (!pName) { let c = nextCode(dDir, 'P'); while (takenP.has(c)) c = `P${String(Number(c.slice(1)) + 1).padStart(2, '0')}`; takenP.add(c); pName = folderName(c, p.ko, p.en, p.period); }
       const pRel = path.join(dRel, pName);
       items.push({ level: 'P', rel: pRel, name: pName, ko: p.ko, exists: fs.existsSync(path.join(root, pRel)) });
@@ -123,7 +164,8 @@ export function createStructure(root, spec, { log = () => {} } = {}) {
   for (const it of plan.items) {
     const dir = path.join(root, it.rel);
     if (!inside(root, dir)) return { ok: false, errors: [{ where: it.rel, message: '영혼 폴더 밖에는 만들 수 없습니다.' }] };
-    if (fs.existsSync(dir)) kept.push(it.rel); else { fs.mkdirSync(dir, { recursive: false }); created.push(it.rel); }
+    if (fs.existsSync(dir)) { kept.push(it.rel); continue; } // v2.95: 이미 있는 폴더 안에는 아무것도 쓰지 않는다(규칙 메모가 없어도 — 사람이 일부러 비워 둔 것일 수 있다)
+    fs.mkdirSync(dir, { recursive: false }); created.push(it.rel);
     for (const [file, body] of [['AGENTS.md', miniAgents(it.name, IDENTITY[it.level](it.ko))], ['CLAUDE.md', '@AGENTS.md\n']]) {
       const f = path.join(dir, file);
       if (fs.existsSync(f)) { guides.kept++; continue; }
@@ -164,6 +206,13 @@ export async function runOntology(root, { python, log = () => {}, timeoutMs = 18
     steps.push({ args: args.join(' '), code: r.code });
     log(`tutorial ontology ${args.join(' ')} → ${r.code}${r.code ? ` ${String(r.out).trim().slice(-300)}` : ''}`);
     if (r.code !== 0) return { ran: true, ok: false, steps };
+  }
+  // v2.95: 구조 화면(IRIS-온톨로지-뷰.html)도 그래프의 거울이라 함께 다시 그린다 — 도구가 없으면 건너뛴다(실패해도 폴더·그래프는 그대로)
+  const view = path.join(ont, 'render_view.py');
+  if (fs.existsSync(view)) {
+    const r = await runPy(python, [view], { cwd: root, env, timeoutMs });
+    steps.push({ args: 'render_view', code: r.code });
+    log(`tutorial ontology render_view → ${r.code}${r.code ? ` ${String(r.out).trim().slice(-300)}` : ''}`);
   }
   return { ran: true, ok: true, steps };
 }

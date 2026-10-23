@@ -53,14 +53,16 @@ window.OntologyView = (() => {
   const roles = () => data.nodes.filter(n => n.type === 'role' || (!n.parent && n.type !== 'role')).sort((a, b) => a.path.localeCompare(b.path, 'ko'));
 
   // ---------- 구조: 캐릭터 격자 ----------
-  function figHtml(n) {
+  // v2.95: 캐릭터 = 같은 사람의 8가지 모습(app/persona.js) — 역할 순서대로 1·2·3… 번 모습, 성별은 튜토리얼과 공용(state\tutorial.json)
+  function figHtml(n, i) {
     const d = countUnder(n.id, 'domain'), p = countUnder(n.id, 'project');
-    return `<button class="ps-fig${n.lifecycle && n.lifecycle !== 'active' ? ' dim' : ''}" type="button" data-role="${esc(n.id)}" title="${esc(n.name)}">${Persona.svg(short(n, 10), { sub: `영역 ${d} · 프로젝트 ${p}`, label: `${short(n)} — 영역 ${d}, 프로젝트 ${p}` })}<span class="ps-tag">${esc(codeOf(n))}${n.lifecycle && n.lifecycle !== 'active' ? ` · ${esc(LIFE[n.lifecycle] || n.lifecycle)}` : ''}</span></button>`;
+    return `<button class="ps-fig${n.lifecycle && n.lifecycle !== 'active' ? ' dim' : ''}" type="button" data-role="${esc(n.id)}" title="${esc(n.name)}">${Persona.pic(short(n, 10), { index: i, sub: `영역 ${d} · 프로젝트 ${p}`, label: `${short(n)} — 영역 ${d}, 프로젝트 ${p}` })}<span class="ps-tag">${esc(codeOf(n))}${n.lifecycle && n.lifecycle !== 'active' ? ` · ${esc(LIFE[n.lifecycle] || n.lifecycle)}` : ''}</span></button>`;
   }
+  const genderSw = () => `<span class="on-gsw">모습 ${[['m', '남성'], ['f', '여성']].map(([k, t]) => `<button type="button" class="text-btn${(Persona.gender() || 'm') === k ? ' accent' : ' outline'}" data-gender="${k}" aria-pressed="${(Persona.gender() || 'm') === k}">${t}</button>`).join('')}</span>`;
   function gridHtml() {
     const list = roles();
-    if (!list.length) return `<div class="ot-none">${Persona.svg('', { empty: true, placeholder: '나의 첫 역할' })}<p>아직 역할 폴더가 없습니다 — 설정 → 업데이트·정보 → 「튜토리얼 다시 보기」의 「내 폴더 만들기」로 첫 역할을 만들어 보세요.</p></div>`;
-    return `<div class="ps-pick ot-grid" id="ot-grid">${list.map(figHtml).join('')}</div><p class="on-help">캐릭터는 하나, 가슴의 명찰이 역할입니다. 누르면 그 역할 아래 영역·프로젝트가 나무로 펼쳐집니다.</p>`;
+    if (!list.length) return `<div class="ot-none">${Persona.pic('', { empty: true, placeholder: '나의 첫 역할' })}<p>아직 역할 폴더가 없습니다 — 설정 → 업데이트·정보 → 「튜토리얼 다시 보기」의 「내 폴더 만들기」로 첫 역할을 만들어 보세요.</p></div>`;
+    return `<div class="ps-pick ot-grid" id="ot-grid">${list.map(figHtml).join('')}</div><p class="on-help">같은 사람의 여러 모습 — 가슴의 명찰이 역할입니다. 누르면 그 역할 아래 영역·프로젝트가 나무로 펼쳐집니다. ${genderSw()}</p>`;
   }
   // ---------- 구조: 고른 역할의 트리 ----------
   const ICON_OPEN = () => Icons.svg('folder', 13);
@@ -77,7 +79,7 @@ window.OntologyView = (() => {
     const r = byId.get(role); if (!r) return '';
     const list = kids.get(r.id) || [];
     return `<div class="ot-stage"><div class="ot-side"><button class="text-btn outline ot-back" type="button" data-on="back" title="Esc">← 모든 역할</button>
-        <div class="ps-fig chosen ot-me" id="ot-me">${Persona.svg(short(r, 10), { sub: `영역 ${countUnder(r.id, 'domain')} · 프로젝트 ${countUnder(r.id, 'project')}` })}</div></div>
+        <div class="ps-fig chosen ot-me" id="ot-me">${Persona.pic(short(r, 10), { index: Math.max(0, roles().findIndex(x => x.id === r.id)), sub: `영역 ${countUnder(r.id, 'domain')} · 프로젝트 ${countUnder(r.id, 'project')}` })}</div></div>
       <div class="ot-main"><div class="ot-head"><div><div class="on-i-kind">${KIND.role}${r.lifecycle && r.lifecycle !== 'active' ? ` · ${esc(LIFE[r.lifecycle] || r.lifecycle)}` : ''}</div><div class="ot-title">${esc(r.name)}</div></div>
         <div class="ot-head-act">${ring(r)}<button class="text-btn accent" type="button" data-open="${esc(r.id)}">${ICON_OPEN()}폴더 열기</button></div></div>
         <div class="ot-tree" id="ot-tree" role="tree" aria-label="${esc(short(r))} 아래 폴더">${list.length ? list.map(k => rowHtml(k, 0)).join('') : '<div class="on-empty">아직 이 역할 아래 영역이 없습니다.</div>'}</div></div></div>`;
@@ -203,6 +205,7 @@ window.OntologyView = (() => {
     if (busy) return; if (loaded && !force) { render(); return; }
     busy = true; data = null; render();
     try { data = await (await fetch('/api/ontology/graph')).json(); } catch { data = { ok: false, reason: 'unreadable' }; }
+    try { await Persona.ready; } catch {} // 그림의 명찰 자리·성별을 먼저 안다
     loaded = true; busy = false; render();
   }
   async function rebuild() {
@@ -253,6 +256,7 @@ window.OntologyView = (() => {
       if (b === 'back') return back();
       if (b === 'rel-all') { relFocus = null; return paintRelation(); }
       if (t.closest('#on-rebuild')) return rebuild();
+      const gs = t.closest('[data-gender]'); if (gs) { Persona.setGender(gs.dataset.gender).then(() => paintStructure()); return; }
       const fig = t.closest('.ps-fig[data-role]');
       if (fig) {
         const grid = $('#ot-grid', host), from = fig.getBoundingClientRect();
@@ -297,6 +301,7 @@ window.OntologyView = (() => {
         <div class="on-sum"><span id="on-sum"></span><span id="on-status" class="on-dim"></span></div>
         <div id="on-body" class="on-body"></div>`;
       bind();
+      window.addEventListener('iris:persona-gender', () => { if (loaded && data?.ok && mode === 'structure') paintStructure(); }); // 튜토리얼에서 바꿔도 같은 그림
     }
     load();
   }
