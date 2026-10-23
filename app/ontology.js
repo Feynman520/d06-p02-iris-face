@@ -53,7 +53,7 @@ window.OntologyView = (() => {
   const roles = () => data.nodes.filter(n => n.type === 'role' || (!n.parent && n.type !== 'role')).sort((a, b) => a.path.localeCompare(b.path, 'ko'));
 
   // ---------- 구조: 캐릭터 격자 ----------
-  // v2.95: 캐릭터 = 같은 사람의 8가지 모습(app/persona.js) — 역할 순서대로 1·2·3… 번 모습, 성별은 튜토리얼과 공용(state\tutorial.json)
+  // v2.95: 캐릭터 = 같은 사람의 20가지 모습(app/persona.js) — 역할 순서대로 1·2·3… 번 모습, 성별은 튜토리얼과 공용(state\tutorial.json)
   function figHtml(n, i) {
     const d = countUnder(n.id, 'domain'), p = countUnder(n.id, 'project');
     return `<button class="ps-fig${n.lifecycle && n.lifecycle !== 'active' ? ' dim' : ''}" type="button" data-role="${esc(n.id)}" title="${esc(n.name)}">${Persona.pic(short(n, 10), { index: i, sub: `영역 ${d} · 프로젝트 ${p}`, label: `${short(n)} — 영역 ${d}, 프로젝트 ${p}` })}<span class="ps-tag">${esc(codeOf(n))}${n.lifecycle && n.lifecycle !== 'active' ? ` · ${esc(LIFE[n.lifecycle] || n.lifecycle)}` : ''}</span></button>`;

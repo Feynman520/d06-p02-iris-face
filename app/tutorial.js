@@ -4,7 +4,7 @@
    · 본문 = 연수 「교사를 위한 에이전트」 덱을 **거의 그대로**(app/tutorial/deck/ = scripts/build-tutorial-deck.py 결과, 40쪽 — 강사 소개 1쪽만 뺌).
      덱은 그림자 DOM(.tu-deck) 안에 원본 CSS 그대로 그리고 판 크기에 맞춰 줄인다. 덱 사이에 IRIS 장면 3개: 26쪽 뒤 「내 폴더 만들기」 · 38쪽 뒤 「IRIS 사용법」 · 맨 끝 「첫 대화 해 보기」.
    · 머리 = 장 7개 원(시작·에이전트·지도·소환·3가지·실습·마무리) + 쪽수 + 「처음부터」 + ×(닫기 = 옛 「나중에 하기」, 폴더를 쓰던 중이면 한 번 묻는다). Esc 는 닫지 않는다.
-   · 다시 보기 = 보던 쪽에서 이어서(state\tutorial.json step). 역할 그림 = 같은 사람 8모습(app/persona.js, 성별 = state\tutorial.json gender).
+   · 다시 보기 = 보던 쪽에서 이어서(state\tutorial.json step). 역할 그림 = 같은 사람 20모습(app/persona.js, 성별 = state\tutorial.json gender).
    · 내 폴더: 역할이 이미 있으면(다시 보기) 실제 R/D/P 를 「이미 있음」으로 잠가 깔고 새 줄만 더한다. 「다음」 잠금은 역할 폴더가 하나도 없던 첫 실행에만.
    데몬: GET /api/tutorial · GET /api/tutorial/existing · POST /api/tutorial/{plan,structure,done,prefs} · POST /api/open-folder · GET /api/relay/ready. 설계 = docs\설계-튜토리얼-2026-10-19.md */
 window.Tutorial = (() => {
@@ -69,7 +69,9 @@ window.Tutorial = (() => {
   const slides = () => [...($('.tu-deck', el())?.shadowRoot?.querySelectorAll('section.slide') || [])];
   function pauseVideos() { for (const v of $('.tu-deck', el())?.shadowRoot?.querySelectorAll('video') || []) try { v.pause(); } catch {} }
   function showSlide(no) {
-    for (const s of slides()) { const on = +s.dataset.no === no; if (!on && s.classList.contains('on')) s.querySelectorAll('video').forEach(v => { try { v.pause(); } catch {} }); s.classList.toggle('on', on); }
+    let blue = false;
+    for (const s of slides()) { const on = +s.dataset.no === no; if (!on && s.classList.contains('on')) s.querySelectorAll('video').forEach(v => { try { v.pause(); } catch {} }); s.classList.toggle('on', on); if (on) blue = s.classList.contains('cobalt'); }
+    $('.tu-deck', el())?.classList.toggle('blue', blue); // 원본 발표의 body.blue 와 같이 파란 장이면 무대 밖 여백도 파랗게
     fitDeck();
   }
 
@@ -138,7 +140,7 @@ window.Tutorial = (() => {
       <div class="tu-rg">${roles.map((r, i) => `<div class="tu-rc${hasNew(r) ? ' filled' : ''}${r.existing ? ' exist' : ''}" data-role="${i}" role="button" tabindex="0" aria-label="${esc(r.ko)} 역할 ${r.existing ? '보기·더하기' : '채우기'}">${r.existing ? '<span class="tu-rex">이미 있음</span>' : `<button class="tu-rx" type="button" data-rx="${i}" title="${esc(r.ko)} 빼기" aria-label="${esc(r.ko)} 역할 빼기">${X}</button>`}
           <div class="ps-fig ps-turned">${Persona.pic(r.ko, { index: i, sub: hasNew(r) ? newCounts(r) : r.existing ? counts(r) : '눌러서 채우기' })}</div>${hasNew(r) ? `<span class="tu-rok">${CHECK}</span>` : ''}</div>`).join('')}
         ${adding ? `<div class="tu-rc tu-radd on"><span class="tu-plus">+</span><input class="tu-in" id="tu-newrole" maxlength="30" placeholder="역할 이름(예: 교무부장)" spellcheck="false" autocomplete="off"><div class="tu-btns"><button class="tu-btn sm" data-act="add-cancel" type="button">취소</button><button class="tu-btn sm accent" data-act="add-ok" type="button">추가</button></div></div>`
-          : nNew < 8 ? `<button class="tu-rc tu-radd" type="button" data-act="add-role"><span class="tu-plus">+</span><b>역할 추가</b><small>직접 이름 짓기</small></button>` : ''}</div>
+          : nNew < 20 ? `<button class="tu-rc tu-radd" type="button" data-act="add-role"><span class="tu-plus">+</span><b>역할 추가</b><small>직접 이름 짓기</small></button>` : ''}</div>
       ${makeBar(any ? `<b>${roles.filter(hasNew).map(r => esc(r.ko)).join(' · ')}</b> ${roles.filter(hasNew).length}개 역할 · 확인한 뒤 만들${firstRun ? '어야 다음으로 넘어갑니다' : '면 됩니다'}` : firstRun ? '역할 캐릭터를 눌러 영역·프로젝트를 적어 주세요' : '새로 더할 것이 없으면 그냥 「다음」으로 넘어가세요', !any)}
       ${undo ? `<div class="tu-toast">「${esc(undo.role.ko)}」 역할을 뺐습니다 <button type="button" data-act="undo">되돌리기</button></div>` : ''}`;
   }

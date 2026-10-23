@@ -83,7 +83,10 @@ def main():
 
     # ---- CSS: 원본 <style> → 그림자 DOM 용 ----
     css = re.search(r"<style>(.*?)</style>", raw, re.S).group(1)
-    css = re.sub(r"@font-face\{[^}]*\}", "", css, count=1)
+    # 글꼴 선언 지우기 — 선언 안의 {{FONT}} 자리표시에도 } 가 있어 [^}]* 로 자르면 찌꺼기가 남고 다음 줄(:root 색 변수)이 통째로 무효가 된다(v2.95 흰 글자 결함)
+    css, nf = re.subn(r"@font-face\{(?:\{\{FONT\}\}|[^{}])*\}", "", css, count=1)
+    if nf != 1 or "@font-face" in css or "format('woff2')" in css:
+        sys.exit("원본 CSS 의 글꼴 선언을 깨끗이 지우지 못했습니다")
     reps = [
         (r":root\{", ":host{"),
         (r"html,body\{[^}]*\}", ":host{display:block;position:relative;overflow:hidden;background:var(--white);font-family:'IRIS Deck KR','Malgun Gothic',sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}"),
@@ -98,7 +101,11 @@ def main():
             sys.exit(f"CSS 규칙을 찾지 못했습니다: {pat}")
     if re.search(r"\b(html|body)\b", css):
         sys.exit("CSS 에 html/body 규칙이 남았습니다")
-    css += "\n/* IRIS 튜토리얼 덧붙임: 영상은 누를 때만 재생 · 쪽 넘김 효과는 원본 그대로 */\n.vid{background:#0b0f1c}\n"
+    if not re.match(r"\s*:host\{--blue:", css) or css.count("{") != css.count("}"):  # 색 변수 줄이 맨 앞에 온전히 · 괄호 짝
+        sys.exit("CSS 머리(:host 색 변수)가 온전하지 않습니다")
+    css += ("\n/* IRIS 튜토리얼 덧붙임: 영상은 누를 때만 재생 · 쪽 넘김 효과는 원본 그대로 */\n.vid{background:#0b0f1c}\n"
+            "/* 판이 원본의 약 0.55배라 원본에서도 흐린 글자 두 곳만 진하게(명암비 2.4·2.3 → 3.5 이상, 2026-10-23 사용자 \"잘 보이도록\") — scripts/check-deck.mjs READABLE 과 같은 값 */\n"
+            ".track{color:#7A8399}\n.bchip i.f{background:#6A86F0}\n")
     (OUT / "deck.css").write_text(css.strip() + "\n", encoding="utf-8", newline="\n")
 
     # ---- 쪽 ----

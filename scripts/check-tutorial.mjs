@@ -64,8 +64,10 @@ ok(folderName('R01', '교사', 'Teacher') === 'R01-교사(Teacher)' && folderNam
   const e = planStructure(r, { roles: [{ existing: 'R01-교사(Teacher)', domains: [{ existing: 'D03-인지 시스템 〖화재〗', projects: [{ ko: '열화상', period: '2026년' }] }] }] });
   ok(e.ok && e.items.map(i => i.rel).join('|') === 'R01-교사(Teacher)|R01-교사(Teacher)\\D03-인지 시스템 〖화재〗|R01-교사(Teacher)\\D03-인지 시스템 〖화재〗\\P01-열화상 〖2026년〗' && e.items[0].exists && e.items[1].exists && !e.items[2].exists, '1b existing = 실제 폴더 이름으로 그 안에(태그 붙은 영역도)');
   ok(!planStructure(r, { roles: [{ existing: '..\\밖', domains: [{ ko: '수업' }] }] }).ok && !planStructure(r, { roles: [{ existing: 'R01-교사(Teacher)', domains: [{ existing: 'D99-없음', projects: [{ ko: 'x' }] }] }] }).ok, '1b existing 이 실제 폴더가 아니거나 경로를 벗어나면 오류');
-  const many = planStructure(r, { roles: [...Array(9)].map((_, i) => ({ existing: i < 2 ? ['R01-교사(Teacher)', 'R02-연구원(Researcher)'][i] : undefined, ko: i < 2 ? '' : `역할${'가나다라마바사'[i - 2]}`, domains: [{ ko: '영역' }] })) });
-  ok(many.ok, `1b 역할 상한(8)은 새 역할에만 — 이미 있는 2 + 새 7 = 통과 (${many.errors?.[0]?.message || ''})`);
+  const NAMES = '가나다라마바사아자차카타파하거너더러머버서어저처'; // 새 역할 이름용 한 글자
+  const rolesOf = (nNew) => [...Array(2 + nNew)].map((_, i) => ({ existing: i < 2 ? ['R01-교사(Teacher)', 'R02-연구원(Researcher)'][i] : undefined, ko: i < 2 ? '' : `역할${NAMES[i - 2]}`, domains: [{ ko: '영역' }] }));
+  const many = planStructure(r, { roles: rolesOf(20) }), tooMany = planStructure(r, { roles: rolesOf(21) });
+  ok(many.ok && !tooMany.ok && /20개까지/.test(tooMany.errors[0].message), `1b 역할 상한(20, v2.95.1)은 새 역할에만 — 이미 있는 2 + 새 20 = 통과 · 새 21 = 거절 (${many.errors?.[0]?.message || ''})`);
   const ls = listExisting(r);
   const t1 = ls.roles.find(x => x.name === 'R01-교사(Teacher)');
   ok(ls.ok && ls.roles.length === 2 && t1.ko === '교사' && t1.domains.map(d => d.name).join('|') === 'D03-인지 시스템 〖화재〗|D05-담임(Homeroom Teacher)|〖교재〗D01-수업' && t1.domains[2].group === '교재', `1b 기존 구조 읽기 = R·D(그룹 접두는 맨 아래)·P (${t1?.domains.map(d => d.name).join('|')})`);
@@ -184,12 +186,12 @@ else {
     const banned = ['avatar', 'QR:card', ...(fs.existsSync(bannedF) ? fs.readFileSync(bannedF, 'utf8').split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#')) : [])];
     const hit = banned.filter(w => textFiles.toLowerCase().includes(w.toLowerCase()));
     ok(!hit.length && /IRIS 시작하기 · 약 18분/.test(slidesHtml) && /MIT 허가서/.test(slidesHtml) && !/감사합니다/.test(slidesHtml), `6 덱 = 개인·학교 낱말 ${banned.length}개 중 0건 · 표지·18쪽·41쪽 고친 문구${hit.length ? ` (발견 ${hit.length}개)` : ''}`);
-    const assetOk = []; for (const u of ['deck/deck.css', 'deck/slides.html', 'deck/deck-kr.woff2', 'deck/img/01.webp', 'deck/video/door1.mp4', 'people/people.json', ...['m', 'f'].flatMap(g => [1, 2, 3, 4, 5, 6, 7, 8].map(n => `people/${g}${n}.webp`))]) { const r = await fetch(`${A}/app/tutorial/${u}`); assetOk.push(r.ok ? '' : u); }
-    ok(assetOk.every(x => !x), `6 덱 파일·사람 그림 16장 내보냄 (${assetOk.filter(Boolean).join(',')})`);
+    const assetOk = []; for (const u of ['deck/deck.css', 'deck/slides.html', 'deck/deck-kr.woff2', 'deck/img/01.webp', 'deck/video/door1.mp4', 'people/people.json', ...['m', 'f'].flatMap(g => [...Array(20)].map((_, n) => `people/${g}${n + 1}.webp`))]) { const r = await fetch(`${A}/app/tutorial/${u}`); assetOk.push(r.ok ? '' : u); }
+    ok(assetOk.every(x => !x), `6 덱 파일·사람 그림 40장(남녀 20모습) 내보냄 (${assetOk.filter(Boolean).join(',')})`);
     const rg = await fetch(`${A}/app/tutorial/deck/video/door1.mp4`, { headers: { Range: 'bytes=0-99' } });
     ok(rg.status === 206 && /^bytes 0-99\/\d+$/.test(rg.headers.get('content-range') || '') && (await rg.arrayBuffer()).byteLength === 100 && rg.headers.get('content-type') === 'video/mp4', `6 영상 = 구간 요청(Range) 206 (${rg.status} ${rg.headers.get('content-range')})`);
     const peopleJ = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'tutorial', 'people', 'people.json'), 'utf8'));
-    ok(Object.keys(peopleJ.people).length === 16 && Object.values(peopleJ.people).every(v => Array.isArray(v.badge) && v.badge[0] > .5 && v.badge[0] < .8 && v.badge[1] > .5 && v.badge[1] < .8), '6 사람 그림 16장 모두 명찰 자리(가슴 오른쪽) 있음');
+    ok(Object.keys(peopleJ.people).length === 40 && Object.values(peopleJ.people).every(v => Array.isArray(v.badge) && v.badge[0] > .5 && v.badge[0] < .8 && v.badge[1] > .5 && v.badge[1] < .8), `6 사람 그림 40장 모두 명찰 자리(가슴 오른쪽) 있음 (${Object.entries(peopleJ.people).filter(([, v]) => !v.badge).map(([k]) => k).join(',')})`);
     const bg = await p.evaluate(() => getComputedStyle(document.querySelector('.tu-panel')).backgroundColor);
     ok(bg === 'rgb(249, 250, 255)', `6 판 = 밝은 판(연수 슬라이드 색, 테마와 무관) (${bg})`);
     const brand = await p.evaluate(() => ({ f: getComputedStyle(document.querySelector('.tu-word')).fontFamily, w: getComputedStyle(document.querySelector('#wordmark')).fontFamily, t: [...document.querySelectorAll('.tu-brand > span')].map(e => e.textContent.trim()).filter(Boolean).join(' '), mark: !!document.querySelector('.tu-mark *') }));
@@ -205,11 +207,17 @@ else {
     const fit = await p.evaluate(() => { const h = document.querySelector('.tu-deck'), st = h.shadowRoot.getElementById('stage').getBoundingClientRect(), hb = h.getBoundingClientRect(); return { w: st.width, h: st.height, hw: hb.width, hh: hb.height, font: getComputedStyle(h.shadowRoot.querySelector('h1')).fontFamily }; });
     ok(Math.abs(fit.w / fit.h - 16 / 9) < .01 && fit.w <= fit.hw + 1 && fit.h <= fit.hh + 1 && (Math.abs(fit.w - fit.hw) < 2 || Math.abs(fit.h - fit.hh) < 2) && /IRIS Deck KR/.test(fit.font), `6 덱 무대 16:9 를 판에 맞춰 줄임 (${Math.round(fit.w)}×${Math.round(fit.h)} / 판 ${Math.round(fit.hw)}×${Math.round(fit.hh)}) · 글꼴 ${fit.font.split(',')[0]}`);
     ok(await p.evaluate((ws) => { const t = document.querySelector('.tu-deck').shadowRoot.innerHTML.toLowerCase(); return ws.every(w => !t.includes(w.toLowerCase())); }, banned) && (await p.locator('[data-nav="later"]').count()) === 0 && await p.locator('.tu-x').isVisible(), '6 화면의 덱에도 금지 낱말 없음 · 아래 「나중에 하기」 없음 · 오른쪽 위 ×');
+    // v2.95.1: 원본 CSS 의 색 변수가 그림자 DOM 안에서 실제로 적용되는지(글꼴 선언 찌꺼기로 :root 색 줄이 통째로 무효 → 파란 장 바탕이 사라져 흰 글자가 안 보였던 결함)
+    const vars = await p.evaluate(() => { const h = document.querySelector('.tu-deck'), sr = h.shadowRoot, s1 = sr.querySelector('section.slide.on'), bl = s1.querySelector('.bl'); return { blue: getComputedStyle(h).getPropertyValue('--blue').trim(), bg: getComputedStyle(s1).backgroundColor, accent: bl ? getComputedStyle(bl).color : '', css: sr.querySelector('style').textContent.slice(0, 12) }; });
+    ok(vars.blue === '#2149EF' && vars.bg === 'rgb(249, 250, 255)' && vars.accent === 'rgb(33, 73, 239)' && vars.css === ':host{--blue', `6 덱 색 변수 적용(--blue ${vars.blue} · 바탕 ${vars.bg} · 강조 글자 ${vars.accent})`);
     await shot('01');
     await p.keyboard.press('ArrowRight'); await sleep(300);
     ok(await pno() === '2 / 43' && (await onSlide())?.no === 2 && /이렇게 둘러봅니다/.test((await onSlide()).text) && await p.locator('[data-nav="restart"]').isVisible(), '6 → 키 = 다음 쪽(2쪽 「이렇게 둘러봅니다」) · 「처음부터」 보임');
     await p.keyboard.press('ArrowLeft'); await sleep(200);
     ok(await pno() === '1 / 43', '6 ← 키 = 앞 쪽');
+    await p.locator('.tu-steps li[data-chap="agent"]').click(); await sleep(1600);
+    const cob = await p.evaluate(() => { const h = document.querySelector('.tu-deck'), s = h.shadowRoot.querySelector('section.slide.on'); const em = s.querySelector('.eyebrow em'); return { no: +s.dataset.no, cls: s.className, bg: getComputedStyle(s).backgroundColor, host: h.classList.contains('blue'), em: em ? [getComputedStyle(em).color, getComputedStyle(em).backgroundColor] : null }; });
+    ok(cob.no === 3 && /cobalt/.test(cob.cls) && cob.bg === 'rgb(33, 73, 239)' && cob.host, `6 파란 장(3쪽 1부 표지) = 파란 바탕 위 흰 글자 · 무대 밖 여백도 파랑 (${cob.bg} · 여백 ${cob.host} · ${JSON.stringify(cob.em)})`);
     await p.locator('.tu-steps li[data-chap="doors"]').click(); await sleep(300);
     const s13 = await onSlide(); await shot('13');
     ok(s13?.no === 13 && await pno() === '13 / 43', `6 장 원 누르기 = 그 장 첫 쪽(소환 = 13쪽) (${s13?.no})`);

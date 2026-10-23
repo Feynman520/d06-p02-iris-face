@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 // ---------------- 폴더 만들기 ----------------
-export const LIMITS = Object.freeze({ roles: 8, domains: 5, projects: 5, ko: 30, en: 40 });
+export const LIMITS = Object.freeze({ roles: 20, domains: 5, projects: 5, ko: 30, en: 40 }); // v2.95.1: 새 역할 8 → 20(역할 그림 20모습과 같게)
 const BAD_CHARS = /[\\/:*?"<>|[\]{}()〖〗\u0000-\u001f]/;
 const HAN_KANA = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/; // IRIS 폴더 이름은 한글·영어뿐(전역 경로 가드와 같은 규칙)
 const RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;

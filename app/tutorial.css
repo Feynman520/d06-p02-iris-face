@@ -35,7 +35,8 @@
 .tu .tu-x:hover { color: #fff; background: #d6453d; border-color: #d6453d; }
 /* 무대 = 덱(그림자 DOM, 1920×1080 을 줄여 가운데) 또는 IRIS 장면 */
 .tu-stage { position: relative; flex: 1; min-height: 0; display: flex; }
-.tu-deck { position: absolute; inset: 0; overflow: hidden; background: #F9FAFF; }
+.tu-deck { position: absolute; inset: 0; overflow: hidden; background: #F9FAFF; transition: background-color .55s ease; }
+.tu-deck.blue { background: #2149EF; } /* 원본 덱의 body.blue(파란 장 = 화면 전체 파랑) */
 .tu-deck[hidden], .tu-body[hidden] { display: none; }
 /* 몸통 = 왼쪽 글 | 오른쪽 그림 + 아래 요점 띠 */
 .tu-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 40px; padding: 34px 46px 84px; align-items: center; }

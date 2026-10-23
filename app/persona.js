@@ -1,11 +1,11 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-/* 역할 캐릭터(v2.95, 2026-10-23 사용자 결정 — v2.91 「별빛의 분신」 SVG 를 대체): **같은 사람 한 명의 8가지 모습** 그림.
-   남성·여성 중 하나만 고르면(state\tutorial.json gender, 튜토리얼 ⑤·설정 온톨로지 공용) 역할 순서대로 1·2·3… 번 모습을 쓴다(9번째부터 다시 1번).
-   그림 = app/tutorial/people/{m,f}{1..8}.webp(직업 소품 없음 · 명찰은 비어 있음) · 명찰 자리 = people.json(비율 좌표) — 그 자리에 역할 이름표를 얹는다.
+/* 역할 캐릭터(v2.95, 2026-10-23 사용자 결정 — v2.91 「별빛의 분신」 SVG 를 대체): **같은 사람 한 명의 20가지 모습** 그림(v2.95.1 에 8 → 20).
+   남성·여성 중 하나만 고르면(state\tutorial.json gender, 튜토리얼 ⑤·설정 온톨로지 공용) 역할 순서대로 1·2·3… 번 모습을 쓴다(21번째부터 다시 1번).
+   그림 = app/tutorial/people/{m,f}{1..20}.webp(직업 소품 없음 · 명찰은 비어 있음) · 명찰 자리 = people.json(비율 좌표) — 그 자리에 역할 이름표를 얹는다.
    그림 원본·자르기 = docs\튜토리얼그림-원본\역할시안-2026-10-23 · tool_cut_people.py. 움직임(숨쉬기·걷기)은 persona.css, 담는 상자에 .ps-live 가 있을 때만. */
 window.Persona = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const N = 8, BASE = '/app/tutorial/people';
+  const N = 20, BASE = '/app/tutorial/people'; // v2.95.1: 8 → 20모습(역할이 많은 사람도 겹치지 않게)
   let gender = null, badges = {};
   // 명찰 자리(비율) — people.json 이 오기 전·없을 때의 기본값(16장 모두 가슴 오른쪽 이 근처)
   const DEF = [0.655, 0.662];
