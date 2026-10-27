@@ -23,10 +23,14 @@ export const PART_NAMES = ['face', 'messenger', 'package'];   // 화면에 보�
 export const APPLY_ORDER = ['package', 'face', 'messenger'];  // 적용 차례(설계 1절)
 export const MESSENGER_MODULE = 'messenger';
 const GH = (repo) => `https://api.github.com/repos/${repo}/releases/latest`;
+/** 구조판 첨부 이름: 같은 릴리스에 Windows zip 과 macOS zip 이 함께 붙는다 — 이 기계의 것만 고른다(P03 build/pack.mjs 의 이름). */
+export function packageAssetPattern(platform = process.platform) {
+  return platform === 'darwin' ? '^IRIS-Setup-macOS-arm64_v.*\\.zip$' : '^IRIS-Setup_v.*\\.zip$';
+}
 /** 부품별 릴리스 원천(설계 1절). messenger 는 카탈로그(daemon/catalog.json)의 규칙을 그대로 쓴다. */
 export const PART_SOURCE = {
   face: { api: GH('Feynman520/d06-p02-iris-face'), asset: '^iris-face-v.*\\.zip$' },
-  package: { api: GH('Feynman520/d09-p03-iris-installer'), asset: '^IRIS-Setup_v.*\\.zip$' },
+  package: { api: GH('Feynman520/d09-p03-iris-installer'), asset: packageAssetPattern() },
 };
 /** 부품별 내려받기 상한 — 구조판은 동봉 런타임까지 들어 있어 수백 MB 다. */
 export const PART_LIMITS = {
