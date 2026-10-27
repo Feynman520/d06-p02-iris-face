@@ -279,6 +279,7 @@ else {
     await p.locator('#tu-make').click(); await sleep(150); await p.locator('[data-m="yes"]').click();
     await p.waitForSelector('#tu-made', { timeout: 30000 }).catch(() => {});
     ok(/새 폴더 5개를 만들었습니다/.test(await p.locator('#tu-made').textContent().catch(() => '')) && !(await p.locator('[data-nav="next"]').isDisabled()), '6 「이대로 만들기」 = 새 폴더 5개 · 「다음」 열림');
+    ok((await p.locator('#tu-made [data-open]').getAttribute('data-open').catch(() => '')) === 'R01-교사(Teacher)', '6 v2.96 만든 뒤 「폴더 열기」 = 새 역할 폴더(탐색기는 시험에서 누르지 않음)');
     const pDir = fs.readdirSync(path.join(soulR, 'R01-교사(Teacher)', 'D01-수업(Teaching)'), { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort();
     ok(/^P01-물리학\(Physics\) 〖\d{4}년\.2학기〗$/.test(pDir[0]) && pDir[1] === 'P02-과학탐구실험' && fs.existsSync(path.join(soulR, 'R01-교사(Teacher)', 'D01-수업(Teaching)', pDir[0], 'AGENTS.md')), `6 디스크에 실제 폴더 + 규칙 메모 (${pDir.join(' | ')})`);
     await shot('27-made');
@@ -473,13 +474,49 @@ else {
     const chip = await p.locator('#tu-tree .tu-tr.lv2:not(.ro) .tu-exist').textContent().catch(() => '');
     ok(/D02-담임\(Homeroom\)/.test(chip), `7 새로 적은 「담임」 = 이미 있는 D02-담임 으로 들어감(새 폴더 아님) (${chip})`);
     await shot('r-tree');
-    await p.locator('.tu-x').click(); await sleep(250);
-    ok(await p.locator('.tu-modal').isVisible() && /튜토리얼을 닫을까요/.test(await p.locator('.tu-mbox').textContent()), '7 적던 폴더 계획이 있으면 × = 한 번 묻는다');
+    const dCount = () => fs.readdirSync(path.join(soulR, 'R01-교사(Teacher)')).filter(n => /^D/.test(n)).length;
+    const buildNo = await pno();
+    await p.locator('[data-nav="next"]').click(); await sleep(500);
+    ok(!(await p.locator('.tu-modal').count()) && await pno() !== buildNo, '7 v2.96: 새로 생길 폴더가 0개(모두 이미 있음)면 「다음」에 묻지 않는다');
+    await p.locator('[data-nav="prev"]').click(); await sleep(400);
+    if (!(await p.locator('#tu-tree').count())) { await p.locator('.tu-rc.exist').first().click(); await sleep(400); }
+    await p.locator('.tu-tadd[data-add="d"]').click(); await p.keyboard.type('연수'); await sleep(900);
+    // v2.96(2026-10-27 신고): 잠금 없는 다시 보기에서 나무만 적고 「다음」 → 폴더가 안 생기던 것 — 이제 지나가기 전에 묻는다
+    await p.locator('[data-nav="next"]').click(); await sleep(500);
+    const lv = await p.locator('.tu-mbox').textContent().catch(() => '');
+    ok(/아직 만들지 않았어요/.test(lv) && /D03-연수\(Training\)/.test(lv) && (await p.locator('.tu-mbox [data-m]').count()) === 3 && await pno() === buildNo, `7 만들지 않은 계획 + 「다음」 = 확인 창(새 폴더 이름 · 돌아가기/안 만들고/만들고) (${lv.replace(/\s+/g, ' ').slice(0, 80)})`);
+    await shot('r-leave-ask');
+    await p.locator('[data-m="no"]').click(); await sleep(150);
+    ok(!(await p.locator('.tu-modal').count()) && await pno() === buildNo && dCount() === 2, '7 「돌아가기」 = 내 폴더 그대로 · 아무것도 만들지 않음');
+    await p.keyboard.press('ArrowRight'); await sleep(500);
+    ok(await p.locator('.tu-modal').isVisible(), '7 → 키로 지나가도 같은 확인 창');
+    await p.locator('[data-m="skip"]').click(); await sleep(300);
+    ok(await pno() !== buildNo && dCount() === 2, '7 「안 만들고 넘어가기」 = 다음 장면 · 폴더 없음');
+    for (let i = 0; i < 30 && await pno() !== '43 / 43'; i++) { await p.locator('[data-nav="next"]').click(); await sleep(120); }
+    const fopts = await p.locator('#tu-fc-folder option').evaluateAll(os => os.map(o => o.value));
+    ok(await p.locator('.tu-first .tu-made.warn [data-act="to-build"]').isVisible() && fopts.includes('') && fopts.includes('R01-교사(Teacher)\\D01-수업(Teaching)') && (await p.locator('[data-act="open-sel"]').count()) === 1, `7 마지막 장면 = 「아직 만들지 않았어요」 + 되돌아가기 · 폴더 고르기에 있던 폴더도 · 「폴더 열기」 (${fopts.slice(0, 4).join(' | ')})`);
+    await shot('r-finish-left');
+    await p.locator('[data-act="to-build"]').click(); await sleep(400);
+    ok(await pno() === buildNo && (await p.locator('#tu-tree input[data-k]').evaluateAll(xs => xs.map(x => x.value))).includes('연수'), '7 「내 폴더로 돌아가 만들기」 = 내 폴더 · 적던 계획 그대로');
+    await p.locator('.tu-x').click(); await sleep(500);
+    ok(await p.locator('.tu-modal').isVisible() && /튜토리얼을 닫을까요/.test(await p.locator('.tu-mbox').textContent()) && (await p.locator('.tu-mbox [data-m="make"]').count()) === 1, '7 적던 폴더 계획이 있으면 × = 한 번 묻는다(만들고 닫기도)');
     await shot('r-close-ask');
     await p.locator('[data-m="no"]').click(); await sleep(150);
     ok(await p.locator('#tutorial').isVisible() && !(await p.locator('.tu-modal').count()), '7 「계속 보기」 = 그대로');
-    await p.locator('.tu-x').click(); await sleep(200); await p.locator('[data-m="yes"]').click(); await sleep(400);
-    ok(!(await p.locator('#tutorial').isVisible()) && fs.readdirSync(path.join(soulR, 'R01-교사(Teacher)')).filter(n => /^D/.test(n)).length === 2, '7 「닫기」 = 닫힘 · 아무 폴더도 만들지 않음');
+    await p.locator('.tu-x').click(); await sleep(500); await p.locator('[data-m="skip"]').click(); await sleep(400);
+    ok(!(await p.locator('#tutorial').isVisible()) && dCount() === 2, '7 「안 만들고 닫기」 = 닫힘 · 아무 폴더도 만들지 않음');
+    // 다시 열어 「만들고 넘어가기」 = 실제 폴더가 생기고 다음 장면 · 마지막 장면 폴더 고르기 맨 앞
+    await p.evaluate(() => Settings.show('about')); await sleep(200); await p.locator('#st-tutorial').click(); await sleep(1200);
+    await p.locator('.tu-steps li[data-chap="three"]').click(); await sleep(150); for (let i = 0; i < 4; i++) { await p.locator('[data-nav="next"]').click(); await sleep(150); }
+    await sleep(300); await p.locator('.tu-rc.exist').first().click(); await sleep(400);
+    await p.locator('.tu-tadd[data-add="d"]').click(); await p.keyboard.type('연수'); await sleep(900);
+    await p.locator('[data-nav="next"]').click(); await sleep(500); await p.locator('[data-m="make"]').click();
+    await p.waitForSelector('.tu-modal', { state: 'detached', timeout: 30000 }).catch(() => {}); await sleep(300);
+    ok(fs.existsSync(path.join(soulR, 'R01-교사(Teacher)', 'D03-연수(Training)', 'AGENTS.md')) && await pno() !== buildNo, '7 「만들고 넘어가기」 = 디스크에 D03-연수(Training) + 규칙 메모 · 다음 장면');
+    for (let i = 0; i < 30 && await pno() !== '43 / 43'; i++) { await p.locator('[data-nav="next"]').click(); await sleep(120); }
+    ok((await p.locator('#tu-fc-folder').inputValue()) === 'R01-교사(Teacher)\\D03-연수(Training)' && !(await p.locator('.tu-first .tu-made.warn').count()), `7 마지막 장면 = 방금 만든 폴더가 맨 앞 · 경고 없음 (${await p.locator('#tu-fc-folder').inputValue()})`);
+    await p.locator('.tu-x').click(); await sleep(400);
+    ok(!(await p.locator('#tutorial').isVisible()), '7 만든 뒤 × = 묻지 않고 닫힘');
     ok(errs.length === 0, `6 페이지 오류 ${errs.length}건${errs.length ? ' ' + errs.join(' | ') : ''}`);
   } catch (e) { ok(false, '6 예외 ' + e.message); }
   finally { try { await browser?.close(); } catch {} try { d.kill(); } catch {} await sleep(500); }

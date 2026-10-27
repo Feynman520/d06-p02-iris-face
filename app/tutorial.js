@@ -6,6 +6,8 @@
    · 머리 = 장 7개 원(시작·에이전트·지도·소환·3가지·실습·마무리) + 쪽수 + 「처음부터」 + ×(닫기 = 옛 「나중에 하기」, 폴더를 쓰던 중이면 한 번 묻는다). Esc 는 닫지 않는다.
    · 다시 보기 = 보던 쪽에서 이어서(state\tutorial.json step). 역할 그림 = 같은 사람 20모습(app/persona.js, 성별 = state\tutorial.json gender).
    · 내 폴더: 역할이 이미 있으면(다시 보기) 실제 R/D/P 를 「이미 있음」으로 잠가 깔고 새 줄만 더한다. 「다음」 잠금은 역할 폴더가 하나도 없던 첫 실행에만.
+   → v2.96(2026-10-27 신고): 잠금이 없는 다시 보기에서 만들지 않은 계획을 둔 채 앞으로 지나가거나 닫으면 묻는다(돌아가기·안 만들고·만들고, leaveBuild) ·
+     만든 뒤 「폴더 열기」 · 「첫 대화」 폴더 고르기에 있던 폴더도 · 안 만들고 넘어왔으면 그 자리에서 알리고 되돌아가기.
    데몬: GET /api/tutorial · GET /api/tutorial/existing · POST /api/tutorial/{plan,structure,done,prefs} · POST /api/open-folder · GET /api/relay/ready. 설계 = docs\설계-튜토리얼-2026-10-19.md */
 window.Tutorial = (() => {
   const $ = (s, r = document) => r.querySelector(s);
@@ -91,13 +93,21 @@ window.Tutorial = (() => {
   const FOLDER = '<svg class="tu-fic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
   const CHECK = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const X = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
-  const createdP = () => created.filter(it => it.level === 'P').length ? created.filter(it => it.level === 'P') : created;
+  /** 「첫 대화」 맨 앞 폴더 = 이번에 새로 생긴 것(v2.96: 이미 있던 역할이 앞에 서지 않게) 가운데 프로젝트, 없으면 그 새것들. */
+  const createdP = () => { const fresh = created.filter(it => !it.exists), pool = fresh.length ? fresh : created, ps = pool.filter(it => it.level === 'P'); return ps.length ? ps : pool; };
+  /** 이미 있던 폴더(다시 보기) — 영역 단위로, 영역이 없는 역할은 역할 자체. 「첫 대화」 폴더 고르기에 방금 만든 것 뒤로 붙인다(v2.96). */
+  const existingRels = () => { const out = []; for (const r of roles) { if (!r.existing) continue; const ds = r.domains.filter(d => d.existing); if (!ds.length) out.push(r.existing); else ds.forEach(d => out.push(`${r.existing}\\${d.existing}`)); } return out.slice(0, 60); };
   function finishHtml() {
-    const list = createdP();
-    const lead = info?.leadAgent === 'codex' ? 'codex' : 'claude';
-    return `<div class="tu-first"><b>첫 대화 해 보기</b><div class="tu-row"><select class="tu-in tu-sel wide" id="tu-fc-folder">${list.length ? list.map(it => `<option value="${esc(it.rel)}">${esc(it.rel)}</option>`).join('') : `<option value="">${esc(info?.rootName || 'IRIS')} (전체 폴더)</option>`}</select>
+    const list = createdP(), mine = new Set(list.map(it => it.rel)), old = existingRels().filter(rel => !mine.has(rel));
+    const lead = info?.leadAgent === 'codex' ? 'codex' : 'claude', opt = (rel) => `<option value="${esc(rel)}">${esc(rel)}</option>`;
+    const root = `<option value="">${esc(info?.rootName || 'IRIS')} (전체 폴더)</option>`;
+    const folders = list.length ? `<optgroup label="방금 만든 폴더">${list.map(it => opt(it.rel)).join('')}</optgroup><optgroup label="그 밖의 폴더">${root}${old.map(opt).join('')}</optgroup>`
+      : old.length ? `${root}<optgroup label="있던 폴더">${old.map(opt).join('')}</optgroup>` : root;
+    // 내 폴더에서 「안 만들고 넘어가기」를 골랐으면 여기서 한 번 더 알린다 — 계획은 화면에 남아 있어 돌아가 만들 수 있다
+    const left = planSkipped && dirty() ? `<div class="tu-made warn">적은 폴더는 <b>아직 만들지 않았어요.</b> <button class="tu-link" type="button" data-act="to-build">내 폴더로 돌아가 만들기</button></div>` : '';
+    return `<div class="tu-first"><b>첫 대화 해 보기</b>${left}<div class="tu-row"><select class="tu-in tu-sel wide" id="tu-fc-folder">${folders}</select>
       <select class="tu-in tu-sel" id="tu-fc-agent"><option value="claude"${lead === 'claude' ? ' selected' : ''}>Claude</option><option value="codex"${lead === 'codex' ? ' selected' : ''}>Codex</option></select></div>
-      <div class="tu-btns"><button class="tu-btn accent" data-act="first">첫 대화 해 보기</button><button class="tu-btn" data-act="home">홈으로</button></div><div class="tu-made" id="tu-fc-msg"></div></div>`;
+      <div class="tu-btns"><button class="tu-btn accent" data-act="first">첫 대화 해 보기</button><button class="tu-btn" data-act="open-sel" title="고른 폴더를 탐색기로 엽니다">폴더 열기</button><button class="tu-btn" data-act="home">홈으로</button></div><div class="tu-made" id="tu-fc-msg"></div></div>`;
   }
   // ---------- 내 폴더 만들기: 성별 → 역할 카드(여러 개 · × 빼기 · + 추가) → 폴더 나무 편집기 → 확인 창 ----------
   const ROLES = ['교사', '연구자', '개발자', '직장인', '학생'];
@@ -105,7 +115,7 @@ window.Tutorial = (() => {
   const PERIOD_OPTS = () => { const y = info?.year || new Date().getFullYear(); return ['', `${y}년`, `${y}년.1학기`, `${y}년.2학기`, `${y + 1}년`]; };
   const LV = ['', '역할', '영역', '프로젝트'];
   // 역할 = { ko, existing?(실제 폴더 이름), code?, domains:[{ ko, existing?, code?, group?, tags?, projects:[{ ko, period, existing?, code?, tags? }] }] }
-  let roles = [], view = 'grid', active = 0, adding = false, made = '', madeN = 0, undo = null, modal = false, codeMap = new Map();
+  let roles = [], view = 'grid', active = 0, adding = false, made = '', madeN = 0, madeOpen = '', planSkipped = false, leaving = false, undo = null, modal = false, codeMap = new Map();
   const newP = (d) => d.projects.filter(p => !p.existing);
   const sentP = (d) => newP(d).filter(p => p.ko.trim());
   const sentD = (r) => r.domains.filter(d => d.existing ? sentP(d).length > 0 : d.ko.trim());
@@ -145,7 +155,7 @@ window.Tutorial = (() => {
       ${undo ? `<div class="tu-toast">「${esc(undo.role.ko)}」 역할을 뺐습니다 <button type="button" data-act="undo">되돌리기</button></div>` : ''}`;
   }
   function makeBar(msg, disabled) {
-    if (made === 'made') return `<div class="tu-bbar ok" id="tu-made"><span class="tu-okc">${CHECK}</span><span><b>${madeN ? `새 폴더 ${madeN}개를 만들었습니다.` : '폴더가 모두 이미 있습니다.'}</b> 이제 「다음」으로 넘어갈 수 있어요.</span></div>`;
+    if (made === 'made') return `<div class="tu-bbar ok" id="tu-made"><span class="tu-okc">${CHECK}</span><span><b>${madeN ? `새 폴더 ${madeN}개를 만들었습니다.` : '폴더가 모두 이미 있습니다.'}</b> 이제 「다음」으로 넘어갈 수 있어요.</span>${madeOpen ? `<span class="tu-gap"></span><button class="tu-btn sm" type="button" data-open="${esc(madeOpen)}" title="${esc(madeOpen)}">폴더 열기</button>` : ''}</div>`;
     const err = lastPlan && !lastPlan.ok && roles.some(hasNew) ? `<div class="tu-errs">${lastPlan.errors.slice(0, 3).map(e => `<div>· ${esc(e.message)}</div>`).join('')}</div>` : '';
     return `<div class="tu-bbar${made === 'changed' ? ' warn' : ''}"><span>${made === 'changed' ? '<b>바뀐 내용이 있어요.</b> 다시 승인해야 다음으로 넘어갑니다' : msg}${err}</span><span class="tu-gap"></span><button class="tu-btn accent" type="button" id="tu-make" data-act="make"${disabled || err ? ' disabled' : ''}>${made === 'changed' ? '바뀐 대로 다시 만들기' : '폴더 만들기'}</button></div>`;
   }
@@ -213,11 +223,12 @@ window.Tutorial = (() => {
     m.innerHTML = `<div class="tu-mbox" role="dialog" aria-modal="true">${html}</div>`;
     $('.tu-panel', el()).appendChild(m); return m;
   }
+  const mlist = (items) => `<div class="tu-mlist">${items.map(it => `<div style="padding-left:${({ R: 0, D: 1, P: 2 }[it.level]) * 20}px">${FOLD(({ R: 1, D: 2, P: 3 }[it.level]))}<span>${esc(it.name)}</span>${it.exists ? '<small>이미 있음</small>' : ''}</div>`).join('')}</div>`;
   function confirmMake() {
     if (!lastPlan?.ok) return;
     const items = lastPlan.items, fresh = items.filter(it => !it.exists).length;
     const m = modalBox(`<h4>이대로 폴더를 만들까요?</h4><p>아래 <b>${fresh}개 폴더</b>가 ${esc(info?.rootName || 'IRIS')} 폴더 안에 만들어집니다. 이미 있는 폴더는 건드리지 않습니다.</p>
-      <div class="tu-mlist">${items.map(it => `<div style="padding-left:${({ R: 0, D: 1, P: 2 }[it.level]) * 20}px">${FOLD(({ R: 1, D: 2, P: 3 }[it.level]))}<span>${esc(it.name)}</span>${it.exists ? '<small>이미 있음</small>' : ''}</div>`).join('')}</div>
+      ${mlist(items)}
       <div class="tu-btns end"><button class="tu-btn" type="button" data-m="no">다시 고칠래요</button><button class="tu-btn accent" type="button" data-m="yes">이대로 만들기</button></div><div class="tu-errs" id="tu-merr"></div>`);
     m.querySelector('.tu-mbox').setAttribute('aria-label', '폴더 만들기 확인'); $('[data-m="yes"]', m).focus();
     m.addEventListener('click', async (e) => {
@@ -229,12 +240,30 @@ window.Tutorial = (() => {
     });
   }
   /** × 닫기 — 적던 폴더 계획이 있으면 한 번 묻는다(페이지 안 확인 창: 앱 Dialog 는 튜토리얼 판 아래에 깔린다). */
-  function requestClose() {
-    if (!dirty()) return closeLater();
-    const m = modalBox(`<h4>튜토리얼을 닫을까요?</h4><p>적던 폴더 계획은 <b>만들어지지 않고 사라집니다.</b> 튜토리얼은 설정 → 업데이트·정보에서 다시 볼 수 있어요.</p>
-      <div class="tu-btns end"><button class="tu-btn" type="button" data-m="no">계속 보기</button><button class="tu-btn accent" type="button" data-m="yes">닫기</button></div>`);
-    m.querySelector('.tu-mbox').setAttribute('aria-label', '튜토리얼 닫기 확인'); $('[data-m="no"]', m).focus();
-    m.addEventListener('click', (e) => { const a = e.target.closest('[data-m]')?.dataset.m; if (!a && e.target !== m) return; closeModal(); if (a === 'yes') closeLater(); });
+  const requestClose = () => leaveBuild('close', closeLater);
+  /** v2.96(2026-10-27 신고: 다시 보기에서 나무만 적고 「다음」 → 실제 폴더가 안 생김): 만들지 않은 폴더 계획을 둔 채 내 폴더를 지나가거나(kind 'next')
+      닫으면('close') 묻는다 — 돌아가기 · 안 만들고 · 만들고. 새로 생길 폴더가 0개면(모두 이미 있음) 묻지 않는다. */
+  async function leaveBuild(kind, then) {
+    if (leaving) return; if (made === 'made' || !roles.some(hasNew)) return then();
+    leaving = true;
+    try { clearTimeout(planTimer); await refreshPlan(); } finally { leaving = false; }
+    const fresh = lastPlan?.ok ? lastPlan.items.filter(it => !it.exists) : null;
+    if (fresh && !fresh.length) return then();
+    const cl = kind === 'close', where = esc(info?.rootName || 'IRIS');
+    const m = modalBox(`<h4>${cl ? '튜토리얼을 닫을까요?' : '적은 폴더를 아직 만들지 않았어요'}</h4>
+      <p>${fresh ? `아래 <b>새 폴더 ${fresh.length}개</b>는 「만들기」를 눌러야 ${where} 폴더 안에 실제로 생깁니다.` : '적은 이름에 고칠 곳이 있어 아직 만들 수 없습니다.'} ${cl ? '만들지 않고 닫으면 이 계획은 사라집니다. 튜토리얼은 설정 → 업데이트·정보에서 다시 볼 수 있어요.' : '만들지 않고 넘어가도 계획은 남아 있어 나중에 돌아와 만들 수 있어요.'}</p>
+      ${fresh ? mlist(lastPlan.items) : `<div class="tu-errs">${(lastPlan?.errors || []).slice(0, 3).map(x => `<div>· ${esc(x.message)}</div>`).join('')}</div>`}
+      <div class="tu-btns end"><button class="tu-btn" type="button" data-m="no">${cl ? '계속 보기' : '돌아가기'}</button><button class="tu-btn" type="button" data-m="skip">안 만들고 ${cl ? '닫기' : '넘어가기'}</button>${fresh ? `<button class="tu-btn accent" type="button" data-m="make">만들고 ${cl ? '닫기' : '넘어가기'}</button>` : ''}</div><div class="tu-errs" id="tu-merr"></div>`);
+    m.querySelector('.tu-mbox').setAttribute('aria-label', cl ? '튜토리얼 닫기 확인' : '폴더 만들기 확인');
+    ($('[data-m="make"]', m) || $('[data-m="no"]', m)).focus();
+    m.addEventListener('click', async (e) => {
+      const a = e.target.closest('[data-m]')?.dataset.m; if (!a && e.target !== m) return;
+      if (a === 'skip') { closeModal(); planSkipped = true; return then(); }
+      if (a !== 'make') return closeModal();
+      const b = $('[data-m="make"]', m); b.disabled = true; b.textContent = '만드는 중…';
+      const r = await make();
+      if (r.ok) { closeModal(); then(); } else { b.disabled = false; b.textContent = `만들고 ${cl ? '닫기' : '넘어가기'}`; $('#tu-merr', m).innerHTML = (r.errors || []).map(x => `<div>· ${esc(x.message)}</div>`).join(''); }
+    });
   }
   async function closeLater() {
     await done(true); close();
@@ -244,7 +273,9 @@ window.Tutorial = (() => {
   async function make() {
     let r; try { const res = await fetch('/api/tutorial/structure', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ spec: specOf() }) }); r = await res.json(); } catch (e) { r = { ok: false, errors: [{ message: e.message }] }; }
     if (!r.ok) return r;
-    created = r.items; madeN = r.created.length; made = 'made'; repaint(); refreshPlan();
+    created = r.items; madeN = r.created.length; made = 'made'; planSkipped = false;
+    const first = String(r.created[0] || '').split(/[\\/]/); madeOpen = first[0] ? (first.length > 1 ? first.slice(0, -1) : first).join('\\') : ''; // 새 폴더가 보이는 자리(새 역할이면 그 역할 폴더)
+    repaint(); refreshPlan();
     return r;
   }
 
@@ -323,7 +354,11 @@ window.Tutorial = (() => {
     root.querySelector('[data-nav="next"]').textContent = step === 0 ? '시작하기' : '다음';
     gate(); saveStep();
   }
-  const go = (n) => { n = Math.max(0, Math.min(SCENES.length - 1, n)); const bi = buildIdx(); if (n > bi && step <= bi && locked()) n = bi; if (n === step) return; step = n; render(); };
+  const go = (n) => {
+    n = Math.max(0, Math.min(SCENES.length - 1, n)); const bi = buildIdx(); if (n > bi && step <= bi && locked()) n = bi; if (n === step) return;
+    if (SCENES[step]?.kind === 'build' && n > step) return leaveBuild('next', () => { step = n; render(); }); // 앞으로 지나갈 때만 묻는다(뒤로 가도 계획은 남는다)
+    step = n; render();
+  };
   /** 보던 쪽 기억(다시 보기 = 이어서). 잦은 저장을 막으려 잠깐 모아서. */
   let pendingStep = null;
   const postStep = (id) => fetch('/api/tutorial/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ step: id }), keepalive: true }).catch(() => {});
@@ -381,6 +416,8 @@ window.Tutorial = (() => {
       if (a === 'unzoom') return unzoom();
       if (a === 'first') return firstChat();
       if (a === 'first-anyway') { const m = $('#tu-fc-msg'); if (m) m.dataset.anyway = '1'; return; }
+      if (a === 'to-build') return go(buildIdx());
+      if (a === 'open-sel') { try { await fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: $('#tu-fc-folder')?.value || '' }) }); } catch {} return; }
       if (a === 'home') { await done(false); close(); }
     });
   }
@@ -407,7 +444,7 @@ window.Tutorial = (() => {
     Persona._set(info?.gender);
     await loadDeck();
     firstRun = !info?.hasRoles;
-    roles = await initRoles(); view = 'grid'; active = 0; adding = false; made = ''; madeN = 0; undo = null; created = []; lastPlan = null; codeMap = new Map();
+    roles = await initRoles(); view = 'grid'; active = 0; adding = false; made = ''; madeN = 0; madeOpen = ''; planSkipped = false; leaving = false; undo = null; created = []; lastPlan = null; codeMap = new Map();
     const i = SCENES.findIndex(s => s.id === info?.step); step = i >= 0 && i < SCENES.length - 1 ? i : 0;
     el().hidden = false; document.body.classList.add('tu-open'); render(); fitDeck();
     try { $('.tu-panel', el()).focus({ preventScroll: true }); } catch {} // 키(← → · Esc)가 처음부터 판에 오게

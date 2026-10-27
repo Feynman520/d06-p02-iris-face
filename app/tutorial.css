@@ -115,6 +115,7 @@
 .tu-sel { flex: none; width: auto; cursor: pointer; } .tu-sel.wide { flex: 1; }
 .tu .tu-link { color: var(--tu-acc); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
 .tu-made { margin-top: 10px; font-size: 13px; color: var(--tu-ink-2); line-height: 1.55; }
+.tu-made.warn { margin: 0 0 10px; padding: 8px 12px; border: 1px solid #e0a32e; border-radius: 10px; background: #fff7e6; color: #7a4e00; } .tu-made.warn b { color: #9a6200; }
 .tu-errs { color: #b4321f; font-size: 12.5px; line-height: 1.6; margin-top: 4px; }
 /* ⑤ 내 폴더: 역할 카드 */
 .tu-body.sc-build { display: block; padding: 28px 40px 22px; }
