@@ -407,7 +407,7 @@ window.Settings = (() => {
   const koName = (s) => (String(s || '').match(/\(([^)]+)\)\s*$/) || [])[1] || s; // 'Sejun Ham (함세준)' → '함세준'
   function applyMaker() { $('#maker').textContent = `v${health?.version || '—'} · ${koName(health?.about?.author || ABOUT_DEF.author)}`; }
   /** p = 열 묶음(없으면 마지막으로 본 묶음). 예: 헤더 모듈 버튼이 멈춘 모듈을 보여 줄 때 show('mods'). */
-  function show(p) { open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(p)) pane = p; showPane(pane); renderPanel(); }
+  function show(p) { if (!open) opts.onShow?.(); open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(p)) pane = p; showPane(pane); renderPanel(); }
   function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
   function pick(patch) { Object.assign(cfg, patch); applyAll(); save(); renderPanel(); }
 

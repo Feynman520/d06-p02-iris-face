@@ -76,27 +76,25 @@
   function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: sel.effort[sel.agent], permission: sel.agent === 'claude' ? (st.permission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
   const fill = (el, list, val) => { el.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join(''); el.value = val ?? ''; };
   const AGENT_NAME = { claude: 'Claude', codex: 'Codex' };
-  // v2.76(2026-09-23 사용자 결정): 두 에이전트 버튼은 항상 보인다. 버튼 옆 한 줄 안내의 우선순위 —
-  // ① 프로그램 없음(설치 파일을 다시 실행해야 함) ② 계정 없음(대시보드에서 로그인하면 바로 연결). 안내를 누르면 대시보드.
-  const missingText = (names) => `${names.join('·')} 프로그램 없음 — IRIS 설치 파일을 다시 실행하면 받습니다`;
-  const noAcctText = (names) => `${names.join('·')} 계정 없음 — 대시보드 「＋ ${names[0]} 계정」에서 로그인하면 바로 연결됩니다`;
-  function agentHint() {
-    const missing = (ACCT?.missing || []).filter(k => AGENTS[k]);
-    if (missing.length) return { text: missingText(missing.map(k => AGENT_NAME[k] || k)), title: '설치 파일을 다시 실행하면 빠진 프로그램만 받습니다(자료는 그대로)', off: missing };
+  // v2.96.2(2026-10-27 사용자 결정, 옛 v2.76 한 줄 안내 대체): 입력창 위 긴 안내 글은 없앴다. 프로그램이 없거나 계정이 0개인
+  // 에이전트 버튼은 **비활성**(누를 수 없음) + 마우스를 올리면 짧은 말풍선. 고른 쪽이 꺼지면 켜진 쪽으로 옮긴다. 둘 다 꺼지면 막지 않는다(할 수 있는 게 없어짐).
+  const OFF_TIP = { missing: '프로그램 없음 — IRIS 설치 파일을 다시 실행하면 받습니다', account: '계정 연결 안 됨 — 대시보드에서 계정을 추가하면 켜집니다' };
+  function agentOff() {
+    const off = {};
+    for (const k of ACCT?.missing || []) if (AGENTS[k]) off[k] = 'missing';
     const acc = ACCT?.accounts;
-    const none = acc ? Object.keys(AGENTS).filter(k => acc[k] === 0) : [];
-    if (none.length) return { text: noAcctText(none.map(k => AGENT_NAME[k] || k)), title: '누르면 대시보드가 열립니다', off: none };
-    return null;
+    if (acc) for (const k of Object.keys(AGENTS)) if (!off[k] && acc[k] === 0) off[k] = 'account';
+    return Object.keys(off).length >= Object.keys(AGENTS).length ? {} : off;
   }
   function renderSetup() {
     if (!AGENTS) return;
-    for (const b of document.querySelectorAll('.seg-agent .seg-btn')) b.hidden = !AGENTS[b.dataset.agent];
-    const h = agentHint();
-    for (const b of document.querySelectorAll('.seg-agent .seg-btn')) b.classList.toggle('no-account', !!h?.off.includes(b.dataset.agent));
-    const hint = $('#agent-sleep');
-    hint.hidden = !h || setupMode === 'switch';
-    if (h) { hint.textContent = h.text; hint.title = h.title; }
-    if (!AGENTS[sel.agent]) { sel.agent = Object.keys(AGENTS)[0]; saveSel(); }
+    const off = agentOff();
+    for (const b of document.querySelectorAll('.seg-agent .seg-btn')) {
+      const k = b.dataset.agent; b.hidden = !AGENTS[k];
+      // disabled 속성 대신 aria-disabled + 누름 무시: disabled 버튼은 마우스 사건을 안 받아 말풍선이 안 뜰 수 있다
+      b.setAttribute('aria-disabled', off[k] ? 'true' : 'false'); b.classList.toggle('no-account', !!off[k]); b.title = off[k] ? `${AGENT_NAME[k] || k} · ${OFF_TIP[off[k]]}` : '';
+    }
+    if (!AGENTS[sel.agent] || (off[sel.agent] && setupMode !== 'switch')) { const on = Object.keys(AGENTS).find(k => !off[k]); if (on && on !== sel.agent) { sel.agent = on; saveSel(); } }
     const a = AGENTS[sel.agent];
     const model = a.models.find(m => m.id === sel.model[sel.agent]) || a.models.find(m => m.id === a.default.model);
     const efforts = model.efforts || a.efforts;
@@ -115,7 +113,7 @@
     $('#setup-apply').hidden = setupMode !== 'switch'; $('#setup-cancel').hidden = setupMode !== 'switch';
     $('#btn-tune').hidden = !s; $('#btn-tune').classList.toggle('active', setupMode === 'switch');
   }
-  document.querySelectorAll('.seg-agent .seg-btn').forEach(b => b.onclick = () => { sel.agent = b.dataset.agent; saveSel(); renderSetup(); });
+  document.querySelectorAll('.seg-agent .seg-btn').forEach(b => b.onclick = () => { if (b.getAttribute('aria-disabled') === 'true') return; sel.agent = b.dataset.agent; saveSel(); renderSetup(); });
   $('#sel-model').onchange = (e) => { sel.model[sel.agent] = e.target.value; saveSel(); renderSetup(); };
   $('#sel-effort').onchange = (e) => { sel.effort[sel.agent] = e.target.value; saveSel(); };
   $('#btn-tune').onclick = () => {
@@ -411,6 +409,8 @@
   async function loadDash(force) { const d = await ensureDash(); if (force || d.started || !fr.src || fr.src === 'about:blank') fr.src = dashUrl(d.port); }
   let drawerCloseTimer = 0;
   function openDrawer(key, { title, url, ext = true }) {
+    // 서랍은 한 번에 하나(v2.96.2, 2026-10-27 사용자 신고): 설정 서랍(z 21)이 열려 있으면 대시보드·모듈 서랍(z 20)이 그 밑에 깔려 안 바뀐 것처럼 보였다
+    if (Settings.isOpen()) Settings.hide();
     const d = $('#dash'); clearTimeout(drawerCloseTimer);
     const switched = drawerKey !== key;
     if (switched) { fr.src = 'about:blank'; }
@@ -514,7 +514,7 @@
     catch (e) { Dialog.alert(`설치 실패: ${e.message}`); return false; }
   }
   window.addEventListener('iris:mod-installing', renderModules); // 설정 화면에서 설치를 시작·끝냈을 때도 헤더 고리를 맞춘다
-  $('#limits').onclick = () => toggleDash(); $('#agent-sleep').onclick = () => toggleDash(true); $('#dash-close').onclick = () => closeDrawer();
+  $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
   $('#dash-reload').onclick = () => { if (drawerKey === 'dash') loadDash(true); else if (drawerKey) { const u = fr.src; fr.src = 'about:blank'; requestAnimationFrame(() => { fr.src = u; }); } };
   $('#dash-ext').onclick = () => { if (drawerKey === 'dash') window.open(fr.src || DASH_URL, '_blank'); };
 
@@ -654,7 +654,7 @@
   }, 0));
 
   // ---------- 꾸미기 설정 + 사용량 배터리 (app/settings.js) ----------
-  Settings.init({ sessionCount: () => sessions.length });
+  Settings.init({ sessionCount: () => sessions.length, onShow: () => closeDrawer() }); // 서랍은 한 번에 하나 — 설정을 열면 대시보드·모듈 서랍은 닫는다
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
   MemGauge.init({ notify: (n) => Notify.push(n), pick: (id) => { if (sessions.some(s => s.id === id)) select(id); } }); // 메모리 계기판(v2.78)
   Notify.init({ onPick: (id) => { if (String(id).startsWith('mod:')) { openModule(String(id).split(':')[1]); return; } if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
