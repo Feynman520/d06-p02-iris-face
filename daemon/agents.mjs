@@ -33,16 +33,17 @@ export const CODEX_HOME = process.env.CODEX_HOME || path.join(soulRoot(), '_agen
 export const AGENTS = {
   claude: {
     label: 'Claude',
-    // 별칭(opus·sonnet·fable·haiku)은 CLI 가 최신 판으로 푼다(2.1.284: opus→Opus 5.5, sonnet→5.5, fable→5.1, haiku→4.5).
-    // 표시 이름은 손으로 맞춘다 — Haiku 5.5(Anthropic 예고, 2026-09-22)가 나오면 여기 이름만 고친다.
+    // 별칭(opus·sonnet·fable·haiku)은 CLI 가 최신 판으로 푼다(2.1.311: opus→Opus 5.5, sonnet→5.5, fable→5.1, haiku→5.5).
+    // 표시 이름은 손으로 맞춘다 — 새 판이 나오면 CLI 별칭 대상·모델 카탈로그를 보고 여기 이름만 고친다.
     // 2026-09-29: Sonnet 5.5 출시 — 이전 Sonnet 5 는 전체 ID 항목. Sonnet 5.5 는 CLI 카탈로그에 fast_mode 가 없어 FAST_MODELS 에 넣지 않는다.
+    // 2026-10-27: `haiku` 별칭이 Haiku 5.5 로 풀림(CLI 2.1.311 실측) — 표시 이름만 고침. Haiku 4.5 는 사고깊이가 없어 이전 항목으로 남기지 않는다.
     models: [
       { id: 'opus',            label: 'Opus 5.5' },
       { id: 'claude-opus-5',   label: 'Opus 5 (이전)' },
       { id: 'sonnet',          label: 'Sonnet 5.5' },
       { id: 'claude-sonnet-5', label: 'Sonnet 5 (이전)' },
       { id: 'fable',           label: 'Fable 5.1' },
-      { id: 'haiku',           label: 'Haiku 4.5' },
+      { id: 'haiku',           label: 'Haiku 5.5' },
     ],
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     default: { model: 'opus', effort: 'high' },
@@ -57,16 +58,20 @@ export const AGENTS = {
     // 2026-09-22 GPT-6 Sol(복잡한 코딩·에이전트, 기본)·Luna(가볍고 대량) 출시, 5.6 계열은 코덱스가 "Older" 로 내림(Terra 후속 없음).
     // 사고깊이는 코덱스 0.156.0 모델 메타데이터(models_cache.json, 2026-09-23 실측) 그대로: astra·sol·terra·5.6-sol = ultra 까지, luna 계열 = max 까지.
     // 5.6 계열은 저장된 선택(localStorage iris.sel)과의 호환을 위해 "(구)" 표시로 남긴다. gpt-5.5 는 2026-10-14 은퇴라 넣지 않는다.
+    // 2026-10-27: GPT-6.1 Sol(최신 주력, 기본)·GPT-6.1 Terra 추가(코덱스 0.164.0 models_cache.json 실측, 둘 다 ultra 까지).
+    //   gpt-6-sol 은 코덱스가 "Previous generation" 으로 내려 "(이전)" 표시. Luna 는 6.1 판이 없어 gpt-6-luna 가 그대로 최신.
     models: [
+      { id: 'gpt-6.1-sol',   label: 'gpt-6.1-sol' },
       { id: 'gpt-6-astra',   label: 'gpt-6-astra' },
-      { id: 'gpt-6-sol',     label: 'gpt-6-sol' },
+      { id: 'gpt-6.1-terra', label: 'gpt-6.1-terra' },
+      { id: 'gpt-6-sol',     label: 'gpt-6-sol (이전)' },
       { id: 'gpt-6-luna',    label: 'gpt-6-luna',  efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
       { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra (구)' },
       { id: 'gpt-5.6-sol',   label: 'gpt-5.6-sol (구)' },
       { id: 'gpt-5.6-luna',  label: 'gpt-5.6-luna (구)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
     ],
     efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
-    default: { model: 'gpt-6-sol', effort: 'medium' },
+    default: { model: 'gpt-6.1-sol', effort: 'medium' },
     // -a/--ask-for-approval · -s/--sandbox (빈 값 = 설정 파일 config.toml 대로)
     approvals: [{ id: '', label: '설정 파일대로' }, { id: 'never', label: '묻지 않음' }, { id: 'on-request', label: '모델이 필요할 때 묻기' }],
     sandboxes: [{ id: '', label: '설정 파일대로' }, { id: 'read-only', label: '읽기 전용' }, { id: 'workspace-write', label: '작업 폴더 쓰기' }, { id: 'danger-full-access', label: '전체 접근' }],

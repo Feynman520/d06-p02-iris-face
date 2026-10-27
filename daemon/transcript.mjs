@@ -81,10 +81,10 @@ export class TranscriptTail {
     }
     return null;
   }
-  /** 컨텍스트 창 크기: 코덱스는 기록에 있음, 클로드는 모델로 추정(Claude 5 계열 1M, Haiku 200k) */
+  /** 컨텍스트 창 크기: 코덱스는 기록에 있음, 클로드는 모델로 추정(Claude 5 계열 1M — Haiku 5.5 포함, Haiku 4.x 이하 200k) */
   contextWindow() {
     if (this.window) return this.window;
-    if (this.agent === 'claude') return /haiku/i.test(this.model || '') ? 200000 : 1000000;
+    if (this.agent === 'claude') return /haiku-[1-4]/i.test(this.model || '') ? 200000 : 1000000;
     return null;
   }
   /** 새로 생긴 줄만 읽어 정규화 항목 배열을 돌려준다 */
