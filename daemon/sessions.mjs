@@ -2,7 +2,6 @@
 // 세션 관리자: node-pty 세션 생성·입력·크기·종료(PID) · 200KB 링버퍼 · 헤드리스 화면 상태 판정 · sessions.json
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR } from './agents.mjs';
 import { preTrust } from './trust.mjs';
@@ -12,9 +11,21 @@ import { generateTitle } from './titler.mjs';
 import { parseApproval } from './approval.mjs';
 import { readReceipt, soulRoot, toolPath } from './paths.mjs';
 import { applyLongKey } from './auth.mjs';
+import { killTree, bundledBinDirs, launchedProgram, resolveOnPath, nativePath } from './platform.mjs';
 
 const require = createRequire(import.meta.url);
+ensurePtyHelper();
 const pty = require('node-pty');
+
+// macOS: node-pty 는 자식을 spawn-helper 로 띄우는데, npm 미리빌드판은 그 파일의 실행 권한이 빠진 채 오는 일이 있다
+// (그러면 모든 세션이 "posix_spawnp failed" 로 즉시 끝난다). 불러오기 전에 0755 로 맞춘다 — 이미 맞으면 손대지 않는다.
+function ensurePtyHelper() {
+  if (process.platform === 'win32') return;
+  let base; try { base = path.dirname(require.resolve('node-pty/package.json')); } catch { return; }
+  for (const f of [path.join(base, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'), path.join(base, 'build', 'Release', 'spawn-helper')]) {
+    try { if ((fs.statSync(f).mode & 0o111) !== 0o111) fs.chmodSync(f, 0o755); } catch {}
+  }
+}
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
 
 const BUFFER_MAX = 200 * 1024;
@@ -77,7 +88,7 @@ export function codexKeys(prompt) {
   return { ...prompt, options: prompt.options.map((o) => ({ ...o, key: fix(o.key) })), actions: Array.isArray(prompt.actions) ? prompt.actions : prompt.actions };
 }
 
-export function applyReceiptEnv(env, receipt = readReceipt()) {
+export function applyReceiptEnv(env, receipt = readReceipt(), { platform } = {}) {
   const r = receipt?.env;
   if (!r) return env;
   if (r.CLAUDE_CONFIG_DIR && !env.CLAUDE_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = r.CLAUDE_CONFIG_DIR;
@@ -85,13 +96,12 @@ export function applyReceiptEnv(env, receipt = readReceipt()) {
   if (r.ANTHROPIC_BASE_URL && !env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = r.ANTHROPIC_BASE_URL;
   const root = soulRoot();
   const shims = path.join(root, '_agent', 'shared', 'shims');
-  const nodeDir = toolPath('node');
   const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
   const cur = env[key] || '';
   const already = new Set(cur.split(path.delimiter).map((s) => s.trim().toLowerCase()).filter(Boolean));
   // shims → node → git → python 순으로 PATH 맨 앞에(2026-09-14 실기: 다른 PC 의 시스템 Git 2.51 이 먼저 잡혀 v7 기반 검사기가 WinGet 업그레이드를 시도하다 멈췄다.
   // 동봉본이 정본(가이드 8-1)이므로 세션·마무리 파이프라인 모두 동봉 Git·Node·Python 을 먼저 본다).
-  const add = [shims, nodeDir, toolPath('git', 'cmd'), toolPath('python')].filter((p) => !already.has(p.toLowerCase()));
+  const add = [shims, ...bundledBinDirs(toolPath, { platform })].filter((p) => !already.has(p.toLowerCase()));
   if (add.length) env[key] = [...add, cur].filter(Boolean).join(path.delimiter);
   return env;
 }
@@ -143,6 +153,7 @@ export class SessionManager {
 
   /** 새 세션: 폴더 + 에이전트·모델·사고깊이(사용자가 고른 그대로) + 첫 요청문(선택) */
   create({ cwd, agent, model, effort, readOnly, permission, approval, sandbox, prompt, cols = 120, rows = 36 }) {
+    cwd = cwd && nativePath(cwd); // 화면이 루트 + '\\' + 상대경로로 잇는 곳이 있다(튜토리얼 첫 대화)
     if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error(`folder not found: ${cwd}`);
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
     const cmd = buildCommand(sel, cwd);
@@ -168,12 +179,12 @@ export class SessionManager {
   spawn(cmd, cwd, cols, rows) {
     const env = childEnv();
     // 폴더 신뢰 물음 선답(daemon/trust.mjs, 2026-09-19): CLI 가 이 폴더를 처음 볼 때 묻는 "Do you trust…" 를 미리 "예"로 적어 둔다.
-    const agent = /^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude';
+    const agent = launchedProgram(cmd) === 'codex' ? 'codex' : 'claude';
     const t = preTrust({ agent, cwd, env, fallback: { claudeConfigDir: CLAUDE_CONFIG_DIR, codexHome: CODEX_HOME } });
     if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${agent} ${cwd} → ${t.result}`);
     // 1년 열쇠(v2.84, 2026-10-15 "Login expired" 사고): 살아 있으면 클로드 세션은 30일 /login 열쇠 대신 그것을 쓴다(daemon/auth.mjs).
     if (agent === 'claude') { const k = applyLongKey(env, { configDir: CLAUDE_CONFIG_DIR }); if (k.applied) this.hooks.onLog?.('[auth] long key → session'); }
-    return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
+    return pty.spawn(resolveOnPath(cmd.file, env), cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
   }
 
   /** 모델·사고깊이 바꾸기 = 재개 재시작: 현 PID 종료 → 같은 카드로 --resume / codex resume. 에이전트는 못 바꾼다. */
@@ -183,7 +194,7 @@ export class SessionManager {
     const sel = normalize({ agent: rec.agent, model: model ?? rec.model, effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id);
     const cmd = buildCommand(sel, rec.cwd, { resumeId: rec.sessionId });
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
@@ -199,7 +210,7 @@ export class SessionManager {
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id);
     const cmd = buildCommand(sel, rec.cwd);
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
@@ -377,11 +388,11 @@ export class SessionManager {
   }
   resize(id, cols, rows) { const st = this.live.get(id); if (st && cols > 0 && rows > 0) { st.pty.resize(Math.floor(cols), Math.floor(rows)); st.screen.resize(Math.floor(cols), Math.floor(rows)); } }
 
-  /** 명시적 닫기: 그 세션의 cmd.exe PID 트리 하나만 종료하고 목록에서 제거 */
+  /** 명시적 닫기: 그 세션의 PID 트리 하나만 종료하고 목록에서 제거 */
   close(id) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const st = this.live.get(id); clearTimeout(st?.timer);
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id); this.sessions.delete(id); this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -389,7 +400,7 @@ export class SessionManager {
   pause(id) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const st = this.live.get(id); clearTimeout(st?.timer);
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id); rec.pid = null; this.setStatus(id, 'exited'); this.save();
     return rec;
   }

@@ -61,8 +61,12 @@ export function pythonExe() {
         .forEach(d => found.push(path.join(base, d, 'python.exe')));
     } catch {}
   }
+  // macOS: 영혼에 동봉된 파이썬이 먼저다. /usr/bin/python3 는 개발자 도구가 없으면 "설치하시겠습니까" 창을 띄우는 껍데기라
+  // 개발자 도구가 실제로 있을 때만(그 안의 진짜 파일로) 쓴다 — 데몬 시작마다 창이 뜨지 않게.
+  if (process.platform === 'darwin') found.push(toolPath('python', 'bin', 'python3'));
   for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
     if (!dir || /WindowsApps/i.test(dir)) continue;
+    if (process.platform === 'darwin' && dir === '/usr/bin') { found.push('/Library/Developer/CommandLineTools/usr/bin/python3'); continue; }
     found.push(path.join(dir, process.platform === 'win32' ? 'python.exe' : 'python3'));
   }
   pyCache = found.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;

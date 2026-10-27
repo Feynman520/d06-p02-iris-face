@@ -14,7 +14,8 @@ fs.mkdirSync(cwd, { recursive: true });
 
 // ---- 키 ----
 ok(claudeProjectKey('C:\\IRIS\\a\\') === 'C:/IRIS/a', '클로드 키 = 슬래시·끝 구분자 제거');
-ok(codexProjectKey('C:/IRIS/A/') === 'c:\\iris\\a', '코덱스 키 = 소문자·역슬래시');
+ok(codexProjectKey('C:/IRIS/A/', { platform: 'win32' }) === 'c:\\iris\\a', '코덱스 키(Windows) = 소문자·역슬래시');
+ok(codexProjectKey('/Users/Me/IRIS/A/', { platform: 'darwin' }) === '/Users/Me/IRIS/A', '코덱스 키(macOS) = 경로 그대로(대소문자·슬래시 유지, 끝 슬래시만 뗌)');
 
 // ---- 클로드: 없던 파일 → 만든다 ----
 const cdir = path.join(tmp, 'claude');
@@ -31,14 +32,15 @@ fs.writeFileSync(path.join(cdir, '.claude.json'), '{ broken', 'utf8');
 ok(trustClaude(cwd, cdir) === 'skipped:unreadable' && fs.readFileSync(path.join(cdir, '.claude.json'), 'utf8') === '{ broken', '클로드 깨진 파일은 손대지 않음');
 
 // ---- 코덱스 ----
+const WIN = { platform: 'win32' }; // 드라이브 문자 경로를 쓰는 아래 두 줄은 Windows 규칙을 본다(macOS 에서 돌려도 같은 답)
 const xdir = path.join(tmp, 'codex');
 ok(trustCodex(cwd, xdir) === 'created', '코덱스 config.toml 새로 만듦');
 let t = fs.readFileSync(path.join(xdir, 'config.toml'), 'utf8');
 ok(t.includes(`[projects.'${codexProjectKey(cwd)}']`) && t.includes('trust_level = "trusted"'), '코덱스 신뢰 표');
 ok(trustCodex(cwd, xdir) === 'unchanged', '코덱스 두 번째 = 변경 없음');
 fs.writeFileSync(path.join(xdir, 'config.toml'), 'model = "x"\n[projects."c:\\\\iris\\\\y"]\ntrust_level = "trusted"', 'utf8');
-ok(trustCodex('C:\\IRIS\\y', xdir) === 'unchanged', '코덱스 큰따옴표 표기도 같은 표로 인정');
-ok(trustCodex('C:\\IRIS\\z', xdir) === 'appended', '코덱스 다른 폴더는 덧붙임');
+ok(trustCodex('C:\\IRIS\\y', xdir, WIN) === 'unchanged', '코덱스 큰따옴표 표기도 같은 표로 인정');
+ok(trustCodex('C:\\IRIS\\z', xdir, WIN) === 'appended', '코덱스 다른 폴더는 덧붙임');
 t = fs.readFileSync(path.join(xdir, 'config.toml'), 'utf8');
 ok(t.startsWith('model = "x"\n') && t.includes(`[projects.'c:\\iris\\z']`), '코덱스 있는 줄은 그대로');
 

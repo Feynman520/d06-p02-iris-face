@@ -457,7 +457,7 @@ export class Updater {
   }
 
   /** 동봉 Node(없으면 PATH 의 node)로 적용기를 분리 실행. 데몬은 응답 뒤 스스로 끝난다(서버가 shutdown). */
-  nodeExe() { const bundled = path.join(this.root, '_agent', 'shared', 'tools', 'node', 'node.exe'); return fs.existsSync(bundled) ? bundled : 'node'; }
+  nodeExe() { const bundled = process.platform === 'win32' ? path.join(this.root, '_agent', 'shared', 'tools', 'node', 'node.exe') : path.join(this.root, '_agent', 'shared', 'tools', 'node', 'bin', 'node'); return fs.existsSync(bundled) ? bundled : 'node'; }
   updaterPath() { return path.join(this.root, '_agent', 'shared', 'tools', 'updater', 'apply.mjs'); }
   applyNow() {
     if (this.mode !== 'package') return { ok: false, reason: DEV_REASON };

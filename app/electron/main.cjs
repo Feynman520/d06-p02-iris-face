@@ -17,6 +17,23 @@ const TIP = `IRIS · by ${String(PKG.author || '').replace(/\s*\(.*\)$/, '') || 
 // (별의 구 아이콘 — 이 PC의 바탕화면 바로가기가 쓰던 그 파일.) 없으면 예전처럼 그려 쓰는 마름모로 되돌아간다.
 const ICON_PATH = path.join(ROOT, 'app', 'iris.ico');
 const ICON = fs.existsSync(ICON_PATH) ? ICON_PATH : null;
+const IS_MAC = process.platform === 'darwin';
+// macOS 의 nativeImage 는 .ico 를 읽지 못한다 — iris.ico 안에 든 PNG 판(16~256px)을 꺼내 쓴다(원천 파일은 그대로 하나).
+function icoPng(size) {
+  try {
+    const d = fs.readFileSync(ICON_PATH);
+    for (let i = 0, n = d.readUInt16LE(4); i < n; i++) {
+      const e = 6 + 16 * i, w = d[e] || 256, len = d.readUInt32LE(e + 8), off = d.readUInt32LE(e + 12);
+      if (w === size && d.readUInt32BE(off) === 0x89504e47) return d.subarray(off, off + len);
+    }
+  } catch {}
+  return null;
+}
+function macImage(reps) { // reps = [[px, scaleFactor], …]
+  const img = nativeImage.createEmpty();
+  for (const [px, scaleFactor] of reps) { const buffer = icoPng(px); if (buffer) img.addRepresentation({ scaleFactor, buffer }); }
+  return img.isEmpty() ? null : img;
+}
 let win = null, tray = null, quitting = false, lastHealth = null;
 
 // 윈도 OS 알림(작업 완료, 2026-09-11)은 앱 사용자 모델 ID가 있어야 앱 이름으로 뜬다(없으면 'electron.app.Electron')
@@ -24,6 +41,8 @@ app.setAppUserModelId('IRIS-Face');
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   // 두 번째 실행(바로가기 재클릭): 숨어 있던 창을 다시 띄우고, 데몬이 새로 떴을 수 있으니 페이지를 다시 연다
   app.on('second-instance', async () => { await ensureDaemon(); showWindow(); if (win) win.loadURL(URL_); });
+  // macOS: Dock 아이콘을 누르면(창이 숨어 있어도) 창을 다시 띄운다.
+  if (IS_MAC) app.on('activate', () => { if (lastHealth) showWindow(); });
   app.whenReady().then(main);
 }
 
@@ -35,7 +54,10 @@ function spawnDaemon() {
   fs.mkdirSync(STATE, { recursive: true });
   const out = fs.openSync(path.join(STATE, 'daemon.out.log'), 'a');
   // Electron 안의 node가 아니라 시스템 node로 데몬을 띄운다(node-pty ABI = Node). node.exe라 shell 불필요.
-  const child = spawn('node', [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: true });
+  // macOS 의 창 실행기에는 PATH 에 node 가 없을 수 있다 — 실행기(IRIS.app → launch.mjs)가 넘긴 동봉 node 를 쓴다.
+  const node = IS_MAC && process.env.IRIS_FACE_NODE ? process.env.IRIS_FACE_NODE : 'node';
+  const child = spawn(node, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: true });
+  child.on('error', () => {}); // node 를 못 찾으면 아래 health 대기가 실패를 알린다(여기서 창이 죽지 않게)
   child.unref();
 }
 async function ensureDaemon() {
@@ -61,6 +83,8 @@ async function ensureDaemon() {
 }
 
 function trayIcon() {
+  // macOS 메뉴 막대: 16pt(1x 16px · 2x 32px). 막대 높이에 맞춰 그 두 판만 쓴다.
+  if (IS_MAC && ICON) { const img = macImage([[16, 1], [32, 2]]); if (img) return img; }
   // app/iris.ico 가 있으면 그것(윈도가 트레이 크기에 맞는 판을 고른다), 없으면 아래 그려 쓰는 마름모(◈).
   if (ICON) { try { const img = nativeImage.createFromPath(ICON); if (!img.isEmpty()) return img; } catch {} }
   const S = 32, buf = Buffer.alloc(S * S * 4, 0);
@@ -69,7 +93,7 @@ function trayIcon() {
     const inner = d <= 6, ring = d <= 14 && d >= 9.5;
     if (inner || ring) { const o = (y * S + x) * 4; buf[o] = 247; buf[o + 1] = 162; buf[o + 2] = 122; buf[o + 3] = 255; } // #7aa2f7
   }
-  return nativeImage.createFromBitmap(buf, { width: S, height: S });
+  return nativeImage.createFromBitmap(buf, IS_MAC ? { width: S, height: S, scaleFactor: 2 } : { width: S, height: S });
 }
 
 // 작은 화면 맞춤(2026-10-28 macOS 960×540 신고): 최소 900×600 이 화면 작업 영역보다 크면, 다른 앱에 갔다 돌아올 때
@@ -88,11 +112,11 @@ function createWindow() {
     width: Math.min(BASE.width, wa.width), height: Math.min(BASE.height, wa.height),
     minWidth: Math.min(BASE.minWidth, wa.width), minHeight: Math.min(BASE.minHeight, wa.height),
     backgroundColor: '#0f1218', title: 'IRIS', autoHideMenuBar: true, show: false,
-    ...(ICON ? { icon: ICON } : {}),
+    ...(ICON && !IS_MAC ? { icon: ICON } : {}), // macOS 창 아이콘은 Dock 아이콘(main 의 app.dock.setIcon)
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') },
   });
   win.loadURL(URL_);
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); if (IS_MAC) app.focus({ steal: true }); }); // macOS: 실행기가 띄운 창이 다른 앱 뒤에 깔리지 않게
   // 키 입력 자가 복구(2026-09-10): 페이지가 "눌렀는데 초점이 없다"고 알리면 창을 blur→focus 해 OS 키보드 초점을 되찾는다.
   // (네이티브 alert/confirm 뒤 창이 초점을 잃어 입력이 죽던 버그의 안전망 — 원인 자체는 app/dialog.js 로 제거)
   win.on('focus', () => { try { win.webContents.focus(); } catch {} });
@@ -110,10 +134,15 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   // 끌어다 놓기 안전망(v2.85): 페이지가 놓기를 못 막은 경우에도 창·프레임이 놓은 파일(file://)로 넘어가지 않게(화면은 전부 http 데몬 주소라 file:// 이동은 쓸 일이 없다)
   win.webContents.on('will-frame-navigate', (e) => { if (/^file:/i.test(e.url || '')) { e.preventDefault(); } });
-  const menu = Menu.buildFromTemplate([{ label: '보기', submenu: [{ role: 'reload', accelerator: 'F5' }, { role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }, { label: '창 숨기기', accelerator: 'Ctrl+W', click: () => win.hide() }] }]);
+  // macOS: 앱 메뉴(끝내기 Cmd+Q = 창만 닫기, 세션 유지) + 편집 메뉴 — 편집 메뉴가 없으면 입력창에서 Cmd+C/V/X/A 가 먹지 않는다.
+  const menu = Menu.buildFromTemplate(IS_MAC ? [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { label: '보기', submenu: [{ role: 'reload', accelerator: 'Cmd+R' }, { role: 'toggleDevTools', accelerator: 'Alt+Cmd+I' }, { type: 'separator' }, { role: 'minimize', accelerator: 'Cmd+M' }, { label: '창 숨기기', accelerator: 'Cmd+W', click: () => win.hide() }] },
+  ] : [{ label: '보기', submenu: [{ role: 'reload', accelerator: 'F5' }, { role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }, { label: '창 숨기기', accelerator: 'Ctrl+W', click: () => win.hide() }] }]);
   Menu.setApplicationMenu(menu);
 }
-function showWindow() { if (!win) createWindow(); win.show(); win.focus(); }
+function showWindow() { if (!win) createWindow(); win.show(); win.focus(); if (IS_MAC) app.focus({ steal: true }); }
 // 사용자가 방금 이 창을 눌렀을 때만 페이지가 부르므로, 앞창 자리를 되찾는(steal) 것이 곧 사용자의 뜻이다(윈도의 앞창 잠금 우회).
 ipcMain.handle('iris:refocus', () => { if (!win || win.isDestroyed()) return false; try { win.show(); win.focus(); app.focus({ steal: true }); win.webContents.focus(); } catch {} return true; });
 // 무대 실측(2026-09-13, v2.51): 프로세스별 CPU%(한 코어 = 100, 지난 호출 이후 평균; 첫 호출은 0) — 페이지의 stars.js calibrate() 가 GPU 프로세스+렌더러의 추가 부담을 잰다
@@ -140,6 +169,7 @@ function buildTrayMenu() {
 async function main() {
   const h = await ensureDaemon(); if (!h) return;
   lastHealth = h;
+  if (IS_MAC && ICON) { const img = macImage([[256, 1]]); if (img) try { app.dock.setIcon(img); } catch {} }
   tray = new Tray(trayIcon());
   tray.setToolTip(TIP);
   tray.setContextMenu(buildTrayMenu());

@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { shimFile, appRel, nativePath } from './platform.mjs';
 
 // ---------------- 폴더 만들기 ----------------
 export const LIMITS = Object.freeze({ roles: 20, domains: 5, projects: 5, ko: 30, en: 40 }); // v2.95.1: 새 역할 8 → 20(역할 그림 20모습과 같게)
@@ -138,13 +139,13 @@ export function planStructure(root, spec) {
     let dName = (d.existing && existingNamed(rDir, 'D', d.existing)) || existingSame(rDir, 'D', d.ko);
     if (!dName) { let c = nextCode(rDir, 'D'); while (takenD.has(c)) c = `D${String(Number(c.slice(1)) + 1).padStart(2, '0')}`; takenD.add(c); dName = folderName(c, d.ko, d.en); }
     const dRel = path.join(rName, dName); const dDir = path.join(root, dRel);
-    items.push({ level: 'D', rel: dRel, name: dName, ko: d.ko || parseFolder(dName)?.ko || '', exists: fs.existsSync(dDir) });
+    items.push({ level: 'D', rel: appRel(dRel), name: dName, ko: d.ko || parseFolder(dName)?.ko || '', exists: fs.existsSync(dDir) });
     const takenP = new Set();
     for (const p of (d.projects || [])) {
       let pName = existingSame(dDir, 'P', p.ko, p.period);
       if (!pName) { let c = nextCode(dDir, 'P'); while (takenP.has(c)) c = `P${String(Number(c.slice(1)) + 1).padStart(2, '0')}`; takenP.add(c); pName = folderName(c, p.ko, p.en, p.period); }
       const pRel = path.join(dRel, pName);
-      items.push({ level: 'P', rel: pRel, name: pName, ko: p.ko, exists: fs.existsSync(path.join(root, pRel)) });
+      items.push({ level: 'P', rel: appRel(pRel), name: pName, ko: p.ko, exists: fs.existsSync(path.join(root, pRel)) });
     }
   }
   return { ok: true, items };
@@ -162,7 +163,7 @@ export function createStructure(root, spec, { log = () => {} } = {}) {
   if (!plan.ok) return plan;
   const created = [], kept = [], guides = { created: 0, kept: 0 };
   for (const it of plan.items) {
-    const dir = path.join(root, it.rel);
+    const dir = path.join(root, nativePath(it.rel)); // it.rel 은 화면 약속(`\`) — 이 OS 의 경로로
     if (!inside(root, dir)) return { ok: false, errors: [{ where: it.rel, message: '영혼 폴더 밖에는 만들 수 없습니다.' }] };
     if (fs.existsSync(dir)) { kept.push(it.rel); continue; } // v2.95: 이미 있는 폴더 안에는 아무것도 쓰지 않는다(규칙 메모가 없어도 — 사람이 일부러 비워 둔 것일 수 있다)
     fs.mkdirSync(dir, { recursive: false }); created.push(it.rel);
@@ -179,7 +180,7 @@ export function createStructure(root, spec, { log = () => {} } = {}) {
 /** 파이썬: IRIS_PYTHON → 영혼 동봉 심 → 데몬이 아는 파이썬 → PATH (설치기 ontology.mjs resolvePython 과 같은 순서 + 데몬 쪽 한 칸). */
 export function ontologyPython(root, fallback) {
   if (process.env.IRIS_PYTHON) return process.env.IRIS_PYTHON;
-  const shim = path.join(root, '_agent', 'shared', 'shims', 'python.cmd');
+  const shim = path.join(root, '_agent', 'shared', 'shims', shimFile('python'));
   if (fs.existsSync(shim)) return shim;
   return fallback || 'python';
 }
@@ -261,6 +262,8 @@ function skillsIn(dir, agent) {
   }
   return out;
 }
+/** 실행 파일 이름만 — 설정이 다른 OS 경로를 적었어도(`C:\\…` 를 macOS 에서 읽음) 두 구분자 모두에서 자른다. */
+const programName = (p) => String(p).split(/[\\/]/).pop();
 /** codex config.toml 의 [mcp_servers.<이름>] 머리와 command/url/type 줄만(값 중 실행 파일 이름만 남긴다). */
 export function codexMcp(toml) {
   const out = []; let cur = null;
@@ -269,7 +272,7 @@ export function codexMcp(toml) {
     if (h) { cur = { agent: 'codex', name: h[1].replace(/^"|"$/g, ''), kind: 'stdio', program: '' }; out.push(cur); continue; }
     if (/^\s*\[/.test(line)) { cur = null; continue; }
     if (!cur) continue;
-    const c = /^\s*command\s*=\s*"([^"]*)"/.exec(line); if (c) cur.program = path.basename(c[1].replace(/\\\\/g, '\\'));
+    const c = /^\s*command\s*=\s*"([^"]*)"/.exec(line); if (c) cur.program = programName(c[1].replace(/\\\\/g, '\\'));
     if (/^\s*url\s*=/.test(line)) cur.kind = 'http';
     const en = /^\s*enabled\s*=\s*(true|false)/.exec(line); if (en) cur.enabled = en[1] === 'true';
   }
@@ -281,7 +284,7 @@ export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.home
   const skills = [...skillsIn(path.join(cl, 'skills'), 'claude'), ...skillsIn(path.join(cx, 'skills'), 'codex'), ...(home ? skillsIn(path.join(home, '.agents', 'skills'), 'codex') : [])];
   const mcp = [];
   const cj = readJson(path.join(cl, '.claude.json'));
-  for (const [name, v] of Object.entries(cj?.mcpServers || {})) mcp.push({ agent: 'claude', name, kind: v?.type === 'http' || v?.type === 'sse' || v?.url ? 'http' : 'stdio', program: v?.command ? path.basename(String(v.command)) : '' });
+  for (const [name, v] of Object.entries(cj?.mcpServers || {})) mcp.push({ agent: 'claude', name, kind: v?.type === 'http' || v?.type === 'sse' || v?.url ? 'http' : 'stdio', program: v?.command ? programName(String(v.command)) : '' });
   mcp.push(...codexMcp(readText(path.join(cx, 'config.toml'))));
   const plugins = [];
   const inst = readJson(path.join(cl, 'plugins', 'installed_plugins.json'));

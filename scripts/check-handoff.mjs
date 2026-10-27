@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   HANDOFF_SCHEMA, SETUP_STAGES, handoffFile, receiptFile, handoffExists, readHandoff,
   receiptSetupOk, receiptLoginOk, handoffLoginOk, resolveState, markMessengerPrompted, resumeTarget, HandoffFlow,
-  CONTRACT_INSTALLER_PATH, relayReady,
+  CONTRACT_INSTALLER_PATH, CONTRACT_INSTALLER_PATH_MAC, relayReady,
 } from '../daemon/handoff.mjs';
 import http from 'node:http';
 import { SetupProgress, progressFile } from '../daemon/progress.mjs';
@@ -132,45 +132,47 @@ ok(handoffLoginOk({ login: { claude: 'failed' } }) === false && handoffLoginOk({
 }
 
 // ---------- 4) resumeTarget — 영혼 밖으로도, 셸 재해석으로도 새지 않는다 ----------
+// 이 절은 Windows 길(cmd.exe)을 본다 — macOS 에서 돌려도 같은 답이 나오게 platform 을 못 박는다. macOS 길은 4-mac 절.
+const WIN = { platform: 'win32' };
 {
   const r = makeSoul('RESUME');
-  const t = resumeTarget(r, handoffDoc());
+  const t = resumeTarget(r, handoffDoc(), WIN);
   ok(t.ok && t.file === path.join(r, '_agent', 'setup', 'installer', 'IRIS-설치.cmd') && t.args.join(' ') === '--resume', 'resumeTarget: 영혼 상대경로 → 절대경로 + --resume');
-  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent\\setup\\installer\\IRIS-설치.cmd' } })).ok === true, 'resumeTarget: 슬래시 방향은 너그럽게(역슬래시도 같은 경로)');
-  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '../밖/IRIS-설치.cmd' } })).ok === false, 'resumeTarget: 영혼 밖 경로 거부');
-  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: 'C:/Windows/system32/cmd.exe' } })).ok === false, 'resumeTarget: 절대경로 거부');
-  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/없는파일.cmd' } })).ok === false, 'resumeTarget: 사본이 없으면 거부');
-  const bad = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/IRIS-설치.cmd', args: ['& del /q *', '--resume'] } }));
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent\\setup\\installer\\IRIS-설치.cmd' } }), WIN).ok === true, 'resumeTarget: 슬래시 방향은 너그럽게(역슬래시도 같은 경로)');
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '../밖/IRIS-설치.cmd' } }), WIN).ok === false, 'resumeTarget: 영혼 밖 경로 거부');
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: 'C:/Windows/system32/cmd.exe' } }), WIN).ok === false, 'resumeTarget: 절대경로 거부');
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/없는파일.cmd' } }), WIN).ok === false, 'resumeTarget: 사본이 없으면 거부');
+  const bad = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/IRIS-설치.cmd', args: ['& del /q *', '--resume'] } }), WIN);
   ok(bad.ok && bad.args.length === 1 && bad.args[0] === '--resume', 'resumeTarget: 이상한 인자는 걸러낸다');
 
   // ⓐ 계약이 정한 그 경로 하나만 — 영혼 안에 실제로 있는 다른 파일도 받지 않는다(검토 1회차 Important).
   //    이것이 없으면 인수 문서가 "이름에 셸 글자가 든 영혼 안 파일"을 가리켜 cmd 재해석을 노릴 수 있다.
   const other = path.join(r, '_agent', 'setup', 'installer', '다른것.cmd');
   fs.writeFileSync(other, '@echo off\r\n', 'utf8');
-  const nonContract = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/다른것.cmd' } }));
+  const nonContract = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/다른것.cmd' } }), WIN);
   ok(nonContract.ok === false && /계약과 다릅니다/.test(nonContract.reason), 'resumeTarget: 영혼 안에 실제로 있어도 계약 밖 경로면 거부');
   ok(CONTRACT_INSTALLER_PATH === '_agent/setup/installer/IRIS-설치.cmd', '계약이 정한 설치기 사본 자리는 하나뿐');
   // 셸 글자가 든 이름은 계약 검사에서 이미 걸린다(같은 폴더에 실제로 만들어 두고 확인)
   const meta = path.join(r, '_agent', 'setup', 'installer', 'IRIS-설치.cmd&calc.cmd');
   fs.writeFileSync(meta, '@echo off\r\n', 'utf8');
-  const metaRel = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/IRIS-설치.cmd&calc.cmd' } }));
+  const metaRel = resumeTarget(r, handoffDoc({ resume: { installerPath: '_agent/setup/installer/IRIS-설치.cmd&calc.cmd' } }), WIN);
   ok(metaRel.ok === false, 'resumeTarget: 이름에 셸 글자(&)가 든 실제 파일도 거부');
 }
 {
   // ⓑ 영혼 루트 자체에 셸 글자가 있으면(계약 경로라도) 실행하지 않는다 — 풀어 본 절대경로를 다시 본다.
   const r = makeSoul('META(&)WRAP');
-  const t = resumeTarget(r, handoffDoc());
+  const t = resumeTarget(r, handoffDoc(), WIN);
   ok(t.ok === false && /셸이 다르게 읽는 글자/.test(t.reason), 'resumeTarget: 풀어 본 절대경로에 & ( ) 가 있으면 거부');
   const f = flowOfLate(r);
   const rr = f.resume();
   ok(rr.ok === false && f.spawns.length === 0, 'resume(): 거부되면 cmd.exe 를 아예 띄우지 않는다');
 }
 /** 위 한 곳에서만 쓰는 작은 흐름(아래 flowOf 와 같은 모양, spawn 호출을 들여다볼 수 있게) */
-function flowOfLate(root) {
+function flowOfLate(root, platform = 'win32') {
   const spawns = [];
   const f = new HandoffFlow({
     root, stateDir: path.join(root, '_state'), sm: null, log: () => {}, broadcast: () => {},
-    spawnImpl: (cmd, args, o) => { spawns.push({ cmd, args, o }); return { pid: 4242, unref() {} }; },
+    spawnImpl: (cmd, args, o) => { spawns.push({ cmd, args, o }); return { pid: 4242, unref() {} }; }, platform,
   });
   f.spawns = spawns; return f;
 }
@@ -186,6 +188,25 @@ function flowOfLate(root) {
   ok(f.spawns[0].o.detached === true && f.spawns[0].o.cwd === r, 'resume(): 분리 실행 · cwd = 영혼 루트(창은 그대로 산다)');
 }
 
+// ---------- 4-mac) macOS: 같은 자리의 .command 사본을 /bin/sh 로(셸 재해석 없이 배열 인자) ----------
+{
+  const r = makeSoul('RESUME-MAC');
+  const cmdFile = path.join(r, '_agent', 'setup', 'installer', 'IRIS-설치.command');
+  fs.writeFileSync(cmdFile, '#!/bin/sh\n', 'utf8');
+  const doc = handoffDoc({ resume: { installerPath: CONTRACT_INSTALLER_PATH_MAC, args: ['--resume'] } });
+  const t = resumeTarget(r, doc, { platform: 'darwin' });
+  ok(t.ok && t.file === cmdFile && t.args.join(' ') === '--resume', 'macOS resumeTarget: 계약 자리 .command → 절대경로 + --resume');
+  ok(resumeTarget(r, handoffDoc(), { platform: 'darwin' }).ok === false, 'macOS resumeTarget: Windows 사본(.cmd) 경로는 받지 않는다');
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '/bin/sh' } }), { platform: 'darwin' }).ok === false, 'macOS resumeTarget: 절대경로 거부');
+  ok(resumeTarget(r, handoffDoc({ resume: { installerPath: '../밖/IRIS-설치.command' } }), { platform: 'darwin' }).ok === false, 'macOS resumeTarget: 영혼 밖 경로 거부');
+  writeJson(handoffFile(r), doc);
+  const f = flowOfLate(r, 'darwin');
+  const rr = f.resume();
+  ok(rr.ok && f.spawns.length === 1 && f.spawns[0].cmd === '/bin/sh', 'macOS resume(): /bin/sh 하나만 띄운다');
+  ok(JSON.stringify(f.spawns[0].args) === JSON.stringify([cmdFile, '--resume']), 'macOS resume(): 경로·인자를 배열로(셸 재해석 없음)');
+  ok(f.spawns[0].o.detached === true && f.spawns[0].o.cwd === r && !f.spawns[0].o.windowsVerbatimArguments, 'macOS resume(): 분리 실행 · cwd = 영혼 루트');
+}
+
 // ---------- 5) HandoffFlow 첫 실행(가짜 SessionManager — CLI·pty 접촉 0) ----------
 function fakeSm(list = []) {
   const calls = [];
@@ -196,7 +217,7 @@ function fakeSm(list = []) {
     create: (o) => { calls.push({ op: 'create', ...o }); const rec = { id: 'sX', cwd: o.cwd, agent: o.agent, status: 'busy' }; list.push(rec); return rec; },
   };
 }
-const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.join(root, '_state'), sm, log: () => {}, broadcast: () => {}, spawnImpl: () => ({ pid: 4242, unref() {} }), ...over });
+const flowOf = (root, sm, over = {}) => new HandoffFlow({ root, stateDir: path.join(root, '_state'), sm, log: () => {}, broadcast: () => {}, spawnImpl: () => ({ pid: 4242, unref() {} }), platform: 'win32', ...over });
 {
   // v2.90(2026-10-19 사용자 결정): ready 여도 세션을 자동으로 열지 않는다 — 화면이 튜토리얼을 띄우고, 끝나면 메신저 안내
   const r = makeSoul('FLOW-READY');

@@ -76,7 +76,15 @@ function createTranscript() {
   // 문서(한/글·워드·엑셀·PPT)와 PDF: PDF는 그대로, 나머지는 데몬이 PDF로 변환해 대화 안에 넣는다.
   const DOC_RE = /(?:\/|file:\/\/\/)?[A-Za-z]:[\\/](?:[^\\/:*?"<>|\r\n`]+[\\/])*[^\\/:*?"<>|\r\n`]*?\.(?:hwpx?|docx?|rtf|odt|xlsx?|xlsm|ods|pptx?|odp|pdf)(?!\w)/gi;
   const LOCAL_URL_RE = /https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?[^\s"'<>)]*/g;
-  const normPath = (p) => p.replace(/^file:\/\/\//i, '').replace(/^\/([A-Za-z]:)/, '$1').replace(/\//g, '\\').trim();
+  // macOS(2026-10-27): 홈·외장 디스크·임시 폴더 아래의 POSIX 절대경로도 같은 규칙으로 찾는다(Windows 화면에서는 쓰지 않는다 — 윈도 규칙은 위 그대로).
+  // 폴더 이름이 공백으로 끝나지는 않으므로 "a.pdf, 그리고 /usr/x.png" 가 한 경로로 이어 읽히지 않는다.
+  const MAC_PATHS = /Mac/i.test(navigator.platform || '');
+  const posixRe = (ext) => new RegExp(String.raw`(?<![\w.])(?:file:\/\/)?\/(?:Users|Volumes|private|tmp)\/(?:[^\/:*?"<>|\r\n\x60]*[^\/:*?"<>|\r\n\x60\s]\/)*[^\/:*?"<>|\r\n\x60]*?\.(?:${ext})(?!\w)`, 'gi');
+  const POSIX_RE = { img: posixRe('png|jpe?g|gif|webp|svg|bmp'), html: posixRe('html?'), doc: posixRe('hwpx?|docx?|rtf|odt|xlsx?|xlsm|ods|pptx?|odp|pdf') };
+  const pathsIn = (text, re, kind) => [...String(text || '').matchAll(re), ...(MAC_PATHS ? String(text || '').matchAll(POSIX_RE[kind]) : [])];
+  const normPath = (p) => (/^(?:file:\/\/)?\/(?![A-Za-z]:)/i.test(p) && !/^\/[A-Za-z]:/.test(p) && MAC_PATHS
+    ? p.replace(/^file:\/\//i, '').trim()
+    : p.replace(/^file:\/\/\//i, '').replace(/^\/([A-Za-z]:)/, '$1').replace(/\//g, '\\').trim());
   const docUrl = (p) => `/api/doc?path=${encodeURIComponent(p)}`;
   // 앱 자기 주소(데몬 127.0.0.1:3458 등, 도구 출력에 자주 찍힘)는 넣지 않는다 — 대화 안에 Face 화면이 재귀로 열리고(2026-09-10 실측 5개) 초점까지 가져간다.
   const isSelfUrl = (u) => { try { const x = new URL(u); return x.port === location.port && (x.hostname === '127.0.0.1' || x.hostname === 'localhost'); } catch { return false; } };
@@ -85,9 +93,9 @@ function createTranscript() {
   function embedsFor(text) {
     const out = []; const seen = new Set();
     const add = (kind, key, html) => { if (!seen.has(key)) { seen.add(key); out.push({ kind, html }); } };
-    for (const m of String(text || '').matchAll(IMG_RE)) { const p = normPath(m[0]); add('img', p.toLowerCase(), `<figure class="embed pic"><div class="pic-box"><img src="${fileUrl(p)}" alt="" loading="lazy" onload="if(this.naturalWidth<640)this.classList.add('small')" onerror="this.closest('figure').classList.add('broken')"></div><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
-    for (const m of String(text || '').matchAll(HTML_RE)) { const p = normPath(m[0]); add('html', p.toLowerCase(), `<figure class="embed frame"><iframe src="${fileUrl(p)}" ${born()} loading="lazy" sandbox="allow-scripts allow-same-origin" title="${esc(p)}"></iframe><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
-    for (const m of String(text || '').matchAll(DOC_RE)) {
+    for (const m of pathsIn(text, IMG_RE, 'img')) { const p = normPath(m[0]); add('img', p.toLowerCase(), `<figure class="embed pic"><div class="pic-box"><img src="${fileUrl(p)}" alt="" loading="lazy" onload="if(this.naturalWidth<640)this.classList.add('small')" onerror="this.closest('figure').classList.add('broken')"></div><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
+    for (const m of pathsIn(text, HTML_RE, 'html')) { const p = normPath(m[0]); add('html', p.toLowerCase(), `<figure class="embed frame"><iframe src="${fileUrl(p)}" ${born()} loading="lazy" sandbox="allow-scripts allow-same-origin" title="${esc(p)}"></iframe><figcaption><code>${esc(p)}</code><button class="icon-btn small" data-open="${esc(p)}" title="새 창에서 열기">⧉</button></figcaption></figure>`); }
+    for (const m of pathsIn(text, DOC_RE, 'doc')) {
       const p = normPath(m[0]); const isPdf = /\.pdf$/i.test(p);
       const src = isPdf ? fileUrl(p) : docUrl(p);
       const note = isPdf ? '' : '<span class="doc-note">PDF 미리보기로 변환</span>';

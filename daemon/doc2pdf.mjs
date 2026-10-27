@@ -3,12 +3,14 @@
 // 데몬은 순수 node 라 COM 을 직접 못 부른다 → 파이썬(doc2pdf.py)을 자식으로 띄운다.
 //   · .hwp/.hwpx → pyhwpx 가 깔린 한/글 MCP venv 파이썬 (환경변수 IRIS_FACE_HWP_PY 로 덮어쓰기)
 //   · 그 밖(오피스) → win32com 이 있는 시스템 파이썬 (환경변수 IRIS_FACE_PY / python)
+//   · macOS → 오피스만 LibreOffice(soffice --headless), 한/글은 미지원 안내
 // 변환은 원본을 읽기 전용으로만 열고 새 PDF 를 만든다. 실패하면 throw → 호출부가 카드로 대체.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { toolPath } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -55,6 +57,33 @@ function cachePath(cacheDir, src) {
 
 const inflight = new Map(); // 같은 파일 동시 요청은 한 번만 변환
 
+// ---- macOS(2026-10-27): COM 이 없다 → 오피스 문서만 LibreOffice(설치돼 있으면)로 변환한다. 한/글 미리보기는 아직 없다(P03 설계-macOS M6). ----
+/** LibreOffice 실행 파일: IRIS_FACE_SOFFICE → /Applications → ~/Applications. 없으면 null. */
+export function sofficePath() {
+  const cands = [process.env.IRIS_FACE_SOFFICE, '/Applications/LibreOffice.app/Contents/MacOS/soffice', path.join(os.homedir(), 'Applications', 'LibreOffice.app', 'Contents', 'MacOS', 'soffice')].filter(Boolean);
+  return cands.find((c) => { try { return fs.statSync(c).isFile(); } catch { return false; } }) || null;
+}
+function sofficeToPdf(soffice, src, out, cacheDir) {
+  // 사용자가 LibreOffice 를 열어 둔 채여도 부딪히지 않게 데몬 전용 프로필(state/doc-cache/lo-profile)로 돌린다.
+  const work = fs.mkdtempSync(path.join(cacheDir, 'lo-'));
+  const profile = pathToFileURL(path.join(cacheDir, 'lo-profile')).href;
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    const child = spawn(soffice, [`-env:UserInstallation=${profile}`, '--headless', '--norestore', '--convert-to', 'pdf', '--outdir', work, src], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} reject(new Error('변환 시간 초과(90초)')); }, 90_000);
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const made = path.join(work, `${path.basename(src, path.extname(src))}.pdf`);
+      try {
+        if (code === 0 && fs.existsSync(made) && fs.statSync(made).size > 0) { fs.renameSync(made, out); resolve(out); }
+        else reject(new Error(stderr.trim().split('\n').pop() || `변환 실패(code=${code})`));
+      } finally { try { fs.rmSync(work, { recursive: true, force: true }); } catch {} }
+    });
+  });
+}
+
 // src(문서) → PDF 경로. 캐시 적중 시 즉시 반환. cacheDir = state/doc-cache.
 export function toPdf(src, cacheDir, log = () => {}) {
   const ext = path.extname(src).toLowerCase();
@@ -66,6 +95,15 @@ export function toPdf(src, cacheDir, log = () => {}) {
   if (inflight.has(out)) return inflight.get(out);
 
   const isHwp = ext === '.hwp' || ext === '.hwpx';
+  if (process.platform !== 'win32') {
+    if (isHwp) return Promise.reject(new Error('macOS 에서는 한/글 문서 미리보기를 아직 지원하지 않습니다. ⧉ 로 기본 앱에서 여세요.'));
+    const soffice = sofficePath();
+    if (!soffice) return Promise.reject(new Error('LibreOffice 가 없어 미리보기를 만들 수 없습니다. ⧉ 로 기본 앱에서 여세요.'));
+    const t0 = Date.now();
+    const job = sofficeToPdf(soffice, src, out, cacheDir).then((r) => { log(`doc2pdf(soffice) ${ext} ${((Date.now() - t0) / 1000).toFixed(1)}s ${path.basename(src)}`); return r; }).finally(() => inflight.delete(out));
+    inflight.set(out, job);
+    return job;
+  }
   const py = isHwp ? hwpPython() : OFFICE_PY;
   if (isHwp && !py) return Promise.reject(new Error('한/글 변환기(pyhwpx)를 찾지 못했습니다. 한/글이 설치된 PC에서만 미리보기가 됩니다.'));
 

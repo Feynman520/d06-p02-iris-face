@@ -11,6 +11,8 @@ import { spawn } from 'node:child_process';
 import { stripFaceNote } from './facenote.mjs';
 import { applyLongKey } from './auth.mjs';
 import { CLAUDE_CONFIG_DIR } from './agents.mjs';
+import { soulRoot } from './paths.mjs';
+import { isWin, agentLaunch } from './platform.mjs';
 
 export const TITLE_MODEL = 'haiku';
 const TIMEOUT_MS = 90_000;
@@ -25,11 +27,20 @@ const SYSTEM = [
 ].join('\n');
 const wrap = (src) => `<요청>\n${src}\n</요청>\n\n위 <요청>의 제목 하나만 출력.`;
 
-/** claude 실행 파일 위치: ~/.local/bin/claude.exe(공식 설치) → PATH의 claude.exe. 없으면 null(제목 생성 건너뜀) */
+/** claude 실행 파일 위치: ~/.local/bin/claude.exe(공식 설치) → PATH의 claude.exe. 없으면 null(제목 생성 건너뜀)
+ *  macOS 는 영혼의 심(claude) → ~/.local/bin/claude → PATH 순 — 창에서 띄운 데몬은 ~/.zprofile 의 PATH 를 물려받지 못한다. */
 export function findClaudeExe() {
+  if (!isWin()) return findPosixAgent('claude');
   const cands = [path.join(os.homedir(), '.local', 'bin', 'claude.exe')];
   for (const d of (process.env.PATH || '').split(path.delimiter)) if (d) cands.push(path.join(d, 'claude.exe'));
   return cands.find(f => { try { return fs.statSync(f).isFile(); } catch { return false; } }) || null;
+}
+
+/** macOS: 에이전트 실행 파일(심이 설정 폴더·중계기 주소를 맞춘다). 없으면 null. */
+export function findPosixAgent(name) {
+  const cands = [path.join(soulRoot(), '_agent', 'shared', 'shims', name), path.join(os.homedir(), '.local', 'bin', name)];
+  for (const d of (process.env.PATH || '').split(path.delimiter)) if (d) cands.push(path.join(d, name));
+  return cands.find(f => { try { fs.accessSync(f, fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } }) || null;
 }
 
 // 데몬이 클로드코드 세션 안에서 시작됐을 때 물려받는 "자식 세션" 표식을 걷어낸다(sessions.mjs와 같은 규칙)
@@ -77,9 +88,11 @@ export function generateTitle(prompt, { log = () => {}, exe = undefined, agent =
   let file, args, stdinText = null;
   if (useCodex) {
     // codex.cmd(심)는 PATH 로 찾는다 — cmd.exe /c 를 거치므로 요청문은 인수가 아니라 표준 입력으로 넘긴다(따옴표·한글 안전).
-    file = 'cmd.exe';
+    // macOS 는 cmd.exe 없이 심 파일을 직접 띄운다(agentLaunch).
+    const codex = isWin() ? 'codex' : findPosixAgent('codex');
+    if (!codex) { log('title gen skipped: codex not found'); return Promise.resolve(''); }
     // --dangerously-bypass-hook-trust: 코덱스 0.156.0 부터 설정 키 bypass_hook_trust 는 무시("unrecognized configuration setting")되고 이 깃발만 통한다(2026-09-23 실측; TUI 세션과 같은 깃발).
-    args = ['/c', 'codex', 'exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-m', model || CODEX_TITLE_MODEL, '-c', 'model_reasoning_effort=low', '-'];
+    ({ file, args } = agentLaunch([codex, 'exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-m', model || CODEX_TITLE_MODEL, '-c', 'model_reasoning_effort=low', '-']));
     stdinText = `${SYSTEM}\n\n${wrap(src)}\n`;
   } else {
     file = exe === undefined ? findClaudeExe() : exe;

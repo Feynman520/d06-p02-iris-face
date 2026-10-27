@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { soulRoot, readReceipt } from './paths.mjs';
+import { isWin, shimFile } from './platform.mjs';
 
 export const KNOWN_AGENTS = ['claude', 'codex'];
 
@@ -48,8 +49,41 @@ export function agentShimText(agent) {
     'exit /b %errorlevel%',
   ]);
 }
+
+// ---- macOS 심 템플릿(installer/lib/shims.mjs posixAgentShim() 그대로 — ASCII, LF, 0755) ----
+// 위 Windows 사본과 같은 규칙: 설치기 정적 검사 ⑥·tests/shims-parity 가 두 원본을 바이트 비교한다.
+function lf(lines) {
+  return lines.join('\n') + '\n';
+}
+const POSIX_HEAD = ['#!/bin/sh', 'D=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)'];
+export function posixAgentShimText(agent) {
+  const { envName, envDir } = AGENT_SHIMS[agent];
+  // codex 는 npm 의 .bin 링크·`#!/usr/bin/env node` 에 기대지 않고 동봉 node 로 진입 파일을 부른다.
+  const target = agent === 'claude'
+    ? '"$A/shared/tools/claude/claude"'
+    : '"$A/shared/tools/node/bin/node" "$A/shared/tools/codex/node_modules/@openai/codex/bin/codex.js"';
+  return lf([
+    ...POSIX_HEAD,
+    'A=$(CDPATH= cd -- "$D/../.." && pwd)',
+    'export ANTHROPIC_BASE_URL="http://127.0.0.1:3456"',
+    `export ${envName}="$A/${envDir}"`,
+    'export PATH="$A/shared/tools/node/bin:$PATH"',
+    'if [ -x "$D/relay-ensure" ]; then "$D/relay-ensure"; fi',
+    `exec ${target} "$@"`,
+  ]);
+}
+
 export function shimsDir(root) {
   return path.join(root, '_agent', 'shared', 'shims');
+}
+/** 이 OS 의 에이전트 심 하나를 쓴다(macOS 는 실행 권한까지). */
+function writeAgentShim(root, agent) {
+  const dir = shimsDir(root);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, shimFile(agent));
+  if (isWin()) { fs.writeFileSync(file, agentShimText(agent), 'ascii'); return; }
+  fs.writeFileSync(file, posixAgentShimText(agent), 'ascii');
+  fs.chmodSync(file, 0o755);
 }
 
 // ---- 영수증 원자적 갱신(installer/lib/receipt.mjs writeReceipt() 와 같은 패턴) ----
@@ -89,10 +123,13 @@ export function activeAgentsMap(AGENTS, receipt) { // eslint-disable-line no-unu
   return AGENTS;
 }
 
-/** 그 에이전트의 실행 파일(설치기가 놓는 전달 .cmd). 심은 이 파일을 부르므로, 없으면 깨워도 켜지지 않는다. */
+/** 그 에이전트의 실행 파일(설치기가 놓는 전달 .cmd). 심은 이 파일을 부르므로, 없으면 깨워도 켜지지 않는다.
+ *  macOS 는 심이 부르는 것과 같은 자리 — claude = sh 전달자, codex = npm 패키지의 진입 파일. */
 export function toolCmdPath(root, agent) {
   const { tool } = AGENT_SHIMS[agent];
-  return path.join(root, '_agent', 'shared', 'tools', tool, `${tool}.cmd`);
+  const tools = path.join(root, '_agent', 'shared', 'tools');
+  if (!isWin()) return agent === 'claude' ? path.join(tools, 'claude', 'claude') : path.join(tools, 'codex', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  return path.join(tools, tool, `${tool}.cmd`);
 }
 
 /** 영수증이 있는 설치본에서 프로그램 자체가 아직 없는 에이전트(예: 2.0.37 이하 코덱스 단독 설치의 Claude). */
@@ -131,12 +168,11 @@ export function healAgents({ log = () => {} } = {}) {
   const woke = [];
   for (const a of KNOWN_AGENTS) {
     const info = receipt.installed?.[a];
-    if (info && info.active === true && fs.existsSync(path.join(shimsDir(root), `${a}.cmd`))) continue;
+    if (info && info.active === true && fs.existsSync(path.join(shimsDir(root), shimFile(a)))) continue;
     if (!fs.existsSync(toolCmdPath(root, a))) continue;
     if (info?.active === true) {
       // 영수증은 켜짐인데 심만 사라졌다 — 심만 다시 쓴다.
-      fs.mkdirSync(shimsDir(root), { recursive: true });
-      fs.writeFileSync(path.join(shimsDir(root), `${a}.cmd`), agentShimText(a), 'ascii');
+      writeAgentShim(root, a);
       log(`heal ${a}: 심 다시 씀`);
     } else {
       wake(a, { log });
@@ -168,9 +204,7 @@ export function wake(agent, { log = () => {} } = {}) {
   if (info.active === true) {
     log(`wake ${agent}: 이미 깨어 있음(멱등, 변경 없음)`);
   } else {
-    const dir = shimsDir(root);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${agent}.cmd`), agentShimText(agent), 'ascii');
+    writeAgentShim(root, agent);
     receipt.installed[agent] = { ...info, active: true };
     writeReceiptAtomic(root, receipt);
     log(`wake ${agent}: shim 작성 + receipt.installed.${agent}.active=true`);

@@ -346,9 +346,10 @@ let planFile = null;
   const fixed = JSON.parse(fs.readFileSync(planFile, 'utf8'));
   ok(fixed.daemonPid === process.pid && fixed.daemonPort === 3459 && fixed.items.length === 1, '인계: 누를 때 plan.json 의 daemonPid·daemonPort 를 지금 데몬의 것으로 다시 적는다');
   const nodeDir = path.join(root, '_agent', 'shared', 'tools', 'node');
-  fs.mkdirSync(nodeDir, { recursive: true }); fs.writeFileSync(path.join(nodeDir, 'node.exe'), 'stub', 'utf8');
+  const bundledNode = process.platform === 'win32' ? path.join(nodeDir, 'node.exe') : path.join(nodeDir, 'bin', 'node'); // macOS 배치 = tools/node/bin/node
+  fs.mkdirSync(path.dirname(bundledNode), { recursive: true }); fs.writeFileSync(bundledNode, 'stub', 'utf8');
   up.applyNow();
-  ok(spawns[spawns.length - 1].cmd === path.join(nodeDir, 'node.exe'), '인계: 동봉 node 가 있으면 그것으로');
+  ok(spawns[spawns.length - 1].cmd === bundledNode, '인계: 동봉 node 가 있으면 그것으로');
 }
 
 // ---- 13) 적용기 결과 → 화면 토스트(한 번만) ----
