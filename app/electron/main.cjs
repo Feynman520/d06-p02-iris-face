@@ -1,10 +1,11 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // IRIS-Face Electron 창(데몬 클라이언트). 데몬이 세션을 소유하므로 창은 언제든 닫아도 된다.
 // 창 X = 트레이로 숨김. 트레이: 창 열기 · 세션 N개 · 전부 종료(확인) · 창만 닫기.
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, ipcMain, clipboard, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+const { contextMenuTemplate } = require('./context-menu.cjs');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -134,6 +135,21 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   // 끌어다 놓기 안전망(v2.85): 페이지가 놓기를 못 막은 경우에도 창·프레임이 놓은 파일(file://)로 넘어가지 않게(화면은 전부 http 데몬 주소라 file:// 이동은 쓸 일이 없다)
   win.webContents.on('will-frame-navigate', (e) => { if (/^file:/i.test(e.url || '')) { e.preventDefault(); } });
+  // 우클릭 메뉴(2026-10-28 macOS 신고): 잘라내기·복사·붙여넣기·모두 선택, 선택 글 복사, 링크 열기/복사, 이미지 복사, 맞춤법 제안.
+  // macOS 에만 켠다 — Windows 는 네이티브 창이 키보드 초점을 빼앗던 전례(app/dialog.js)가 있어 그 PC 에서 확인한 뒤 켠다.
+  if (IS_MAC) win.webContents.on('context-menu', (_e, params) => {
+    const items = contextMenuTemplate(params).map((it) => {
+      if (!it.action) return it;
+      const click = {
+        replace: () => win.webContents.replaceMisspelling(it.word),
+        openLink: () => shell.openExternal(it.url),
+        copyLink: () => clipboard.writeText(it.url),
+        copyImage: () => win.webContents.copyImageAt(it.x, it.y),
+      }[it.action];
+      return { label: it.label, click };
+    });
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
   // macOS: 앱 메뉴(끝내기 Cmd+Q = 창만 닫기, 세션 유지) + 편집 메뉴 — 편집 메뉴가 없으면 입력창에서 Cmd+C/V/X/A 가 먹지 않는다.
   const menu = Menu.buildFromTemplate(IS_MAC ? [
     { role: 'appMenu' },

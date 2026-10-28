@@ -105,5 +105,27 @@ if (process.platform === 'darwin') {
   console.log('SKIP macOS window bundle (not macOS)');
 }
 
+// ⑥ 우클릭 메뉴(2026-10-28 macOS 신고 "우클릭이 먹히지 않는다") — 순수 함수 + main.cjs 연결
+{
+  const { createRequire } = await import('node:module');
+  const { contextMenuTemplate } = createRequire(import.meta.url)('../app/electron/context-menu.cjs');
+  const L = (items) => items.map((i) => i.type === 'separator' ? '|' : i.label).join(',');
+  const edit = { isEditable: true, editFlags: { canUndo: true, canRedo: false, canCut: true, canCopy: true, canPaste: true, canSelectAll: true } };
+  ok(L(contextMenuTemplate(edit)) === '실행 취소,다시 실행,|,잘라내기,복사,붙여넣기,모두 선택', '우클릭: 입력칸 = 실행 취소·다시 실행 | 잘라내기·복사·붙여넣기·모두 선택');
+  const roles = contextMenuTemplate(edit).filter((i) => i.role);
+  ok(roles.map((i) => i.role).join(',') === 'undo,redo,cut,copy,paste,selectAll' && roles[1].enabled === false && roles[2].enabled === true, '우클릭: 입력칸 항목은 Electron role, 못 하는 것은 흐리게(editFlags)');
+  ok(L(contextMenuTemplate({ selectionText: '  고른 글 ' })) === '복사', '우클릭: 대화 글을 골랐으면 복사');
+  ok(contextMenuTemplate({}).length === 0 && contextMenuTemplate({ selectionText: '   ' }).length === 0, '우클릭: 빈 곳은 메뉴 없음');
+  const link = contextMenuTemplate({ linkURL: 'https://example.com/a', selectionText: 'x' });
+  ok(L(link) === '링크 열기,링크 주소 복사,|,복사' && link[0].action === 'openLink' && link[1].url === 'https://example.com/a', '우클릭: http 링크 = 열기·주소 복사(+ 고른 글 복사)');
+  ok(contextMenuTemplate({ linkURL: 'file:///etc/passwd' }).length === 0 && contextMenuTemplate({ linkURL: 'javascript:alert(1)' }).length === 0, '우클릭: file:·javascript: 링크는 열기 항목을 만들지 않는다');
+  const img = contextMenuTemplate({ mediaType: 'image', hasImageContents: true, x: 10, y: 20 });
+  ok(L(img) === '이미지 복사' && img[0].x === 10 && img[0].y === 20, '우클릭: 그림 = 이미지 복사(누른 자리)');
+  const spell = contextMenuTemplate({ ...edit, misspelledWord: 'helo', dictionarySuggestions: ['hello', 'help', 'helot', 'hell', 'held', 'helm'] });
+  ok(spell.slice(0, 5).every((i) => i.action === 'replace') && spell[5].type === 'separator' && spell[0].word === 'hello', '우클릭: 맞춤법 제안은 위에 5개까지, 고르면 바꾸기');
+  const main = fs.readFileSync(path.join(ROOT, 'app', 'electron', 'main.cjs'), 'utf8');
+  ok(/if \(IS_MAC\) win\.webContents\.on\('context-menu'/.test(main) && /contextMenuTemplate\(params\)/.test(main), 'main.cjs: macOS 창에 우클릭 메뉴를 연결한다(Windows 는 그대로)');
+}
+
 console.log(`\n${pass} PASS, ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
