@@ -709,6 +709,8 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 .toast-x:hover { background: var(--raised); color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 .dlg-title { font-size: 12px; letter-spacing: .08em; color: var(--ink-3); margin-bottom: 10px; }
+/* 전부 종료 중(v2.97): 정리·확인이 끝날 때까지 창을 덮어 "닫힌 줄 알았는데 아직 도는" 상태를 만들지 않는다 — 확인 창보다 위 */
+.dlg.quitting { z-index: 60; cursor: progress; }
 .about-head { display: flex; align-items: center; gap: 10px; }
 .about-mark svg { width: 26px; height: 26px; }
 .about-name { font-size: 20px; font-weight: 650; letter-spacing: .16em; color: var(--ink); }

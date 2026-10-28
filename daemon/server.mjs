@@ -272,6 +272,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p.startsWith('/app/')) return serveFile(res, path.join(APP, path.normalize(p.slice(5)).replace(/^([.][.][\\/])+/, '')), req);
     if (req.method === 'GET' && VENDOR[p]) return serveFile(res, VENDOR[p]);
     if (req.method === 'GET' && p === '/favicon.ico') { res.writeHead(204); return res.end(); }
+    // 전부 종료 중(v2.97)에는 새 세션·재개·전송을 받지 않는다 — 정리하는 사이에 새 CLI 가 떠서 남는 일이 없게(종료 요청·조회는 그대로)
+    if (shuttingDown && req.method !== 'GET' && p !== '/api/shutdown') return json(res, 503, { error: 'IRIS 가 종료하는 중입니다' });
     if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features() });
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
     if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
@@ -532,7 +534,12 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && action === 'forget') { sm.forget(id); log(`forget ${id}`); return json(res, 200, { ok: true }); }
       if (req.method === 'DELETE' && !action) { const rec = sm.close(id); log(`close ${id} pid=${rec.pid}`); return json(res, 200, { ok: true }); }
     }
-    if (req.method === 'POST' && p === '/api/shutdown') { json(res, 200, { ok: true, closing: sm.list().length }); log('shutdown (all sessions by PID)'); setTimeout(shutdown, 100); return; }
+    // 전부 종료(v2.97): ?wait=1 이면 세션·MCP 정리와 확인이 끝난 뒤 보고를 돌려주고 내려간다(창 ×·⏻·트레이가 이 길).
+    // wait 없이 부르면 옛날처럼 접수만 바로 답한다(버전 불일치 재시작 등 내부 호출 호환). 두 번 불러도 정리는 한 번만 돈다.
+    if (req.method === 'POST' && p === '/api/shutdown') {
+      if (url.searchParams.get('wait') === '1') { const report = await shutdown(); return json(res, 200, { ok: report.ok, report }); }
+      json(res, 200, { ok: true, closing: sm.list().length }); setTimeout(shutdown, 100); return;
+    }
     log(`404 ${req.method} ${p}${url.search}`);
     json(res, 404, { error: `not found: ${req.method} ${p}` });
   } catch (e) { log(`400 ${req.method} ${p}: ${e.message}`); json(res, 400, { error: e.message }); }
@@ -564,11 +571,29 @@ wss.on('connection', (ws) => {
 });
 
 // ---- single instance / pid / shutdown ----
+// 전부 종료는 이 함수 하나(v2.97): 창 ×·Alt+F4·⏻·트레이·업데이트 적용·버전 불일치 재시작이 모두 여기로 온다. 여러 번 불려도 같은 약속(Promise)을 돌려준다.
+// 순서 = 모듈 shutdown(최대 2.5초) → 세션 가계도 종료·확인(sm.endAll, 최대 20초) → 음성·감시·측정기 → 보고 파일 → 데몬 종료.
+// 보고는 응답과 state\shutdown-report.json 두 곳에 남는다 — 창이 결과를 못 받더라도 무엇이 남았는지 나중에 알 수 있게.
+const SHUTDOWN_SESSIONS_MS = 20_000;
+let shuttingDown = null;
 function shutdown() {
-  // 모듈에 shutdown 을 먼저(최대 2.5초), 그다음 세션·음성·PID 파일. 모듈이 없으면 즉시 지나간다.
-  Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {}).then(() => {
-    try { sm.closeAll(); } catch {} try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { memory.stop(); } catch {} try { fs.unlinkSync(PID_FILE); } catch {} log('daemon exit'); setTimeout(() => process.exit(0), 200);
-  });
+  if (shuttingDown) return shuttingDown;
+  log('shutdown: start (all sessions by PID tree)');
+  try { broadcast({ type: 'shutdown', phase: 'start' }); } catch {}
+  shuttingDown = (async () => {
+    await Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {});
+    let report = null;
+    try { report = await Promise.race([sm.endAll(), new Promise(r => setTimeout(() => r(null), SHUTDOWN_SESSIONS_MS))]); }
+    catch (e) { log(`shutdown: endAll error ${e?.stack || e}`); }
+    if (!report) report = { ok: false, verified: false, timeout: true, sessions: [], ended: 0, survivors: [] };
+    try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { memory.stop(); } catch {}
+    try { fs.writeFileSync(path.join(STATE, 'shutdown-report.json'), JSON.stringify({ ...report, at: new Date().toISOString(), version: VERSION }, null, 2), 'utf8'); } catch {}
+    try { fs.unlinkSync(PID_FILE); } catch {}
+    log(`daemon exit (shutdown ok=${report.ok} verified=${report.verified} survivors=${report.survivors.length}${report.timeout ? ' TIMEOUT' : ''})`);
+    return report;
+  })();
+  shuttingDown.then(() => setTimeout(() => process.exit(0), 400)); // 기다리던 요청에 보고가 나갈 틈
+  return shuttingDown;
 }
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();

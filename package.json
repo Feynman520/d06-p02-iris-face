@@ -45,7 +45,9 @@
     "verify:settings": "node scripts/check-settings.mjs",
     "verify:tutorial": "node scripts/check-tutorial.mjs",
     "verify:deck": "node scripts/check-deck.mjs",
-    "verify:folders": "node scripts/check-folders.mjs"
+    "verify:folders": "node scripts/check-folders.mjs",
+    "verify:shutdown": "node scripts/check-shutdown.mjs",
+    "verify:close-window": "node scripts/check-close-window.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

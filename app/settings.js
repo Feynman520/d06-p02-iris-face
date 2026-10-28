@@ -51,7 +51,7 @@ window.Settings = (() => {
       const tip = c.cost != null ? `이 컴퓨터에서 추가 CPU 부담 ${c.cost}% (한 코어=100, 예산 ${r.budget}%)${isRec ? ' — 추천' : ''}` : '아직 실측 전 — 「다시 측정」을 누르면 부담이 표시돼요';
       return `<button class="st-chip${cur ? ' cur' : ''}${heavy ? ' heavy' : ''}" type="button" data-fps="${c.fps}" title="${esc(tip)}">${isRec ? '★ ' : ''}${c.fps}fps${c.cost != null ? `<small>+${c.cost}%</small>` : ''}</button>`;
     }).join('');
-    const note = measured ? '' : r && r.failed ? `<span class="st-sub">측정이 끊겨 이전 값 유지</span>` : s.precise ? '' : `<span class="st-sub" title="트레이 → 창만 닫기 → IRIS-Face 다시 실행">실측은 창을 다시 연 뒤</span>`;
+    const note = measured ? '' : r && r.failed ? `<span class="st-sub">측정이 끊겨 이전 값 유지</span>` : s.precise ? '' : `<span class="st-sub" title="트레이 → 화면 다시 띄우기(세션 유지)">실측은 창을 다시 연 뒤</span>`;
     el.innerHTML = chips + note;
   }
   document.addEventListener('iris:stage', (e) => { if (open) renderStage(e.detail); });
