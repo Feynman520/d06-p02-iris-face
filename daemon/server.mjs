@@ -29,6 +29,7 @@ import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
 import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
+import { openInDesktop, isSystemPath, isLocalAbsolute, isExecutableFile, nativePath } from './platform.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -344,10 +345,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (p === '/api/ontology/rebuild') { const o = await runOntology(WS_ROOT, { python: ontologyPython(WS_ROOT, pythonExe()), log }); return json(res, 200, { ontology: o, graph: ontologyGraph(WS_ROOT) }); }
       // 폴더 열기(튜토리얼 「폴더 열기」·온톨로지 노드): 영혼 폴더 안의 **폴더**만, explorer.exe 에 경로 하나만 넘긴다.
-      const dir = path.resolve(WS_ROOT, String(b.rel || ''));
+      const dir = path.resolve(WS_ROOT, nativePath(b.rel || ''));
       if (!(dir + path.sep).toLowerCase().startsWith((path.resolve(WS_ROOT) + path.sep).toLowerCase()) || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return json(res, 404, { error: '영혼 폴더 안의 폴더만 열 수 있습니다' });
       // windowsHide 를 주지 않는다 — explorer.exe 는 받은 SW_HIDE 를 새 폴더 창에 그대로 써서 창이 "열렸지만 안 보이는" 상태가 된다(2026-10-21 실측·사용자 신고, v2.92).
-      try { spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref(); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
+      try { openInDesktop(dir, { folder: true }); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
       catch (e) { return json(res, 500, { error: e.message }); }
     }
     if (req.method === 'GET' && p === '/api/relay/ready') {
@@ -447,17 +448,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/file') {
       // 대화 안 삽입용 로컬 파일(이미지·HTML·PDF 등). 이 PC 로컬 데몬 전용 — 시스템 폴더는 막는다.
-      const raw = url.searchParams.get('path') || ''; const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
+      const raw = nativePath(url.searchParams.get('path') || ''); const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
       const ext = path.extname(file).toLowerCase();
       const okExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.html', '.htm', '.pdf', '.txt', '.md', '.csv', '.json'];
-      if (!okExt.includes(ext) || /^[A-Za-z]:\\(windows|program files|program files \(x86\)|programdata)\\/i.test(file)) { log(`403 file ${file}`); return json(res, 403, { error: `열 수 없는 파일 종류이거나 시스템 폴더입니다: ${file}` }); }
+      if (!okExt.includes(ext) || isSystemPath(file)) { log(`403 file ${file}`); return json(res, 403, { error: `열 수 없는 파일 종류이거나 시스템 폴더입니다: ${file}` }); }
       if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { log(`404 file ${file}`); return json(res, 404, { error: `파일이 없습니다: ${file}` }); }
       return serveFile(res, file);
     }
     if (req.method === 'GET' && p === '/api/doc') {
       // 문서(한/글·워드·엑셀·PPT)를 PDF로 변환해 삽입용으로 서빙. 원본은 읽기 전용, 결과는 state/doc-cache 캐시.
-      const raw = url.searchParams.get('path') || ''; const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
-      if (/^[A-Za-z]:\\(windows|program files|program files \(x86\)|programdata)\\/i.test(file)) { log(`403 doc ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
+      const raw = nativePath(url.searchParams.get('path') || ''); const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
+      if (isSystemPath(file)) { log(`403 doc ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
       if (!isConvertible(file)) { log(`403 doc ext ${file}`); return json(res, 403, { error: `변환할 수 없는 문서 형식입니다: ${file}` }); }
       if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { log(`404 doc ${file}`); return json(res, 404, { error: `파일이 없습니다: ${file}` }); }
       try {
@@ -468,11 +469,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/open') {
       // 원본 파일을 이 PC의 기본 앱(한/글·워드·엑셀 …)으로 연다. 브라우저가 못 여는 문서의 ⧉ 전용.
       // explorer.exe 에 경로 하나만 넘긴다(cmd.exe /c start 는 인용부호 재해석으로 한글·공백 경로가 깨질 수 있음).
-      const b = await readBody(req); const file = path.resolve(String(b.path || '').replace(/^\/([A-Za-z]:)/, '$1'));
-      if (!/^[A-Za-z]:\\/.test(file) || /^[A-Za-z]:\\(windows|program files|program files \(x86\)|programdata)\\/i.test(file)) { log(`403 open ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
-      if (/\.(exe|bat|cmd|com|ps1|vbs|js|msi|scr|lnk)$/i.test(file)) { log(`403 open exec ${file}`); return json(res, 403, { error: `실행 파일은 열지 않습니다: ${file}` }); }
+      const b = await readBody(req); const file = path.resolve(nativePath(b.path || '').replace(/^\/([A-Za-z]:)/, '$1'));
+      if (!isLocalAbsolute(file) || isSystemPath(file)) { log(`403 open ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
+      if (isExecutableFile(file)) { log(`403 open exec ${file}`); return json(res, 403, { error: `실행 파일은 열지 않습니다: ${file}` }); }
       if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { log(`404 open ${file}`); return json(res, 404, { error: `파일이 없습니다: ${file}` }); }
-      try { spawn('explorer.exe', [file], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); log(`open ${file}`); return json(res, 200, { ok: true }); }
+      try { openInDesktop(file); log(`open ${file}`); return json(res, 200, { ok: true }); }
       catch (e) { log(`500 open ${file}: ${e.message}`); return json(res, 500, { error: e.message }); }
     }
     if (req.method === 'GET' && p === '/api/transcript-preview') {

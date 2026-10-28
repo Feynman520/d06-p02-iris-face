@@ -10,6 +10,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { soulRoot } from './paths.mjs';
+import { agentLaunch } from './platform.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(soulRoot(), '_agent', 'claude');
@@ -112,12 +113,12 @@ export function buildCommand(sel, cwd, { resumeId } = {}) {
     const base = ['claude', '--chrome', '--model', s.model, '--effort', s.effort, ...(s.permission ? ['--permission-mode', s.permission] : []), ...(FAST_MODELS.includes(s.model) ? ['--settings', fastSettingsFile()] : [])];
     const args = resumeId ? [...base, '--resume', resumeId] : [...base, '--session-id', sessionId];
     const recordPath = path.join(CLAUDE_CONFIG_DIR, 'projects', claudeProjectSlug(cwd), `${sessionId}.jsonl`);
-    return { file: 'cmd.exe', args: ['/c', ...args], sessionId, recordPath, resumeCmd: `claude --resume ${sessionId}`, cmdline: args.join(' ') };
+    return { ...agentLaunch(args), sessionId, recordPath, resumeCmd: `claude --resume ${sessionId}`, cmdline: args.join(' ') };
   }
   // --dangerously-bypass-hook-trust(2026-09-19, v2.70): 코덱스 0.154+ 는 hooks.json 이 새것이면 첫 실행에 "Hooks need review" 를 띄운다.
   // 설치기가 config.toml 에 bypass_hook_trust=true 를 적어도 TUI 는 이 물음을 냈다(데스크탑 실측) → 세션 인수로 확실히 건너뛴다.
   // IRIS 세션은 최대 권한(approval never · danger-full-access)이 사용자 결정이고 훅은 설치기가 쓴 것이라 같은 결정의 연장.
   const base = ['codex', '-m', s.model, '-c', `model_reasoning_effort=${s.effort}`, '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
   const args = resumeId ? [...base, 'resume', resumeId] : base;
-  return { file: 'cmd.exe', args: ['/c', ...args], sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
+  return { ...agentLaunch(args), sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
 }

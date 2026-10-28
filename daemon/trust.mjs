@@ -4,7 +4,7 @@
 // 설계이므로(2026-09-14 결정), CLI 가 그 폴더를 처음 볼 때 묻는 신뢰 물음은 여기서 같은 답("예")을 미리 적어 둔다.
 //
 //   클로드: <CLAUDE_CONFIG_DIR>\.claude.json — projects["<cwd, 슬래시>"].hasTrustDialogAccepted = true (+ 첫 실행 안내 2키)
-//   코덱스: <CODEX_HOME>\config.toml       — [projects.'<cwd, 소문자·역슬래시>'] trust_level = "trusted"
+//   코덱스: <CODEX_HOME>\config.toml       — [projects.'<cwd, 소문자·역슬래시>'] trust_level = "trusted"  (macOS: 경로 그대로)
 //
 // 규칙: 있는 값은 절대 바꾸지 않는다(빠진 키만 더한다). 파일을 읽지 못하면 손대지 않는다. 쓰기는 임시 파일 → 이름 바꾸기.
 // 키 이름·모양은 설치 패키지 `installer/lib/firstrun.mjs` 와 같다(그쪽은 설치 폴더 하나, 여기는 세션마다 그 폴더).
@@ -12,7 +12,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const claudeProjectKey = (cwd) => String(cwd).replace(/\\/g, '/').replace(/\/+$/, '');
-export const codexProjectKey = (cwd) => String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+// macOS 코덱스는 경로를 그대로 키로 쓴다(대소문자·슬래시 유지) — 설치 패키지 firstrun.mjs codexProjectKey 와 같은 규칙.
+export const codexProjectKey = (cwd, { platform = process.platform } = {}) => (platform !== 'win32'
+  ? String(cwd).replace(/\/+$/, '')
+  : String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase());
 
 function writeAtomic(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -45,10 +48,10 @@ export function trustClaude(cwd, configDir) {
 }
 
 /** 코덱스: config.toml 에 이 폴더의 [projects.'…'] 표를 덧붙인다. → 'created' | 'appended' | 'unchanged' | 'skipped:<why>' */
-export function trustCodex(cwd, codexHome) {
+export function trustCodex(cwd, codexHome, { platform } = {}) {
   if (!cwd || !codexHome) return 'skipped:no-dir';
   const file = path.join(codexHome, 'config.toml');
-  const key = codexProjectKey(cwd);
+  const key = codexProjectKey(cwd, { platform });
   const block = `[projects.'${key}']\ntrust_level = "trusted"\n`;
   if (!fs.existsSync(file)) { writeAtomic(file, block); return 'created'; }
   let text;

@@ -10,7 +10,7 @@ import { EventEmitter } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
-import { parseTypeperfLine, levelOf, groupProcesses, MemoryMonitor, CommitProbe, KEEP, WARN_FREE_GB } from '../daemon/memory.mjs';
+import { parseTypeperfLine, levelOf, groupProcesses, MemoryMonitor, CommitProbe, KEEP, WARN_FREE_GB, parseVmStat } from '../daemon/memory.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -226,6 +226,20 @@ if (WIN) {
   ok(leftover.length === 0, `8 종료 뒤 고아 typeperf 0 (남음 ${leftover.join(',') || '없음'})`);
   fs.rmSync(state, { recursive: true, force: true }); fs.rmSync(mods, { recursive: true, force: true });
 } else console.log('SKIP 8 (윈도 아님)');
+
+// 9) macOS(2026-10-27): os.freemem 은 '빈 쪽'만 세어 늘 95% 넘게 위험으로 보였다 — vm_stat 의 free+inactive+speculative+purgeable 을 쓴다
+{
+  const VM = 'Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:      1000.\nPages active:   5000.\nPages inactive:   2000.\nPages speculative:   100.\nPages throttled: 0.\nPages wired down: 900.\nPages purgeable:  50.\n';
+  ok(parseVmStat(VM) === (1000 + 2000 + 100 + 50) * 16384, 'macOS: vm_stat → 쓸 수 있는 메모리(free+inactive+speculative+purgeable)');
+  ok(parseVmStat('garbage') === null, 'macOS: 못 읽는 vm_stat → null(os.freemem 으로 되돌아감)');
+  const calls = [];
+  const m = new MemoryMonitor({ platform: 'darwin', probe: { start() {}, stop() {}, read: () => null, mode: 'off' },
+    execImpl: (exe, args, opts, cb) => { calls.push(exe); cb(null, VM); } });
+  m.readVmStat();
+  const s9 = m.sample();
+  ok(calls[0] === '/usr/bin/vm_stat' && s9.rt - s9.ru > 0 && Math.abs((s9.rt - s9.ru) - Math.round(((1000 + 2000 + 100 + 50) * 16384) / 2 ** 30 * 100) / 100) < 0.02,
+    `macOS: 계기판의 RAM 여유 = vm_stat 값(${(s9.rt - s9.ru).toFixed(2)} GB)`);
+}
 
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

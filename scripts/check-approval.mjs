@@ -155,6 +155,28 @@ for (const [name, text, want] of [
   await show(text);
   ok(rec.status === 'attention' && rec.prompt?.dialog === want, `idleCheck: ${name} → 노란불 + prompt.dialog=${want}`, `${rec.status} ${rec.prompt?.dialog}`);
 }
+// 2026-10-28 macOS 실설치(클로드 2.1.308): 첫 세션 시작 직후 뜬 「자동 모드를 기본으로?」 상자 — 번호도 하단 안내줄도 없다.
+// 커서 줄 `❯ Yes, …` 가 PROMPT_RE 에 걸려 '대기'로 보였고, 첫 요청이 상자에 들어가 사라진 뒤 Enter 가 Yes 를 골랐다.
+const AUTO_NUDGE = [D, ' Make auto mode your default permission mode?', '',
+  '   Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and',
+  '   prompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.', '',
+  '   ❯ Yes, set auto mode as my default permission mode', '     No, keep bypass permissions'].join('\n');
+const STATUS = '  ⏵⏵ bypass permissions on (shift+tab to cycle)';
+{
+  const p = parseApproval(AUTO_NUDGE);
+  ok(p.kind === 'choice' && labels(p) === 'Yes, set auto mode as my default permission mode | No, keep bypass permissions', '자동 모드 상자 = 번호 없는 선택지 2개("bypass permissions" 가 든 선택지를 상태줄로 지우지 않음)', `${p.kind} ${labels(p)}`);
+  ok(p.options[1].key === '\x1b[B\r' && p.question === 'Make auto mode your default permission mode?', '자동 모드 상자 "No, keep" 키 = ↓ + Enter, 질문 줄', JSON.stringify([p.options[1].key, p.question]));
+}
+for (const [name, text] of [['자동 모드 상자(번호·안내줄 없음)', AUTO_NUDGE], ['자동 모드 상자가 입력틀 아래에 뜸', ['● 이전 기록', D, '❯ ', D, STATUS, ...AUTO_NUDGE.split('\n').slice(1)].join('\n')],
+  ['자동 모드 상자, 커서가 마지막 선택지', AUTO_NUDGE.replace('   ❯ Yes', '     Yes').replace('     No, keep', '   ❯ No, keep')]]) {
+  await show(text);
+  ok(rec.status === 'attention', `idleCheck: ${name} → 노란불(대기 아님 — 첫 요청을 보내지 않는다)`, rec.status);
+}
+for (const [name, text] of [['입력창에 쓴 여러 줄 글(아래 입력틀 테두리)', ['● 답변 끝', D, '❯ 첫째 줄 요청', '  둘째 줄 이어짐', D, STATUS].join('\n')],
+  ['답변 본문의 ❯ 예시 + 빈 입력창', ['● 예시:', '  ❯ Yes', '    No', D, '> ', D, STATUS].join('\n')]]) {
+  await show(text);
+  ok(rec.status === 'idle', `idleCheck: ${name} → 대기(선택 상자로 오판하지 않음)`, rec.status);
+}
 // ---- 3) idleCheck → rec.prompt · onPrompt 방송 규칙 ----
 prompts.length = 0;
 await show(BASH_2026);

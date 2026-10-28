@@ -19,7 +19,7 @@ const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } 
 {
   const receipt = { env: { CLAUDE_CONFIG_DIR: 'C:\\NOVA\\_agent\\claude', CODEX_HOME: 'C:\\NOVA\\_agent\\codex', ANTHROPIC_BASE_URL: 'http://127.0.0.1:3456' } };
   const before = { PATH: 'C:\\Windows;C:\\Windows\\System32' };
-  const after = applyReceiptEnv({ ...before }, receipt);
+  const after = applyReceiptEnv({ ...before }, receipt, { platform: 'win32' }); // Windows 순서 검사(macOS 에서 돌려도 같은 답)
   ok(after.CLAUDE_CONFIG_DIR === receipt.env.CLAUDE_CONFIG_DIR, '영수증 있음: CLAUDE_CONFIG_DIR 채워짐');
   ok(after.CODEX_HOME === receipt.env.CODEX_HOME, '영수증 있음: CODEX_HOME 채워짐');
   ok(after.ANTHROPIC_BASE_URL === receipt.env.ANTHROPIC_BASE_URL, '영수증 있음: ANTHROPIC_BASE_URL 채워짐');
@@ -29,6 +29,16 @@ const ok = (cond, name) => { if (cond) { pass++; console.log(`PASS ${name}`); } 
   ok(parts[2].toLowerCase().endsWith(path.join('_agent', 'shared', 'tools', 'git', 'cmd').toLowerCase()), '세 번째 = <tools>\\git\\cmd (2026-09-14: 시스템 Git 이 먼저 잡히던 결함)');
   ok(parts[3].toLowerCase().endsWith(path.join('_agent', 'shared', 'tools', 'python').toLowerCase()), '네 번째 = <tools>\\python');
   ok(after.PATH.endsWith(before.PATH), '원래 PATH 는 뒤에 그대로 보존');
+}
+
+// 2-mac) macOS: shims → <tools>/node/bin → <tools>/python/bin. git 은 PATH 에 넣지 않는다(동봉 git 은 심만 거친다, P03 D-M13).
+{
+  const after = applyReceiptEnv({ PATH: '/usr/bin:/bin' }, { env: {} }, { platform: 'darwin' });
+  const parts = after.PATH.split(path.delimiter);
+  ok(parts[0].endsWith(path.join('_agent', 'shared', 'shims')), 'macOS: PATH 맨 앞 = <root>/_agent/shared/shims');
+  ok(parts[1].endsWith(path.join('_agent', 'shared', 'tools', 'node', 'bin')), 'macOS: 두 번째 = <tools>/node/bin');
+  ok(parts[2].endsWith(path.join('_agent', 'shared', 'tools', 'python', 'bin')), 'macOS: 세 번째 = <tools>/python/bin');
+  ok(!parts.some((p) => /[\\/]git([\\/]|$)/.test(p)), 'macOS: git 폴더는 PATH 에 없다');
 }
 
 // 3) 영수증 있지만 이미 값이 있는 env(설치기 이전에 사용자가 이미 세팅) → 덮어쓰지 않음(없을 때만 채운다)

@@ -11,6 +11,7 @@ import {
   Updater, versionFromTag, cmpSemver, isNewer, parseSha256File, stamp, detectMode, readInstalled,
   verifyFaceZip, verifySignedSha256, extractZipFile, PART_NAMES, APPLY_ORDER, PART_SOURCE, DEV_REASON,
   needsReinstall, REINSTALL_NOTE, REINSTALL_URL,
+  packageAssetPattern,
 } from '../daemon/update.mjs';
 
 let pass = 0, fail = 0;
@@ -87,7 +88,14 @@ const dot = (files) => files.map(f => ({ ...f, name: './' + f.name }));
 const PKG_ENTRIES = dot([...pkgFiles, { name: 'payload/manifest.json', data: Buffer.from(PKG_MANIFEST) }]);
 const PKG_ZIP = zipWrite(PKG_ENTRIES);
 // 구조판 무결성 = 릴리스 첨부 `<zip>.sha256` 텍스트에 대한 서명(`<zip>.sha256.sig`). zip 안 매니페스트 서명은 폐기(2026-09-14).
-const PKG_ZIP_NAME = 'IRIS-Setup_v1.3.0_2026-09-14.zip';
+// 구조판 첨부 이름은 OS 마다 다르다(같은 릴리스에 둘 다 붙는다) — 이 기계의 이름으로 픽스처를 만든다.
+const PKG_ZIP_NAME = process.platform === 'darwin' ? 'IRIS-Setup-macOS-arm64_v1.3.0_2026-09-14.zip' : 'IRIS-Setup_v1.3.0_2026-09-14.zip';
+{
+  const win = new RegExp(packageAssetPattern('win32')), mac = new RegExp(packageAssetPattern('darwin'));
+  ok(win.test('IRIS-Setup_v2.0.50_2026-10-27.zip') && !win.test('IRIS-Setup-macOS-arm64_v2.0.50_2026-10-27.zip')
+    && mac.test('IRIS-Setup-macOS-arm64_v2.0.50_2026-10-27.zip') && !mac.test('IRIS-Setup_v2.0.50_2026-10-27.zip'),
+  '구조판 첨부: Windows·macOS 가 서로의 zip 을 고르지 않는다');
+}
 const PKG_SHA_TEXT = `${sha256(PKG_ZIP)}  ${PKG_ZIP_NAME}\n`;
 const PKG_SHA_SIG = signManifest(PKG_SHA_TEXT, KP.privatePem);
 {
@@ -346,9 +354,10 @@ let planFile = null;
   const fixed = JSON.parse(fs.readFileSync(planFile, 'utf8'));
   ok(fixed.daemonPid === process.pid && fixed.daemonPort === 3459 && fixed.items.length === 1, '인계: 누를 때 plan.json 의 daemonPid·daemonPort 를 지금 데몬의 것으로 다시 적는다');
   const nodeDir = path.join(root, '_agent', 'shared', 'tools', 'node');
-  fs.mkdirSync(nodeDir, { recursive: true }); fs.writeFileSync(path.join(nodeDir, 'node.exe'), 'stub', 'utf8');
+  const bundledNode = process.platform === 'win32' ? path.join(nodeDir, 'node.exe') : path.join(nodeDir, 'bin', 'node'); // macOS 배치 = tools/node/bin/node
+  fs.mkdirSync(path.dirname(bundledNode), { recursive: true }); fs.writeFileSync(bundledNode, 'stub', 'utf8');
   up.applyNow();
-  ok(spawns[spawns.length - 1].cmd === path.join(nodeDir, 'node.exe'), '인계: 동봉 node 가 있으면 그것으로');
+  ok(spawns[spawns.length - 1].cmd === bundledNode, '인계: 동봉 node 가 있으면 그것으로');
 }
 
 // ---- 13) 적용기 결과 → 화면 토스트(한 번만) ----

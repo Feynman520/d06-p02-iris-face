@@ -14,7 +14,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { agentShimText } from '../daemon/wake.mjs';
+import { agentShimText, posixAgentShimText, toolCmdPath } from '../daemon/wake.mjs';
+import { isWin, shimFile } from '../daemon/platform.mjs';
+
+// 시험 데몬은 이 기계의 OS 로 돈다 — 가짜 프로그램 자리·심 이름·심 글자를 그 OS 대로 맞춘다(macOS = sh 심, P03 posixAgentShim).
+const shimText = (agent) => (isWin() ? agentShimText(agent) : posixAgentShimText(agent));
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -61,7 +65,7 @@ function spawnDaemon(tempRoot, tempState, port) {
 }
 
 function writeTool(root, tool) {
-  const p = path.join(root, '_agent', 'shared', 'tools', tool, `${tool}.cmd`);
+  const p = toolCmdPath(root, tool);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, '@echo off\r\n', 'ascii');
 }
@@ -78,7 +82,7 @@ async function main() {
   // 다른 선생님 PC(2026-09-23) 재현: 두 프로그램 다 있음 · 클로드 심만 있음 · 영수증에 codex 항목 자체가 없음.
   writeTool(tempRoot, 'claude');
   writeTool(tempRoot, 'codex');
-  fs.writeFileSync(path.join(shimsDir, 'claude.cmd'), agentShimText('claude'), 'ascii');
+  fs.writeFileSync(path.join(shimsDir, shimFile('claude')), shimText('claude'), { encoding: 'ascii', mode: 0o755 });
   fs.writeFileSync(receiptPath, JSON.stringify({
     schema: 2,
     installed: { claude: { active: true, version: '1.0.0' } },
@@ -103,8 +107,9 @@ async function main() {
       const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
       ok(receipt.installed.codex?.active === true, '① 시작하자마자 영수증 installed.codex.active = true(항목이 없던 설치본 치유)');
       ok(receipt.installed.claude.active === true && receipt.installed.claude.version === '1.0.0', '① 영수증의 다른 필드(claude, version)는 그대로 보존');
-      const shim = path.join(shimsDir, 'codex.cmd');
-      ok(fs.existsSync(shim) && fs.readFileSync(shim).equals(Buffer.from(agentShimText('codex'), 'ascii')), '① codex 심이 installer 템플릿과 바이트 그대로 생성됨(ASCII, CRLF)');
+      const shim = path.join(shimsDir, shimFile('codex'));
+      ok(fs.existsSync(shim) && fs.readFileSync(shim).equals(Buffer.from(shimText('codex'), 'ascii')), `① codex 심이 installer 템플릿과 바이트 그대로 생성됨(ASCII, ${isWin() ? 'CRLF' : 'LF'})`);
+      if (!isWin()) ok((fs.statSync(shim).mode & 0o777) === 0o755, '① macOS: codex 심은 실행 권한 0755');
       const a = await getJson('/api/agents');
       ok('claude' in a && 'codex' in a, '① /api/agents 에 두 에이전트 모두 있음(버튼 항상 표시)');
       const st = await getJson('/api/agents/status');
@@ -132,7 +137,7 @@ async function main() {
     // ---- ③ 프로그램 없음: 클로드 프로그램이 없는 옛 코덱스 단독 설치본 ----
     {
       fs.rmSync(path.join(tempRoot, '_agent', 'shared', 'tools', 'claude'), { recursive: true, force: true });
-      fs.rmSync(path.join(shimsDir, 'claude.cmd'), { force: true });
+      fs.rmSync(path.join(shimsDir, shimFile('claude')), { force: true });
       const r = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
       r.installed.claude.active = false;
       fs.writeFileSync(receiptPath, JSON.stringify(r, null, 2), 'utf8');
@@ -142,7 +147,7 @@ async function main() {
       ok('claude' in a && 'codex' in a, '③ 프로그램이 없어도 버튼은 그대로(두 에이전트)');
       await sleep(16000); // 한 번 더 감시 주기가 돌아도
       const r2 = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-      ok(r2.installed.claude.active === false && !fs.existsSync(path.join(shimsDir, 'claude.cmd')), '③ 프로그램 없는 쪽은 켜지 않음(영수증 active:false·심 없음 그대로)');
+      ok(r2.installed.claude.active === false && !fs.existsSync(path.join(shimsDir, shimFile('claude'))), '③ 프로그램 없는 쪽은 켜지 않음(영수증 active:false·심 없음 그대로)');
     }
 
     // ---- ④ 수동 POST /api/wake(옛 경로 호환) ----
