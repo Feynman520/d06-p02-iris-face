@@ -69,5 +69,41 @@ if (fs.existsSync(rootCmd)) {
   console.log('SKIP root IRIS-Face.cmd not found (not this PC)');
 }
 
+// ⑤ macOS 창 꾸러미(2026-10-28 실설치 신고 "IRIS 가 아니라 Electron 아이콘") — 가짜 Electron.app 을 임시 폴더에 만들어 본다
+ok(/macWindowExecutable\(ROOT/.test(launch) && /'electron\.exe'\);/.test(launch), 'launch.mjs: macOS 는 IRIS 창 꾸러미, Windows 는 electron.exe 그대로');
+if (process.platform === 'darwin') {
+  const { macWindowExecutable, WINDOW_BUNDLE_ID } = await import('../daemon/platform.mjs');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-winapp-'));
+  const app = path.join(tmp, 'face', 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents');
+  const plistXml = (ver) => `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleName</key><string>Electron</string><key>CFBundleIdentifier</key><string>com.github.Electron</string><key>CFBundleIconFile</key><string>electron.icns</string><key>CFBundleExecutable</key><string>Electron</string><key>CFBundleVersion</key><string>${ver}</string></dict></plist>\n`;
+  fs.mkdirSync(path.join(app, 'MacOS'), { recursive: true }); fs.mkdirSync(path.join(app, 'Resources'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'Info.plist'), plistXml('44.3.0'));
+  fs.writeFileSync(path.join(app, 'MacOS', 'Electron'), '#!/bin/sh\n'); fs.chmodSync(path.join(app, 'MacOS', 'Electron'), 0o755);
+  const face = path.join(tmp, 'face');
+  fs.mkdirSync(path.join(face, 'app'), { recursive: true }); fs.copyFileSync(path.join(ROOT, 'app', 'iris.ico'), path.join(face, 'app', 'iris.ico'));
+  const stateDir = path.join(face, 'state');
+  const read = (bundle, key) => spawnSync('/usr/bin/plutil', ['-extract', key, 'raw', path.join(bundle, 'Contents', 'Info.plist')], { encoding: 'utf8' }).stdout.trim();
+  const exe = macWindowExecutable(face, { stateDir });
+  const bundle = path.join(stateDir, 'window.noindex', 'IRIS.app');
+  ok(exe === path.join(bundle, 'Contents', 'MacOS', 'Electron') && fs.existsSync(exe), 'macOS 창: state/window.noindex/IRIS.app 의 실행 파일을 돌려준다');
+  ok(read(bundle, 'CFBundleName') === 'IRIS' && read(bundle, 'CFBundleDisplayName') === 'IRIS' && read(bundle, 'CFBundleIdentifier') === WINDOW_BUNDLE_ID, 'macOS 창: Info.plist 이름·표시 이름 = IRIS, 번들 ID = ' + WINDOW_BUNDLE_ID);
+  ok(read(bundle, 'CFBundleIconFile') === 'iris.icns' && fs.readFileSync(path.join(bundle, 'Contents', 'Resources', 'iris.icns')).subarray(0, 4).toString() === 'icns', 'macOS 창: 아이콘 = iris.ico 에서 만든 iris.icns');
+  ok(read(bundle, 'CFBundleExecutable') === 'Electron' && read(app.replace(/\/Contents$/, ''), 'CFBundleName') === 'Electron', 'macOS 창: 실행 파일 이름은 그대로, 원본 Electron.app 은 손대지 않는다');
+  const stamp = path.join(bundle, 'Contents', 'Resources', 'iris-window.json');
+  const ino = fs.statSync(stamp).ino;
+  macWindowExecutable(face, { stateDir });
+  ok(fs.statSync(stamp).ino === ino, 'macOS 창: 표식이 같으면 다시 만들지 않는다');
+  fs.writeFileSync(path.join(app, 'Info.plist'), plistXml('45.0.0'));
+  macWindowExecutable(face, { stateDir });
+  ok(fs.statSync(stamp).ino !== ino && read(bundle, 'CFBundleVersion') === '45.0.0' && read(bundle, 'CFBundleName') === 'IRIS', 'macOS 창: Electron 판이 바뀌면 새로 만든다');
+  ok(!fs.readdirSync(path.dirname(bundle)).some((n) => n.includes('.tmp-')), 'macOS 창: 임시 사본이 남지 않는다');
+  const blocked = path.join(tmp, 'blocked'); fs.writeFileSync(blocked, 'not a folder');
+  const fallback = macWindowExecutable(face, { stateDir: blocked, log: () => {} });
+  ok(fallback === path.join(app, 'MacOS', 'Electron'), 'macOS 창: 꾸러미를 못 만들면 원본 Electron.app 으로 띄운다');
+  fs.rmSync(tmp, { recursive: true, force: true });
+} else {
+  console.log('SKIP macOS window bundle (not macOS)');
+}
+
 console.log(`\n${pass} PASS, ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

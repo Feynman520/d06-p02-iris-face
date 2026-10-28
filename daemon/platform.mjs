@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 export const isWin = (platform = process.platform) => platform === 'win32';
 export const isMac = (platform = process.platform) => platform === 'darwin';
@@ -102,4 +103,82 @@ export function openInDesktop(target, { folder = false, platform } = {}) {
 export function openUrl(url, { platform } = {}) {
   if (isWin(platform)) { spawn('cmd.exe', ['/c', 'start', '', url], { windowsHide: true, detached: true, stdio: 'ignore' }).unref(); return; }
   spawn('/usr/bin/open', [url], { detached: true, stdio: 'ignore' }).unref();
+}
+
+// ---- macOS 창 꾸러미 -------------------------------------------------------------------------
+// Electron.app 을 그대로 띄우면 Dock·앱 전환기·메뉴 막대·알림에 「Electron」 이름과 아이콘이 뜬다(2026-10-28 macOS 실설치 신고).
+// 그래서 state/ 에 Info.plist 의 이름·번들 ID·아이콘만 바꾼 복제본 IRIS.app 을 만들어 그것을 띄운다 — APFS 복제(cp -c)라
+// 공간·시간이 거의 들지 않는다. 실행 파일·도우미 앱 이름은 그대로다(Electron 은 도우미를 컴파일된 이름 「Electron Helper」로
+// 먼저 찾는다). 앱 이름(app.getName)·userData 도 그대로라 창의 설정(localStorage)·단일 실행 잠금이 옮겨 가지 않는다.
+// 동봉 Electron 은 Info.plist 가 서명에 묶이지 않은 링커 서명이라 고쳐도 서명 상태가 원본과 같다(codesign --verify 결과 동일).
+// 폴더 이름 끝의 `.noindex` 는 Spotlight 가 이 사본을 「IRIS」 앱으로 내놓지 않게 한다(인수 없이 띄우면 Electron 기본 창이 뜬다 —
+// 사람이 여는 입구는 설치기가 만든 ~/Applications/IRIS.app 하나).
+// Electron 판(원본 Info.plist)·아이콘이 바뀌면 표식으로 알아채 다시 만들고, 못 만들면 원본 Electron.app 실행 파일을 돌려준다.
+export const WINDOW_APP_NAME = 'IRIS';
+export const WINDOW_BUNDLE_ID = 'com.iris-workspace.face';
+const ICNS_1X = { 16: 'icp4', 32: 'icp5', 64: 'icp6', 128: 'ic07', 256: 'ic08', 512: 'ic09', 1024: 'ic10' };
+const ICNS_2X = { 32: 'ic11', 64: 'ic12', 256: 'ic13', 512: 'ic14' };
+
+/** .ico 안의 PNG 판(16~256px)을 그대로 .icns 로 묶는다(P03 installer/lib/handoff.mjs icoToIcns 와 같은 규칙). PNG 판이 없으면 null. */
+export function icoToIcns(ico) {
+  const entries = [];
+  try {
+    for (let i = 0, n = ico.readUInt16LE(4); i < n; i++) {
+      const e = 6 + 16 * i, w = ico[e] || 256, len = ico.readUInt32LE(e + 8), off = ico.readUInt32LE(e + 12);
+      if (ico.readUInt32BE(off) !== 0x89504e47) continue; // BMP 판은 건너뛴다
+      for (const type of [ICNS_1X[w], ICNS_2X[w]]) if (type && !entries.some((x) => x.type === type)) entries.push({ type, data: ico.subarray(off, off + len) });
+    }
+  } catch { return null; }
+  if (!entries.length) return null;
+  const total = 8 + entries.reduce((sum, x) => sum + 8 + x.data.length, 0);
+  const out = Buffer.alloc(total);
+  out.write('icns', 0, 'ascii'); out.writeUInt32BE(total, 4);
+  let at = 8;
+  for (const x of entries) { out.write(x.type, at, 'ascii'); out.writeUInt32BE(8 + x.data.length, at + 4); x.data.copy(out, at + 8); at += 8 + x.data.length; }
+  return out;
+}
+
+/**
+ * macOS 창 실행 파일 경로: `<stateDir>/window.noindex/IRIS.app/Contents/MacOS/Electron`(없거나 낡았으면 지금 만든다).
+ * 만들지 못하면 원본 `node_modules/electron/dist/Electron.app/Contents/MacOS/Electron`.
+ */
+export function macWindowExecutable(root, { stateDir = path.join(root, 'state'), iconIco = path.join(root, 'app', 'iris.ico'), log = () => {} } = {}) {
+  const src = path.join(root, 'node_modules', 'electron', 'dist', 'Electron.app');
+  const exe = (app) => path.join(app, 'Contents', 'MacOS', 'Electron');
+  const dst = path.join(stateDir, 'window.noindex', `${WINDOW_APP_NAME}.app`);
+  const stampOf = (app) => path.join(app, 'Contents', 'Resources', 'iris-window.json');
+  let icon = null;
+  try { icon = fs.readFileSync(iconIco); } catch { /* 아이콘 없음 → Electron 아이콘 그대로, 이름만 바꾼다 */ }
+  let want;
+  try {
+    const sha = (b) => createHash('sha256').update(b).digest('hex');
+    want = JSON.stringify({ v: 1, name: WINDOW_APP_NAME, id: WINDOW_BUNDLE_ID, plist: sha(fs.readFileSync(path.join(src, 'Contents', 'Info.plist'))), icon: icon ? sha(icon) : null });
+  } catch { return exe(src); } // 원본이 없다 — 부르는 쪽의 「electron 없음」 처리에 맡긴다
+  const fresh = (app) => { try { return fs.readFileSync(stampOf(app), 'utf8') === want && fs.existsSync(exe(app)); } catch { return false; } };
+  if (fresh(dst)) return exe(dst);
+  const tmp = `${dst}.tmp-${process.pid}`;
+  try {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    const cp = spawnSync('/bin/cp', ['-cR', src, tmp], { stdio: 'ignore' }); // APFS 복제(clonefile) — 다른 파일 시스템이면 실패 → 원본으로
+    if (cp.status !== 0) throw new Error(`cp -c 실패(${cp.status})`);
+    const icns = icon ? icoToIcns(icon) : null;
+    if (icns) fs.writeFileSync(path.join(tmp, 'Contents', 'Resources', 'iris.icns'), icns);
+    const plist = path.join(tmp, 'Contents', 'Info.plist');
+    const keys = [['CFBundleName', WINDOW_APP_NAME], ['CFBundleDisplayName', WINDOW_APP_NAME], ['CFBundleIdentifier', WINDOW_BUNDLE_ID], ...(icns ? [['CFBundleIconFile', 'iris.icns']] : [])];
+    for (const [k, v] of keys) {
+      const r = spawnSync('/usr/bin/plutil', ['-replace', k, '-string', v, plist], { stdio: 'ignore' });
+      if (r.status !== 0) throw new Error(`plutil ${k} 실패(${r.status})`);
+    }
+    fs.writeFileSync(stampOf(tmp), want);
+    if (fresh(dst)) { fs.rmSync(tmp, { recursive: true, force: true }); return exe(dst); } // 동시에 뜬 다른 실행기가 먼저 만들었다
+    fs.rmSync(dst, { recursive: true, force: true });
+    fs.renameSync(tmp, dst);
+    log(`[iris-face] window bundle ready: ${dst}`);
+    return exe(dst);
+  } catch (e) {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+    log(`[iris-face] window bundle failed (${e?.message || e}) — using Electron.app as is`, true);
+    return exe(src);
+  }
 }

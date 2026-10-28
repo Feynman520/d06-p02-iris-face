@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dashDir, soulRoot, readReceipt } from './daemon/paths.mjs';
 import { handoffExists } from './daemon/handoff.mjs';
-import { isMac, openUrl } from './daemon/platform.mjs';
+import { isMac, macWindowExecutable, openUrl } from './daemon/platform.mjs';
 
 // 영수증 env(2026-09-20, v2.71): 설치기가 등록한 사용자 환경변수(TEAMCLAUDE_CONFIG·CLAUDE_CONFIG_DIR·CODEX_HOME)가 이 실행기의
 // env 에 없으면(환경변수 등록 직후의 같은 로그온 세션, 다른 사용자 계정의 바로가기 등) 영수증 값으로 채운다 — 없으면 ensure-proxy 가
@@ -147,7 +147,8 @@ if (firstSessionSpec) {
 }
 // 기본 = Electron 창(설치돼 있으면), --browser = 기본 브라우저, --no-open = 데몬만
 // macOS 는 Electron.app 꾸러미 안의 실행 파일을 바로 띄운다(`electron .` 과 같은 방식 — env·인수를 그대로 넘길 수 있다).
-const ELECTRON = isMac() ? path.join(ROOT, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+// 꾸러미는 이름·아이콘을 IRIS 로 바꾼 state/ 의 복제본(Dock 에 「Electron」 이 뜨지 않게, platform.mjs macWindowExecutable).
+const ELECTRON = isMac() ? (process.argv.includes('--no-open') || process.argv.includes('--browser') ? '' : macWindowExecutable(ROOT, { stateDir: STATE, log: say }))
   : path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
 if (process.argv.includes('--no-open')) { /* 데몬만 */ }
 else if (!process.argv.includes('--browser') && fs.existsSync(ELECTRON)) {
