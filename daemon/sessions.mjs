@@ -50,6 +50,21 @@ const ATTENTION_RE = /(Do you trust|trust the contents|Press t to trust|enter to
 const CODEX_UPDATE_PROMPT_RE = /Update available[\s\S]*2\. Skip/;
 // 입력 프롬프트: 클로드 ❯(~2.1.265) 또는 >(2.1.266부터) / 코덱스 ›(빈 입력창)·»(글이 든 입력창) — 헤드리스 화면의 아래쪽 줄에서만 찾는다
 const PROMPT_RE = /(^|\n)\s*(❯|›|»|>)(\s|$)/;
+// 번호도 안내줄도 없는 선택 상자(2026-10-28 macOS 실설치, 클로드 2.1.308 「Make auto mode your default permission mode?」 —
+// 하단 안내줄이 꺼져 있어 ATTENTION_RE 에 안 걸리고 커서 줄 `❯ Yes, …` 가 PROMPT_RE 에 걸려 '대기'로 보였다 → 첫 요청이 상자에 들어가 사라지고
+// Enter 가 Yes 를 골랐다). 커서 줄 바로 위나 아래가 더 들여쓴 다른 선택지이고, 그 아래로 입력틀 테두리(─)가 없으면 선택 상자다.
+// 입력창에 쓴 글(`❯ 글`, 여러 줄이면 들여쓴 이어지는 줄)은 아래에 입력틀 테두리가 오므로 걸리지 않는다.
+const RULE_RE = /^\s*[╰└]?─{8,}/;
+export function selectNear(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (RULE_RE.test(lines[i])) return false; // 아래에서부터 테두리를 먼저 만나면 입력창 쪽
+    const m = lines[i].match(/^(\s*)❯\s+\S/);
+    if (!m) continue;
+    const sibling = (l) => l != null && !l.includes('❯') && !RULE_RE.test(l) && (l.match(/^\s*/)[0].length > m[1].length) && /\S/.test(l);
+    return sibling(lines[i + 1]) || sibling(lines[i - 1]);
+  }
+  return false;
+}
 
 // 데몬 재시작 뒤 잃어버린 세션 자동 재개(2026-09-11 16:31 사고 — 데몬 PID 종료 = ConPTY 자식인 세션 전부 동반 종료):
 //   저장 상태가 살아 있던 것(busy·idle·attention)인데 PID가 없으면 "예기치 않게 잃은 세션(lost)"으로 보고 시작 뒤 같은 카드에서 --resume 한다.
@@ -260,7 +275,7 @@ export class SessionManager {
       const screen = this.screenText(id, 10);
       if (WORKING_RE.test(screen)) { log(`enter ok (${n}) working`); return; }
       if (!composerHolds(screen)) { log(`enter ok (${n})`); return; }
-      if (ATTENTION_RE.test(screen)) { log(`enter (${n}): 확인 프롬프트가 떠 있어 재시도하지 않음`); return; }
+      if (ATTENTION_RE.test(screen) || selectNear(screen.split('\n'))) { log(`enter (${n}): 확인 프롬프트가 떠 있어 재시도하지 않음`); return; }
       if (n >= ENTER_TRIES) { log(`enter FAILED: ${n}회 뒤에도 요청이 입력창에 남아 있음 — 터미널에서 Enter를 눌러야 함`); return; }
       log(`enter retry ${n + 1}: 요청이 입력창에 남아 있음`);
       pressEnter(n + 1);
@@ -290,7 +305,7 @@ export class SessionManager {
     // 화면 맨 아래 4줄 안에 "빈 입력 프롬프트"(❯ › > 만 있는 줄; 입력틀 테두리·상태줄이 그 아래 1~3줄)가 보이면 대기가 우선 —
     // 승인 대화상자는 입력틀을 통째로 덮으므로 빈 프롬프트가 보이면 확인 요청이 아니다. 사용자가 보낸 글의 메아리("> 좋아 …")는 빈 줄이 아니라 안 걸린다.
     const promptNear = lines.slice(-4).some(l => /^\s*(❯|›|>)\s*$/.test(l));
-    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : (ATTENTION_RE.test(tail) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
+    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : ((ATTENTION_RE.test(tail) || selectNear(lines)) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
     // v2.73(2026-09-21): 화면 글자로는 '대기'라도 대화 기록의 차례가 아직 열려 있으면(도구 결과 대기·요청 직후) 바쁨으로 둔다.
     // 도구 출력에 섞인 `>` 줄·빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 알린 사건(2026-09-20 사용자 실측)의 교차 확인.
     // 기록이 답 글로 끝나 있으면(null) 화면 판정을 그대로 믿는다 — 기록이 잠시 뒤처져도 다음 폴링에서 따라잡는다.
