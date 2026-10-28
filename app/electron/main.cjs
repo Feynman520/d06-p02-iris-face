@@ -172,7 +172,7 @@ function quitAll() {
     const before = await health();
     if (!before) return finishQuit(); // 데몬이 이미 없다 = 끝낼 세션이 없다
     if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); }
-    sendPage('iris:quitting', { sessions: before.sessions });
+    sendPage('iris:quit-start', { sessions: before.sessions }); // 채널 이름에 'iris:' + 영숫자 8자를 쓰지 않는다(릴리스 개인 문자열 검사가 온톨로지 id 로 봄)
     try { tray?.setContextMenu(buildTrayMenu()); tray?.setToolTip(`${TIP} · 종료하는 중`); } catch {}
     let report = null, error = '';
     try {

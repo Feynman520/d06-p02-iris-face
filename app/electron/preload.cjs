@@ -17,6 +17,6 @@ contextBridge.exposeInMainWorld('irisHost', {
     let go = true; try { go = (await cb()) !== false; } catch {}
     ipcRenderer.send('iris:close-answer', { id, go });
   }); },
-  onQuitting: (cb) => { ipcRenderer.on('iris:quitting', (_e, info) => { try { cb(info || {}); } catch {} }); },
+  onQuitting: (cb) => { ipcRenderer.on('iris:quit-start',(_e, info) => { try { cb(info || {}); } catch {} }); },
   onQuitCancel: (cb) => { ipcRenderer.on('iris:quit-cancel', () => { try { cb(); } catch {} }); },
 });
