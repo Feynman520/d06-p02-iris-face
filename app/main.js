@@ -725,7 +725,14 @@
   $('#iris').addEventListener('dblclick', (e) => { e.preventDefault(); signature(); }); // 중앙 애니메이션 두 번 클릭(v2.55, 2026-09-13 사용자 요청)
   document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'i') { e.preventDefault(); signature(); } });
   // 첫 실행 각인(v2.55): `by SEJUN HAM` 크게 + 그 아래 문장, 둘 다 이스터에그 손글씨체(.sig-by). 별이 모이는 1.2초 연출이 끝난 뒤 한 번.
-  setTimeout(() => { if (!current) sigShow({ name: `by ${SIG_NAME}`, motto: Settings.health()?.about?.motto || '해결은 에이전트가, 정의는 우리가.', by: true, dur: 4200, delay: 500 }); }, 1300);
+  // 손글씨체(3.2MB)는 글자가 보일 때에야 받기 시작해, 재실행 직후 데몬이 바쁘면 3초(font-display:block)를 넘겨
+  // 대체 글자체(Segoe Script)로 그려졌다(v2.97.1, 2026-10-29 신고). → 페이지 시작 때 미리 받고, 다 받은 뒤 띄운다(최대 2.5초 더 기다림).
+  const sigFont = (document.fonts?.load?.('40px "Nanum Pen Script"') || Promise.resolve()).catch(() => {});
+  setTimeout(() => {
+    Promise.race([sigFont, new Promise((r) => setTimeout(r, 2500))]).then(() => {
+      if (!current) sigShow({ name: `by ${SIG_NAME}`, motto: Settings.health()?.about?.motto || '해결은 에이전트가, 정의는 우리가.', by: true, dur: 4200, delay: 500 });
+    });
+  }, 1300);
   window.irisHost?.onAbout?.(() => Settings.about()); // 트레이 메뉴 "IRIS-Face 정보…"
 
   // ---------- 검증용 미리보기 ?preview=<기록파일>&agent= ----------
