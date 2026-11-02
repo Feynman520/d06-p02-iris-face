@@ -138,7 +138,7 @@ window.Settings = (() => {
     set('#st-sum-mods', modsSum);
     const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);
     const nCl = items.filter(i => i.group !== 'iris' && i.provider !== 'codex').length, nCx = items.filter(i => i.group !== 'iris' && i.provider === 'codex').length;
-    set('#st-sum-account', !hasAuth ? '비밀 금고' : !items.length ? '열쇠 상태 확인 전' : due.length ? `갱신 필요 ${due.length}개` : `Claude ${nCl} · Codex ${nCx} · 모두 정상`);
+    set('#st-sum-account', !hasAuth ? '열쇠 감시 도구 없음 · 비밀 금고' : !items.length ? '열쇠 상태 확인 전' : due.length ? `갱신 필요 ${due.length}개` : `Claude ${nCl} · Codex ${nCx} · 모두 정상`);
     const ba = $('#st-badge-account'); if (ba) { ba.hidden = !due.length; ba.textContent = String(due.length); ba.classList.toggle('bad', due.some(i => i.level === 'expired')); }
     const dev = upd?.mode === 'dev', newV = !dev && upd?.headline?.version;
     set('#st-sum-about', newV ? `새 판 v${newV}` : `v${health?.version || '—'}${dev ? ' · 개발 폴더' : ''}`);
@@ -326,9 +326,14 @@ window.Settings = (() => {
   function renderAuth() {
     const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
     renderNav();
-    sec.hidden = !(auth?.available || health?.features?.auth);
+    // v2.97.2(2026-11-02 사용자 신고 "복구 문구만 있고 로그인 열쇠가 없다"): 도구(iris-auth)가 없는 PC 도 절을 숨기지 않고 이유를 한 줄 보인다.
+    // 데몬 상태를 아직 못 읽었으면(health·auth 둘 다 없음) 잠깐 숨긴다 — "없음"이 깜빡이지 않게.
+    sec.hidden = !(auth || health);
     if (sec.hidden) return;
     if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('shield', 15) + '<span>로그인 열쇠</span>'; head.dataset.iced = '1'; }
+    const hasTool = !!(auth?.available || health?.features?.auth);
+    btn.hidden = !hasTool;
+    if (!hasTool) { host.innerHTML = '<section class="st-grp"><div class="upd-line st-sub auth-missing">이 컴퓨터에는 열쇠 만료를 살피는 도구가 아직 없습니다. 만료일·미리 알림·「1년 열쇠 받기」는 IRIS 업데이트(설정 → 업데이트·정보)를 받으면 생깁니다. 그 전에 「Login expired」가 뜨면 다시 로그인하면 그대로 이어서 쓸 수 있습니다.</div></section>'; return; }
     btn.disabled = authBusy;
     // 급한 열쇠가 맨 위(v2.87): 만료 → 곧 만료 → 모름 → 정상, 같은 단계면 남은 날 적은 순, 선택 항목(optional)은 맨 아래
     const RANK = { expired: 0, soon: 1, unknown: 2, ok: 3 };
