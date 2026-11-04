@@ -12,6 +12,7 @@ import { generateTitle } from './titler.mjs';
 import { parseApproval } from './approval.mjs';
 import { readReceipt, soulRoot, toolPath } from './paths.mjs';
 import { applyLongKey } from './auth.mjs';
+import { alignThreadProvider, exitReasonFrom } from './codexcompat.mjs';
 import { readTable, readTableSync, descendants, isOwnProcess, stillRunning, taskkillTree, waitGone } from './proctree.mjs';
 
 const require = createRequire(import.meta.url);
@@ -49,6 +50,8 @@ const AUTO_RESUME_GAP_MS = Number(process.env.IRIS_FACE_AUTO_RESUME_GAP_MS ?? 25
 const LIVE_STATUSES = new Set(['busy', 'idle', 'attention']);
 export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시작되어 이 세션이 끊겼다가 같은 카드에서 자동으로 다시 열렸습니다. 파일은 그대로입니다. 직전에 하던 작업과 어디까지 끝났는지를 3줄 이내로 알리고 새 지시를 기다리세요(스스로 이어서 실행하지 마세요).';
 
+const EARLY_EXIT_MS = 20000; // 이보다 빨리 끝난 CLI 는 시작 실패로 보고 화면에서 원인 줄을 고른다(v2.98)
+const FACE_VERSION = (() => { try { return require('../package.json').version || ''; } catch { return ''; } })();
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const normCwd = (p) => String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 
@@ -102,6 +105,9 @@ export class SessionManager {
     this.stateDir = stateDir;
     this.file = path.join(stateDir, 'sessions.json');
     this.hooks = hooks; // onOutput(id,data) onStatus(id,status) onActivity(id,text) onList()
+    // 코덱스 옛 대화 연결 이름 맞추기(v2.98): 시험은 hooks.codexHome(가짜 폴더)·hooks.alignCodex(가짜 함수)로 실제 기록을 건드리지 않는다.
+    this.codexHome = hooks.codexHome ?? CODEX_HOME;
+    this.alignCodex = hooks.alignCodex ?? alignThreadProvider;
     this.sessions = new Map(); this.live = new Map(); this.seq = 0;
     this.load();
   }
@@ -186,10 +192,20 @@ export class SessionManager {
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
     if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
     this.live.delete(id);
+    // 코덱스 재개 전: 이 대화를 만든 연결 이름이 지금 설정과 다르면(설치 패키지 2.0.49 의 openai → iris 등) 맞춘다.
+    // 지금 연결이 이 PC 중계기일 때만 맞추고(원본 백업 + history.jsonl), 아니면 이유만 남겨 곧 끝날 때 화면에 보인다.
+    let preReason = null;
+    if (sel.agent === 'codex') {
+      try {
+        const a = this.alignCodex({ codexHome: this.codexHome, threadId: rec.sessionId, faceVersion: FACE_VERSION, log: (m) => this.hooks.onLog?.(`${id} ${m}`) });
+        if (a && a.action !== 'none') rec.compat = { action: a.action, from: a.from, to: a.to, at: new Date().toISOString(), ...(a.backup ? { backup: a.backup } : {}) };
+        if (a && (a.action === 'blocked' || a.action === 'error')) preReason = a.reason || null;
+      } catch (e) { this.hooks.onLog?.(`${id} codex-compat skipped: ${e?.message || e}`); }
+    }
     const cmd = buildCommand(sel, rec.cwd, { resumeId: rec.sessionId });
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
-    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, switchedAt: new Date().toISOString(), resumeCmd: cmd.resumeCmd || rec.resumeCmd });
-    this.wire(id, rec, proc, cols, rows, (prompt || '').trim());
+    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), resumeCmd: cmd.resumeCmd || rec.resumeCmd });
+    this.wire(id, rec, proc, cols, rows, (prompt || '').trim(), { preReason });
     this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -207,7 +223,7 @@ export class SessionManager {
     if (rec.title && rec.titleSource !== 'user') rec.titleSource = 'fixed'; // 이어받기 요청문("이전 대화…")으로 이름이 바뀌지 않게 고정(사용자가 지은 이름은 그대로)
     if (rec.autoTitle) rec.autoTitle.source = 'fixed';                       // 사용자 이름을 지워 되돌릴 때도 이어받기 요청문 이름이 끼어들지 않게
     rec.previous = [...(rec.previous || []), { agent: rec.agent, model: rec.model, effort: rec.effort, sessionId: rec.sessionId, recordPath: rec.recordPath, resumeCmd: rec.resumeCmd, until: new Date().toISOString() }];
-    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
+    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
     // 다른 에이전트로 새로 띄우는 것이므로 안내문을 이어받기 요청 앞에 붙인다
     this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
     if (sel.agent === 'codex') this.watchCodexRollout(id, rec);
@@ -215,7 +231,7 @@ export class SessionManager {
     return rec;
   }
 
-  wire(id, rec, proc, cols, rows, firstPrompt) {
+  wire(id, rec, proc, cols, rows, firstPrompt, { preReason = null } = {}) {
     const screen = new HeadlessTerminal({ cols, rows, allowProposedApi: true, scrollback: 0 });
     // procAt(v2.80) = 이 CLI 프로세스가 뜬 시각 — 그 전에 시작한 배경 작업은 이전 프로세스와 함께 죽었다(server.mjs bgFor)
     const state = { pty: proc, screen, buffer: '', timer: null, pendingPrompt: firstPrompt || '', promptSent: false, activity: '', procAt: Date.now() };
@@ -229,7 +245,17 @@ export class SessionManager {
     });
     proc.onExit(({ exitCode }) => {
       if (this.live.get(id) !== state) return;
-      clearTimeout(state.timer); rec.exitCode = exitCode; this.setStatus(id, 'exited'); this.live.delete(id); this.save();
+      clearTimeout(state.timer); rec.exitCode = exitCode;
+      // 실제 원인(v2.98): 곧바로(20초 안) 끝났거나 0 이 아닌 코드로 끝나면 화면 마지막 줄에서 원인 한두 줄을 골라 카드에 남긴다.
+      // "프로세스가 없습니다" 만 보이면 사용자는 재개만 되풀이한다(2026-11-04 신고).
+      if (exitCode !== 0 || Date.now() - state.procAt < EARLY_EXIT_MS) {
+        let lines = [];
+        try { const buf = state.screen.buffer.active; for (let y = 0; y < state.screen.rows; y++) lines.push(buf.getLine(y)?.translateToString(true) ?? ''); } catch { /* 화면 없음 */ }
+        const seen = exitReasonFrom(lines);
+        rec.exitReason = [preReason, seen].filter(Boolean).join(' / ') || null;
+        if (rec.exitReason) this.hooks.onLog?.(`${id} exit ${exitCode} reason: ${rec.exitReason}`);
+      }
+      this.setStatus(id, 'exited'); this.live.delete(id); this.save();
     });
   }
 

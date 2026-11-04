@@ -229,6 +229,8 @@
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
+    // 곧바로 끝난 까닭(v2.98): 데몬이 화면 마지막 줄에서 고른 원인. 글로만 넣는다(HTML 아님).
+    $('#dead-reason').hidden = !(dead && s.exitReason); $('#dead-reason').textContent = dead && s.exitReason ? `원인: ${s.exitReason}` : '';
     $('#btn-close').title = dead ? '기록 지우기' : '이 세션 종료(PID 기준)';
     Approval.render(s); // 노란불 + prompt 있을 때만 카드가 보인다(상태가 바뀌면 함께 내려감)
   }

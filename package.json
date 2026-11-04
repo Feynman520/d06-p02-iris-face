@@ -20,6 +20,7 @@
     "verify:facenote": "node scripts/check-facenote.mjs",
     "verify:subagents": "node scripts/check-subagents.mjs",
     "verify:resume": "node scripts/check-resume.mjs",
+    "verify:codexcompat": "node scripts/check-codexcompat.mjs",
     "verify:approval": "node scripts/check-approval.mjs",
     "verify:first-session": "node scripts/check-first-session.mjs",
     "verify:wake": "node scripts/check-wake.mjs",
