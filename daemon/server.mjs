@@ -29,6 +29,7 @@ import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
 import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
+import { sweepUploads, UPLOAD_KEEP_DAYS } from './uploads.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -422,7 +423,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...f, recent: recent.get(), fresh, live });
     }
     if (req.method === 'POST' && p === '/api/upload') {
-      // 사진·파일 첨부: state/uploads/<시각>-<이름> 에 저장하고 절대경로를 돌려준다(요청문에 경로로 삽입)
+      // 사진·파일 첨부: state/uploads/<시각>-<이름> 에 저장하고 절대경로를 돌려준다(요청문에 경로로 삽입). 30일 지나면 sweepUploads 가 지운다.
       const name = decodeURIComponent(req.headers['x-file-name'] || 'file.bin').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
       const dir = path.join(STATE, 'uploads'); fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}-${name}`);
@@ -605,6 +606,9 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
   try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
+  // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
+  const sweepUp = () => { try { const r = sweepUploads(path.join(STATE, 'uploads')); if (r.removed) log(`uploads: removed ${r.removed} file(s) older than ${UPLOAD_KEEP_DAYS} days (${Math.round(r.bytes / 1024)}KB), kept ${r.kept}`); } catch (e) { log(`uploads sweep error: ${e?.message || e}`); } };
+  sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();
   // 세팅 마무리 자동 실행(v2.60): 가이드가 pending-finalize 를 남기면 창이 대신 마무리한다.
   try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); }
   try { setupProgress.start(); } catch (e) { log(`setup progress init error: ${e?.message || e}`); }
