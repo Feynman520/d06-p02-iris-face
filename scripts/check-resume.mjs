@@ -5,12 +5,13 @@
 //   2) resumeLost(): lost 만, 순서대로, 같은 카드에서 --resume(클로드) / resume(코덱스), 첫 요청 = RESUME_NOTE, lost 해제·resumedAt 기록
 //   3) resume(): 죽은 카드(exited 포함)는 손으로 재개 가능, 살아 있는 카드는 거절, 세션 id 모르는 카드는 거절
 //   4) IRIS_FACE_AUTO_RESUME=0 이면 resumeLost() 가 아무것도 하지 않는다(자식 프로세스로 확인)
+//   5) 설정 「끊긴 세션 이어 열기」(settings.autoResume): 환경 변수 > 설정 > 기본 켬, 끄면 lost 카드는 손 재개용으로 남는다, 데몬·화면 연결(정적)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { SessionManager, RESUME_NOTE } from '../daemon/sessions.mjs';
+import { SessionManager, RESUME_NOTE, autoResumeState } from '../daemon/sessions.mjs';
 
 const OFF = process.argv.includes('--off');
 let pass = 0, fail = 0;
@@ -53,8 +54,8 @@ if (OFF) {
   console.log(`\n${pass} PASS / ${fail} FAIL (auto-resume off)`); process.exit(fail ? 1 : 0);
 }
 
-// 2) resumeLost
-const ids = sm.resumeLost({ gapMs: 0 });
+// 2) resumeLost (enabled 를 못 박아 이 검사를 돌리는 셸의 IRIS_FACE_AUTO_RESUME 와 무관하게)
+const ids = sm.resumeLost({ gapMs: 0, enabled: true });
 ok(ids.join(',') === 's1,s2,s6', 'resumeLost(): 대상 = lost 만');
 await new Promise(r => setTimeout(r, 50));
 ok((sm.spawned || []).length === 3, 'resumeLost(): spawn 3회(가짜 pty, 실제 CLI 접촉 0)');
@@ -69,7 +70,7 @@ ok(sm.get('s3').status === 'dead' && sm.get('s4').status === 'dead' && sm.get('s
 ok(logs.filter(m => /auto-resume ok/.test(m)).length === 3, '로그: auto-resume ok ×3');
 const saved = JSON.parse(fs.readFileSync(path.join(dir, 'sessions.json'), 'utf8'));
 ok(saved.find(r => r.id === 's1').status === 'busy' && saved.find(r => r.id === 's1').lost === false, 'sessions.json 저장 반영');
-ok(sm.resumeLost({ gapMs: 0 }).length === 0, '두 번째 resumeLost(): 대상 없음(중복 재개 없음)');
+ok(sm.resumeLost({ gapMs: 0, enabled: true }).length === 0, '두 번째 resumeLost(): 대상 없음(중복 재개 없음)');
 
 // 3) resume() 손으로
 let threw = null; try { sm.resume('s1'); } catch (e) { threw = e.message; }
@@ -84,6 +85,29 @@ const self = fileURLToPath(import.meta.url);
 const sub = spawnSync(process.execPath, [self, '--off'], { env: { ...process.env, IRIS_FACE_AUTO_RESUME: '0' }, encoding: 'utf8' });
 ok(sub.status === 0 && /auto-resume off/.test(sub.stdout), 'IRIS_FACE_AUTO_RESUME=0 자식 검사 통과');
 if (sub.status !== 0) console.log(sub.stdout, sub.stderr);
+
+// 5) 설정 스위치와 환경 변수 우선순위
+const st5 = (s, e) => autoResumeState(s, e);
+ok(st5({}, {}).enabled === true && st5({}, {}).source === 'default', 'autoResumeState: 설정·환경 변수 없음 → 켬(default)');
+ok(st5({ autoResume: false }, {}).enabled === false && st5({ autoResume: false }, {}).source === 'setting', 'autoResumeState: 설정 끔 → 끔(setting)');
+ok(st5({ autoResume: true }, {}).enabled === true && st5({ autoResume: true }, {}).source === 'setting', 'autoResumeState: 설정 켬 → 켬(setting)');
+ok(st5({ autoResume: true }, { IRIS_FACE_AUTO_RESUME: '0' }).enabled === false && st5({ autoResume: true }, { IRIS_FACE_AUTO_RESUME: '0' }).source === 'env', 'autoResumeState: 환경 변수 0 이 설정 켬을 이김');
+ok(st5({ autoResume: false }, { IRIS_FACE_AUTO_RESUME: '1' }).enabled === true && st5({ autoResume: false }, { IRIS_FACE_AUTO_RESUME: '1' }).source === 'env', 'autoResumeState: 환경 변수 1 이 설정 끔을 이김');
+ok(st5({ autoResume: false }, { IRIS_FACE_AUTO_RESUME: '' }).source === 'setting', 'autoResumeState: 빈 환경 변수는 없는 것으로 봄');
+const dir5 = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-resume-off-'));
+fs.writeFileSync(path.join(dir5, 'sessions.json'), JSON.stringify([
+  { id: 's1', cwd, agent: 'claude', model: 'fable', effort: 'high', status: 'idle', pid: DEAD, sessionId: '77777777-7777-4777-8777-777777777777', title: '켜 둔 채 PC가 꺼진 카드' },
+], null, 2), 'utf8');
+const sm5 = new TestSM(dir5, { onLog: () => {}, codexHome: dir5 });
+ok(sm5.resumeLost({ gapMs: 0, enabled: false }).length === 0 && !sm5.spawned && sm5.lost().length === 1, 'resumeLost({enabled:false}): 아무것도 열지 않고 lost 카드는 손 재개용으로 남김');
+fs.rmSync(dir5, { recursive: true, force: true });
+const ROOT = path.resolve(path.dirname(self), '..');
+const src = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+const server = src('daemon/server.mjs'), html = src('app/index.html'), sjs = src('app/settings.js');
+ok(/sm\.resumeLost\(\{ enabled: ar\.enabled \}\)/.test(server) && /autoResume: autoResumeState\(settings\.get\(\)\)/.test(server), 'server.mjs: 시작 때 설정·환경 변수로 판단 · /api/health 에 autoResume');
+const sessionPane = html.slice(html.indexOf('data-pane="session"'), html.indexOf('data-pane="ontology"'));
+ok(/id="st-autoresume"/.test(sessionPane) && /id="st-autoresume-env"/.test(sessionPane), 'index.html: 「세션 기본값」 묶음에 스위치와 환경 변수 안내');
+ok(/pick\(\{ autoResume: e\.target\.checked \}\)/.test(sjs) && /autoResume\?\.source === 'env'/.test(sjs), 'settings.js: 스위치 저장 · 환경 변수면 잠금');
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\n${pass} PASS / ${fail} FAIL`);

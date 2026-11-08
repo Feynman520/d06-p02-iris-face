@@ -72,8 +72,16 @@ export function selectNear(lines) {
 
 // 데몬 재시작 뒤 잃어버린 세션 자동 재개(2026-09-11 16:31 사고 — 데몬 PID 종료 = ConPTY 자식인 세션 전부 동반 종료):
 //   저장 상태가 살아 있던 것(busy·idle·attention)인데 PID가 없으면 "예기치 않게 잃은 세션(lost)"으로 보고 시작 뒤 같은 카드에서 --resume 한다.
-//   CLI가 스스로 끝난 세션(exited)·이미 dead 였던 카드·세션 id를 모르는 카드(첫 메시지 전)는 되살리지 않는다. 끄기: IRIS_FACE_AUTO_RESUME=0
+//   CLI가 스스로 끝난 세션(exited)·이미 dead 였던 카드·세션 id를 모르는 카드(첫 메시지 전)는 되살리지 않는다.
+//   끄기: 설정 → 세션 기본값 「끊긴 세션 이어 열기」(settings.autoResume) 또는 IRIS_FACE_AUTO_RESUME=0 — 환경 변수가 있으면 그쪽이 이긴다(autoResumeState).
 const AUTO_RESUME = process.env.IRIS_FACE_AUTO_RESUME !== '0';
+/** 자동 재개를 할지: 환경 변수 IRIS_FACE_AUTO_RESUME 가 있으면 그 값(0 = 끔), 없으면 설정 autoResume, 둘 다 없으면 켬. */
+export function autoResumeState(settings = {}, env = process.env) {
+  const v = env.IRIS_FACE_AUTO_RESUME;
+  if (v != null && v !== '') return { enabled: v !== '0', source: 'env' };
+  if (typeof settings?.autoResume === 'boolean') return { enabled: settings.autoResume, source: 'setting' };
+  return { enabled: true, source: 'default' };
+}
 const AUTO_RESUME_GAP_MS = Number(process.env.IRIS_FACE_AUTO_RESUME_GAP_MS ?? 2500); // 프록시·CPU 부하를 나누기 위한 세션 간 간격
 const LIVE_STATUSES = new Set(['busy', 'idle', 'attention']);
 export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시작되어 이 세션이 끊겼다가 같은 카드에서 자동으로 다시 열렸습니다. 파일은 그대로입니다. 직전에 하던 작업과 어디까지 끝났는지를 3줄 이내로 알리고 새 지시를 기다리세요(스스로 이어서 실행하지 마세요).';
@@ -152,9 +160,9 @@ export class SessionManager {
   /** 잃은 세션(lost) 목록 */
   lost() { return this.list().filter(r => r.lost && r.status === 'dead'); }
   /** 시작 직후: 잃은 세션을 하나씩 간격을 두고 자동 재개한다. 돌려주는 값 = 재개 대상 id 목록(비동기로 진행). */
-  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE } = {}) {
+  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE, enabled = AUTO_RESUME } = {}) {
     const ids = this.lost().map(r => r.id);
-    if (!AUTO_RESUME || !ids.length) return [];
+    if (!enabled || !ids.length) return [];
     ids.forEach((id, i) => setTimeout(() => {
       const rec = this.sessions.get(id); if (!rec || rec.status !== 'dead') return; // 그 사이 사용자가 지웠거나 손으로 재개함
       try { this.resume(id, { prompt: note }); this.hooks.onLog?.(`${id} auto-resume ok pid=${rec.pid} [${rec.cmdline}]`); }
