@@ -34,7 +34,7 @@ class TestSM extends SessionManager {
   spawn(cmd, cwd, cols, rows) { this.spawned = [...(this.spawned || []), { cmd, cwd }]; return new FakePty(cols, rows); }
 }
 const logs = [];
-const sm = new TestSM(dir, { onLog: (m) => logs.push(m) });
+const sm = new TestSM(dir, { onLog: (m) => logs.push(m), codexHome: dir }); // v2.98: 코덱스 재개 호환이 진짜 CODEX_HOME 을 읽지 않게
 
 // 1) load
 const st = (id) => sm.get(id).status, lost = (id) => !!sm.get(id).lost;

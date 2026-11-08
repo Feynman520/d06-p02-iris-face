@@ -12,6 +12,8 @@ import { parseApproval } from './approval.mjs';
 import { readReceipt, soulRoot, toolPath } from './paths.mjs';
 import { applyLongKey } from './auth.mjs';
 import { killTree, bundledBinDirs, launchedProgram, resolveOnPath, nativePath } from './platform.mjs';
+import { alignThreadProvider, exitReasonFrom } from './codexcompat.mjs';
+import { readTable, readTableSync, descendants, isOwnProcess, stillRunning, taskkillTree, waitGone } from './proctree.mjs';
 
 const require = createRequire(import.meta.url);
 ensurePtyHelper();
@@ -74,6 +76,8 @@ const AUTO_RESUME_GAP_MS = Number(process.env.IRIS_FACE_AUTO_RESUME_GAP_MS ?? 25
 const LIVE_STATUSES = new Set(['busy', 'idle', 'attention']);
 export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시작되어 이 세션이 끊겼다가 같은 카드에서 자동으로 다시 열렸습니다. 파일은 그대로입니다. 직전에 하던 작업과 어디까지 끝났는지를 3줄 이내로 알리고 새 지시를 기다리세요(스스로 이어서 실행하지 마세요).';
 
+const EARLY_EXIT_MS = 20000; // 이보다 빨리 끝난 CLI 는 시작 실패로 보고 화면에서 원인 줄을 고른다(v2.98)
+const FACE_VERSION = (() => { try { return require('../package.json').version || ''; } catch { return ''; } })();
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const normCwd = (p) => String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 
@@ -126,6 +130,9 @@ export class SessionManager {
     this.stateDir = stateDir;
     this.file = path.join(stateDir, 'sessions.json');
     this.hooks = hooks; // onOutput(id,data) onStatus(id,status) onActivity(id,text) onList()
+    // 코덱스 옛 대화 연결 이름 맞추기(v2.98): 시험은 hooks.codexHome(가짜 폴더)·hooks.alignCodex(가짜 함수)로 실제 기록을 건드리지 않는다.
+    this.codexHome = hooks.codexHome ?? CODEX_HOME;
+    this.alignCodex = hooks.alignCodex ?? alignThreadProvider;
     this.sessions = new Map(); this.live = new Map(); this.seq = 0;
     this.load();
   }
@@ -176,7 +183,7 @@ export class SessionManager {
     const proc = this.spawn(cmd, cwd, cols, rows);
     const rec = {
       id, cwd, ...sel, cmdline: cmd.cmdline,
-      startedAt: new Date().toISOString(), pid: proc.pid,
+      startedAt: new Date().toISOString(), pid: proc.pid, pidAt: Date.now(), // pidAt(v2.97) = 이 PID 를 받은 시각 — 이전 실행이 남긴 카드의 PID 가 재사용됐는지 가르는 근거
       sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '',
       status: 'busy', exitCode: null, lastOutputAt: Date.now(),
       // 작업목록 이름: 헤드리스 Haiku가 첫 요청문에서 짧은 명사형 제목을 만든다(source=gen, 10~25초). 그 전까지는 빈 이름(화면은 폴더 이름을 보인다).
@@ -211,10 +218,20 @@ export class SessionManager {
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
     if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id);
+    // 코덱스 재개 전: 이 대화를 만든 연결 이름이 지금 설정과 다르면(설치 패키지 2.0.49 의 openai → iris 등) 맞춘다.
+    // 지금 연결이 이 PC 중계기일 때만 맞추고(원본 백업 + history.jsonl), 아니면 이유만 남겨 곧 끝날 때 화면에 보인다.
+    let preReason = null;
+    if (sel.agent === 'codex') {
+      try {
+        const a = this.alignCodex({ codexHome: this.codexHome, threadId: rec.sessionId, faceVersion: FACE_VERSION, log: (m) => this.hooks.onLog?.(`${id} ${m}`) });
+        if (a && a.action !== 'none') rec.compat = { action: a.action, from: a.from, to: a.to, at: new Date().toISOString(), ...(a.backup ? { backup: a.backup } : {}) };
+        if (a && (a.action === 'blocked' || a.action === 'error')) preReason = a.reason || null;
+      } catch (e) { this.hooks.onLog?.(`${id} codex-compat skipped: ${e?.message || e}`); }
+    }
     const cmd = buildCommand(sel, rec.cwd, { resumeId: rec.sessionId });
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
-    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, status: 'busy', exitCode: null, switchedAt: new Date().toISOString(), resumeCmd: cmd.resumeCmd || rec.resumeCmd });
-    this.wire(id, rec, proc, cols, rows, (prompt || '').trim());
+    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), resumeCmd: cmd.resumeCmd || rec.resumeCmd });
+    this.wire(id, rec, proc, cols, rows, (prompt || '').trim(), { preReason });
     this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -232,7 +249,7 @@ export class SessionManager {
     if (rec.title && rec.titleSource !== 'user') rec.titleSource = 'fixed'; // 이어받기 요청문("이전 대화…")으로 이름이 바뀌지 않게 고정(사용자가 지은 이름은 그대로)
     if (rec.autoTitle) rec.autoTitle.source = 'fixed';                       // 사용자 이름을 지워 되돌릴 때도 이어받기 요청문 이름이 끼어들지 않게
     rec.previous = [...(rec.previous || []), { agent: rec.agent, model: rec.model, effort: rec.effort, sessionId: rec.sessionId, recordPath: rec.recordPath, resumeCmd: rec.resumeCmd, until: new Date().toISOString() }];
-    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, status: 'busy', exitCode: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
+    Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
     // 다른 에이전트로 새로 띄우는 것이므로 안내문을 이어받기 요청 앞에 붙인다
     this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
     if (sel.agent === 'codex') this.watchCodexRollout(id, rec);
@@ -240,7 +257,7 @@ export class SessionManager {
     return rec;
   }
 
-  wire(id, rec, proc, cols, rows, firstPrompt) {
+  wire(id, rec, proc, cols, rows, firstPrompt, { preReason = null } = {}) {
     const screen = new HeadlessTerminal({ cols, rows, allowProposedApi: true, scrollback: 0 });
     // procAt(v2.80) = 이 CLI 프로세스가 뜬 시각 — 그 전에 시작한 배경 작업은 이전 프로세스와 함께 죽었다(server.mjs bgFor)
     const state = { pty: proc, screen, buffer: '', timer: null, pendingPrompt: firstPrompt || '', promptSent: false, activity: '', procAt: Date.now() };
@@ -254,7 +271,17 @@ export class SessionManager {
     });
     proc.onExit(({ exitCode }) => {
       if (this.live.get(id) !== state) return;
-      clearTimeout(state.timer); rec.exitCode = exitCode; this.setStatus(id, 'exited'); this.live.delete(id); this.save();
+      clearTimeout(state.timer); rec.exitCode = exitCode;
+      // 실제 원인(v2.98): 곧바로(20초 안) 끝났거나 0 이 아닌 코드로 끝나면 화면 마지막 줄에서 원인 한두 줄을 골라 카드에 남긴다.
+      // "프로세스가 없습니다" 만 보이면 사용자는 재개만 되풀이한다(2026-11-04 신고).
+      if (exitCode !== 0 || Date.now() - state.procAt < EARLY_EXIT_MS) {
+        let lines = [];
+        try { const buf = state.screen.buffer.active; for (let y = 0; y < state.screen.rows; y++) lines.push(buf.getLine(y)?.translateToString(true) ?? ''); } catch { /* 화면 없음 */ }
+        const seen = exitReasonFrom(lines);
+        rec.exitReason = [preReason, seen].filter(Boolean).join(' / ') || null;
+        if (rec.exitReason) this.hooks.onLog?.(`${id} exit ${exitCode} reason: ${rec.exitReason}`);
+      }
+      this.setStatus(id, 'exited'); this.live.delete(id); this.save();
     });
   }
 
@@ -403,11 +430,25 @@ export class SessionManager {
   }
   resize(id, cols, rows) { const st = this.live.get(id); if (st && cols > 0 && rows > 0) { st.pty.resize(Math.floor(cols), Math.floor(rows)); st.screen.resize(Math.floor(cols), Math.floor(rows)); } }
 
+  /** 이 카드의 PID 를 끝내도 되는가(v2.97). 이번 데몬이 띄운 세션(live)은 늘 우리 것. 이전 실행이 남긴 카드(orphan)는
+   *  그 PID 의 프로그램이 카드가 PID 를 받은 무렵에 시작했을 때만 — 늦게 시작했다면 윈도가 번호를 다른 프로그램에 넘긴 것이다.
+   *  돌려주는 값: 'own' | 'reused' | 'gone' | 'unknown'(표 없음·시각 없음 → 옛 동작처럼 끝내되 보고에 남긴다) */
+  ownership(id, table) {
+    const rec = this.sessions.get(id); if (!rec) return 'gone';
+    if (this.live.has(id)) return 'own';
+    if (!pidAlive(rec.pid)) return 'gone';
+    const since = rec.pidAt || Math.max(Date.parse(rec.startedAt || '') || 0, Date.parse(rec.switchedAt || '') || 0);
+    const own = isOwnProcess(table, rec.pid, since);
+    return own === true ? 'own' : own === false ? 'reused' : 'unknown';
+  }
   /** 명시적 닫기: 그 세션의 PID 트리 하나만 종료하고 목록에서 제거 */
   close(id) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const st = this.live.get(id); clearTimeout(st?.timer);
-    if (pidAlive(rec.pid)) killTree(rec.pid);
+    // 이전 실행이 남긴 카드는 PID 재사용부터 확인한다(v2.97) — 남의 프로그램이면 건드리지 않고 카드만 치운다
+    const owner = this.live.has(id) ? 'own' : pidAlive(rec.pid) ? this.ownership(id, readTableSync()) : 'gone';
+    if (owner === 'reused') this.hooks.onLog?.(`${id} close: pid ${rec.pid} now belongs to another program — not killed`);
+    else if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id); this.sessions.delete(id); this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -424,7 +465,53 @@ export class SessionManager {
     if (this.live.has(id) || pidAlive(rec.pid)) throw new Error('session still alive; use close');
     this.sessions.delete(id); this.save(); this.hooks.onList?.(); return rec;
   }
-  closeAll() { for (const id of [...this.sessions.keys()]) { const rec = this.sessions.get(id); if (this.live.has(id) || pidAlive(rec.pid)) this.close(id); } }
+  /** 전부 종료(v2.97 — 창 ×·Alt+F4·⏻·트레이 「전부 종료」·업데이트 적용이 모두 이 한 길). 개별 ✕(close)와 달리 카드는 지우지 않는다.
+   *  ① 프로세스 표를 한 번 읽어 세션마다 가계도(세션 PID + 자손 = 로컬 MCP 포함)를 적는다 — 이름으로 고르는 일은 없다
+   *  ② 카드를 먼저 '종료됨'(exited·lost 아님)으로 저장한다 → 다음 실행에서 자동 부활하지 않고, 기록이 있으면 「↻ 여기서 재개」로 이어 갈 수 있다
+   *     (첫 메시지 전 카드는 이어 갈 대화가 없으므로 지운다)
+   *  ③ 세션 PID 마다 taskkill /T /F → ④ 가계도의 프로그램이 정말 사라졌는지 확인, 남은 것은 같은 프로그램임을 다시 확인한 뒤에만 한 번 더 끝낸다
+   *  ⑤ 보고: { ok, verified, sessions[{id,title,pid,result}], ended, survivors[{pid,name,session}] } — 거짓 완료를 내지 않는다(표를 못 읽으면 verified=false) */
+  killTree(pid) { taskkillTree(pid); } // 검사(scripts/check-shutdown.mjs)가 "끝내기 실패"를 흉내 낼 때 바꿔 끼우는 자리
+  async endAll({ settleMs = 1500 } = {}) {
+    const t0 = Date.now();
+    const table = await readTable();
+    const report = { ok: false, verified: !!table, sessions: [], ended: 0, survivors: [], ms: 0 };
+    const targets = [];
+    for (const [id, rec] of [...this.sessions]) {
+      const st = this.live.get(id); clearTimeout(st?.timer);
+      const owner = this.ownership(id, table);
+      const row = { id, title: rec.title || '', pid: rec.pid || null, result: owner === 'gone' ? 'not-running' : owner === 'reused' ? 'skipped-reused' : 'ended' };
+      if (owner === 'own' || owner === 'unknown') {
+        const tree = table ? descendants(table, rec.pid) : [];
+        targets.push({ id, pid: rec.pid, tree: tree.length ? tree : [{ pid: rec.pid, ppid: 0, start: 0, name: '' }] });
+        row.procs = tree.length || 1; if (owner === 'unknown') row.note = 'identity-unchecked';
+      }
+      this.live.delete(id);
+      if (rec.sessionId) Object.assign(rec, { status: 'exited', lost: false, pid: null, prompt: null, titlePending: false, closedAt: new Date().toISOString(), closedBy: 'shutdown' });
+      else this.sessions.delete(id);
+      report.sessions.push(row);
+    }
+    this.save(); this.hooks.onList?.();
+    for (const t of targets) this.killTree(t.pid);
+    const all = targets.flatMap(t => t.tree.map(p => ({ ...p, session: t.id })));
+    let left = await waitGone(all, settleMs);
+    if (left.length) {
+      // 아직 PID 가 살아 있는 것: 새 표로 "같은 프로그램(시작 시각 같음)"인지 확인한 것만 한 번 더 끝낸다. 새 표가 없으면 끝내지 않고 남은 것으로 보고한다.
+      const t2 = await readTable();
+      if (t2) {
+        left = stillRunning(left, t2);
+        for (const p of left) this.killTree(p.pid);
+        left = await waitGone(left, 1000);
+        if (left.length) { const t3 = await readTable(); if (t3) left = stillRunning(left, t3); }
+      }
+    }
+    report.ended = all.length - left.length;
+    report.survivors = left.map(p => ({ pid: p.pid, name: p.name || '', session: p.session }));
+    report.ok = report.verified && !left.length;
+    report.ms = Date.now() - t0;
+    this.hooks.onLog?.(`endAll: sessions=${report.sessions.length} procs=${all.length} ended=${report.ended} survivors=${left.length} verified=${report.verified} ${report.ms}ms`);
+    return report;
+  }
 
   // 코덱스 롤아웃 파일은 첫 메시지 뒤에 생기므로 세션이 살아 있는 동안 3초마다 cwd로 짝을 맞춘다
   watchCodexRollout(id, rec) {

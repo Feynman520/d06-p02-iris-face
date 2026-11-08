@@ -48,11 +48,28 @@ export function resolveOnPath(file, env = process.env, { platform } = {}) {
  * 세션 프로세스 트리 하나를 끝낸다. Windows = taskkill /T /F(이식 전 그대로).
  * macOS = node-pty 의 자식은 setsid 로 새 세션·프로세스 그룹의 우두머리라 그룹 전체(-pid)에 SIGKILL — 데몬이 띄운 그 PID 의 그룹만.
  */
-export function killTree(pid, { platform } = {}) {
+export function killTree(pid, { platform, timeoutMs } = {}) {
   if (!pid) return;
-  if (isWin(platform)) { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); return; }
+  if (isWin(platform)) { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', ...(timeoutMs ? { timeout: timeoutMs } : {}) }); return; }
   try { process.kill(-pid, 'SIGKILL'); return; } catch {}
   try { process.kill(pid, 'SIGKILL'); } catch {}
+}
+
+/**
+ * 프로세스 표(v2.97 전부 종료의 가계도, daemon/proctree.mjs) — macOS 갈래. Windows 는 proctree 의 PowerShell CIM 그대로.
+ * ps 한 번: 줄마다 `pid ppid 시작시각(lstart) 실행파일`. LC_ALL=C 라야 lstart 가 영어 날짜(Date.parse 가 읽는 꼴)로 나온다.
+ * 시작 시각은 초 단위(로컬 시각) — proctree 의 "부모보다 먼저 시작한 자식은 자식 아님"·PID 재사용 판정에 충분하다.
+ */
+export const psTableCommand = () => ({ file: '/bin/ps', args: ['-axww', '-o', 'pid=,ppid=,lstart=,comm='], env: { ...process.env, LC_ALL: 'C' } });
+/** ps 출력 → Map(pid → {pid, ppid, start, name}) — proctree parseTable 과 같은 꼴. 읽은 줄이 없으면 null. */
+export function parsePsTable(text) {
+  const map = new Map();
+  for (const line of String(text || '').split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/); if (!m) continue;
+    const start = Date.parse(m[3]);
+    map.set(Number(m[1]), { pid: Number(m[1]), ppid: Number(m[2]), start: Number.isFinite(start) ? start : 0, name: path.basename(m[4].trim()) });
+  }
+  return map.size ? map : null;
 }
 
 /** 데몬이 세션 PATH 맨 앞에 넣는 동봉 도구 폴더(심 다음). macOS 의 git 은 심만 거친다(dugite 환경변수, P03 D-M13). */

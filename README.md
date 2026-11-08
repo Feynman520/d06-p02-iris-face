@@ -19,7 +19,7 @@ It never touches your CLI configuration, subscriptions, or instruction files. De
       ↓
 ④ continue — reply in the same session, or switch model/depth (resume) or even Claude↔Codex (context handoff)
       ↓
-⑤ keep     — sessions survive closing the window; the tray ⏻ ends everything at once
+⑤ keep     — minimize and sessions keep running; the window × ends every session and its local MCP servers, verifies, then closes (transcripts stay, ↻ resume)
 ```
 
 | Piece | What it is |
@@ -74,7 +74,7 @@ node launch.mjs            # starts the daemon if needed, opens the Electron win
 - `node launch.mjs --browser` — open in the default browser instead of Electron.
 - `node launch.mjs --no-open` — daemon only (`http://127.0.0.1:3458/`).
 - `wscript.exe //nologo launch-hidden.vbs [same flags]` — the same launcher with **no console window** (what a desktop shortcut should point at). Launcher output goes to `state/launch.log`; a fatal failure shows a message box. Set `IRIS_FACE_NODE` if `node` is not on PATH.
-- Quit everything: tray icon → ⏻, or ⚙ settings → 전부 종료. Closing the window only hides it; sessions keep running.
+- Closing / quitting (since v2.97): the window × and Alt+F4 quit everything — every session Face started plus that session's local MCP servers (only the session's own PID tree, never by process name) are ended and checked, then the window and tray close. It asks once only when a session is still working. ⚙ settings → 전부 종료 and tray → 전부 종료 run the same procedure. To keep sessions running, minimize (or Ctrl+W). Closed sessions stay as "ended" cards you can continue with ↻ resume; they are not revived automatically on the next start. Anything left behind is shown in a message box and written to `state/shutdown-report.json`. (Up to v2.96 closing the window only hid it to the tray.)
 
 ## Environment variables
 

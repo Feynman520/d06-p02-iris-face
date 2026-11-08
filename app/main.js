@@ -145,6 +145,7 @@
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); render(); }
+      else if (m.type === 'shutdown') showQuitting();                                                       // 전부 종료 시작(v2.97) — 어느 창·탭이 시작했든 「종료하는 중」
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
       else if (m.type === 'handoff') { Handoff.apply(m); Tutorial.maybeOpen(m); }                                                     // 인수 안내 카드(설치 패키지 v2, Task 21)
@@ -228,6 +229,8 @@
     if (s.status !== 'busy') $('#activity').hidden = true;
     const dead = s.status === 'dead' || s.status === 'exited' || s.status === 'orphan';
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
+    // 곧바로 끝난 까닭(v2.98): 데몬이 화면 마지막 줄에서 고른 원인. 글로만 넣는다(HTML 아님).
+    $('#dead-reason').hidden = !(dead && s.exitReason); $('#dead-reason').textContent = dead && s.exitReason ? `원인: ${s.exitReason}` : '';
     $('#btn-close').title = dead ? '기록 지우기' : '이 세션 종료(PID 기준)';
     Approval.render(s); // 노란불 + prompt 있을 때만 카드가 보인다(상태가 바뀌면 함께 내려감)
   }
@@ -589,7 +592,34 @@
   };
   $('#btn-copy-resume').onclick = () => { const t = cur()?.resumeCmd; if (t) navigator.clipboard?.writeText(t); };
   $('#btn-home').onclick = goHome;
-  $('#btn-shutdown').onclick = async () => { if (!(await Dialog.confirm(`데몬과 세션 ${sessions.length}개를 전부 종료할까요? (각 세션 PID 기준)`, { okLabel: '전부 종료', danger: true }))) return; await api('POST', '/api/shutdown').catch(() => {}); };
+  // 전부 종료(v2.97): ⏻·창 ×·트레이가 같은 절차 — Electron 이면 메인의 quitAll() 한 길, 브라우저 모드면 여기서 같은 API(?wait=1)를 부른다.
+  const liveSessions = () => sessions.filter(s => !['dead', 'exited', 'orphan'].includes(s.status));
+  const workingSessions = () => sessions.filter(s => ['busy', 'attention', 'delegated', 'waiting'].includes(viewStatus(s)));
+  function showQuitting(text) {
+    let el = $('#quitting');
+    if (!el) { el = document.createElement('div'); el.id = 'quitting'; el.className = 'dlg quitting'; el.innerHTML = '<div class="dlg-box" role="alertdialog" aria-live="polite"><div class="dlg-title">IRIS 종료</div><div id="quitting-msg" class="dlg-msg"></div></div>'; document.body.appendChild(el); }
+    $('#quitting-msg').textContent = text || `세션 ${liveSessions().length}개와 그 세션이 띄운 로컬 MCP 를 끝내고 확인하는 중입니다…\n끝나면 창이 닫힙니다.`;
+    el.hidden = false;
+  }
+  const hideQuitting = () => { const el = $('#quitting'); if (el) el.hidden = true; };
+  async function quitAll() {
+    if (window.irisHost?.quitAll) { showQuitting(); return window.irisHost.quitAll(); }
+    showQuitting();
+    try {
+      const r = await api('POST', '/api/shutdown?wait=1');
+      const rep = r.report || {};
+      showQuitting(rep.ok ? 'IRIS 를 종료했습니다. 이 탭을 닫아도 됩니다.'
+        : `IRIS 를 종료했지만 일부를 확인하지 못했습니다.\n${(rep.survivors || []).map(p => `· PID ${p.pid} ${p.name || ''}`).join('\n')}${rep.verified === false ? '\n· 세션 아래 프로그램(MCP)까지 확인하지 못했습니다.' : ''}\n자세한 기록: state\\shutdown-report.json`);
+    } catch (e) { showQuitting(`종료 결과를 받지 못했습니다(${e.message}). 세션이 아직 실행 중일 수 있습니다.`); }
+  }
+  $('#btn-shutdown').onclick = async () => { if (!(await Dialog.confirm(`세션 ${liveSessions().length}개와 그 세션이 띄운 로컬 MCP 를 끝내고 IRIS 를 종료할까요?\n대화 기록은 남고, 다음에 카드에서 「↻ 여기서 재개」로 이어 갈 수 있습니다.`, { okLabel: '전부 종료', danger: true }))) return; quitAll(); };
+  // 창 × (Electron): 작업 중인 세션이 있을 때만 묻는다 — 대기 중 세션뿐이면 바로 닫는다(닫을 때마다 확인 창을 늘리지 않음)
+  window.irisHost?.onCloseRequest?.(async () => {
+    const w = workingSessions(); if (!w.length) return true;
+    return Dialog.confirm(`작업 중인 세션 ${w.length}개가 있습니다.\n창을 닫으면 IRIS 의 모든 세션과 그 세션이 띄운 로컬 MCP 가 종료됩니다. 대화 기록은 남습니다.\n(세션을 살려 두려면 최소화하세요)`, { okLabel: '닫고 종료', danger: true });
+  });
+  window.irisHost?.onQuitting?.(() => showQuitting());
+  window.irisHost?.onQuitCancel?.(() => hideQuitting());
   $('#btn-rail').onclick = () => { railAutoHidden = false; $('#app').classList.toggle('rail-hidden'); };   // 사용자가 직접 누르면 그 뜻을 존중(서랍 닫을 때 되돌리지 않음)
   // 작업목록 너비: 오른쪽 가장자리를 끌어 조절(180~560px), localStorage 'iris.railW'. 두 번 클릭 = 기본값(248). 접힌 상태에서는 끌지 않는다.
   (() => {
@@ -700,7 +730,14 @@
   $('#iris').addEventListener('dblclick', (e) => { e.preventDefault(); signature(); }); // 중앙 애니메이션 두 번 클릭(v2.55, 2026-09-13 사용자 요청)
   document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'i') { e.preventDefault(); signature(); } });
   // 첫 실행 각인(v2.55): `by SEJUN HAM` 크게 + 그 아래 문장, 둘 다 이스터에그 손글씨체(.sig-by). 별이 모이는 1.2초 연출이 끝난 뒤 한 번.
-  setTimeout(() => { if (!current) sigShow({ name: `by ${SIG_NAME}`, motto: Settings.health()?.about?.motto || '해결은 에이전트가, 정의는 우리가.', by: true, dur: 4200, delay: 500 }); }, 1300);
+  // 손글씨체(3.2MB)는 글자가 보일 때에야 받기 시작해, 재실행 직후 데몬이 바쁘면 3초(font-display:block)를 넘겨
+  // 대체 글자체(Segoe Script)로 그려졌다(v2.97.1, 2026-10-29 신고). → 페이지 시작 때 미리 받고, 다 받은 뒤 띄운다(최대 2.5초 더 기다림).
+  const sigFont = (document.fonts?.load?.('40px "Nanum Pen Script"') || Promise.resolve()).catch(() => {});
+  setTimeout(() => {
+    Promise.race([sigFont, new Promise((r) => setTimeout(r, 2500))]).then(() => {
+      if (!current) sigShow({ name: `by ${SIG_NAME}`, motto: Settings.health()?.about?.motto || '해결은 에이전트가, 정의는 우리가.', by: true, dur: 4200, delay: 500 });
+    });
+  }, 1300);
   window.irisHost?.onAbout?.(() => Settings.about()); // 트레이 메뉴 "IRIS-Face 정보…"
 
   // ---------- 검증용 미리보기 ?preview=<기록파일>&agent= ----------

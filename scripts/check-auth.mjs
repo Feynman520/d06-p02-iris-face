@@ -75,6 +75,10 @@ const ui = fs.readFileSync(path.join(ROOT, 'app', 'settings.js'), 'utf8');
 ok(!/\.token\b|CLAUDE_CODE_OAUTH_TOKEN/.test(ui), '5 화면 코드는 열쇠 필드를 다루지 않음');
 ok(/st-auth-sec/.test(fs.readFileSync(path.join(ROOT, 'app', 'index.html'), 'utf8')), '5 설정 서랍에 인증 절 있음');
 ok(!/TeamClaude/.test(ui.slice(ui.indexOf('// ---- 인증'), ui.indexOf('// ---- 정보'))), '5 인증 절 사용자 글에 "TeamClaude" 없음');
+// v2.97.2(2026-11-02 신고): 도구가 없는 PC 에서 절을 통째로 숨기면 "왜 로그인 열쇠가 없지?"가 된다 — 숨기지 않고 이유 한 줄.
+const authUi = ui.slice(ui.indexOf('function renderAuth'), ui.indexOf('function setAuth'));
+ok(!/sec\.hidden\s*=\s*!\(auth\?\.available/.test(authUi), '5 도구 없음이어도 인증 절을 숨기지 않음');
+ok(/auth-missing/.test(authUi) && /업데이트/.test(authUi), '5 도구 없음 = 이유와 받는 길(업데이트) 한 줄');
 
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
