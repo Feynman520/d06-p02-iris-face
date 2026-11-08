@@ -347,7 +347,9 @@ export class SessionManager {
     // 화면 맨 아래 4줄 안에 "빈 입력 프롬프트"(❯ › > 만 있는 줄; 입력틀 테두리·상태줄이 그 아래 1~3줄)가 보이면 대기가 우선 —
     // 승인 대화상자는 입력틀을 통째로 덮으므로 빈 프롬프트가 보이면 확인 요청이 아니다. 사용자가 보낸 글의 메아리("> 좋아 …")는 빈 줄이 아니라 안 걸린다.
     const promptNear = lines.slice(-4).some(l => /^\s*(❯|›|>)\s*$/.test(l));
-    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : ((ATTENTION_RE.test(tail) || selectNear(lines)) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
+    // 코덱스 업데이트 물음도 노란불(2026-11-09): 0.165 부터 안내줄이 "enter continue · esc skip" 이라 ATTENTION_RE("Press enter")에 안 걸리고,
+    // 커서 줄 `› 1. Update now` 가 PROMPT_RE 에 걸려 '대기'로 보였다 → 아래 자동 응답(2)이 안 돌고 첫 요청+Enter 가 「Update now」를 눌러 세션이 끝났다.
+    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : ((ATTENTION_RE.test(tail) || selectNear(lines) || CODEX_UPDATE_PROMPT_RE.test(tail)) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
     // v2.73(2026-09-21): 화면 글자로는 '대기'라도 대화 기록의 차례가 아직 열려 있으면(도구 결과 대기·요청 직후) 바쁨으로 둔다.
     // 도구 출력에 섞인 `>` 줄·빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 알린 사건(2026-09-20 사용자 실측)의 교차 확인.
     // 기록이 답 글로 끝나 있으면(null) 화면 판정을 그대로 믿는다 — 기록이 잠시 뒤처져도 다음 폴링에서 따라잡는다.
