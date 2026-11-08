@@ -39,6 +39,8 @@ const BUSY_WINDOW_MS = 2000;
 //   → 화면 출력이 ENTER_QUIET_MS 동안 멈춘(붙여넣기를 다 소화한) 뒤 Enter를 치고, 이후에도 입력창에 요청이 남아 있으면 Enter를 다시 친다(최대 ENTER_TRIES회).
 const ENTER_QUIET_MS = Number(process.env.IRIS_FACE_ENTER_QUIET_MS ?? 300);     // 마지막 화면 출력 뒤 이만큼 조용해야 Enter
 const ENTER_MAX_WAIT_MS = Number(process.env.IRIS_FACE_ENTER_MAX_WAIT_MS ?? 3000); // 스피너 등으로 화면이 계속 움직여도 이 시간 뒤엔 Enter
+// 붙여넣기에 화면이 아직 한 번도 반응하지 않았으면 이만큼까지 기다린다 — 이미지 경로가 든 글은 CLI 가 그림을 다 읽을 때까지(실측 0.5~1.8초) 아무것도 출력하지 않는다(2026-11-05)
+const ENTER_NO_ECHO_MAX_MS = 10000;
 const ENTER_VERIFY_MS = 1200;   // Enter 뒤 이만큼 지나도 요청이 입력창에 그대로면 미전송으로 판정
 const ENTER_TRIES = 3;
 // 작업 중 표식(두 CLI 공통 "esc to interrupt" + 클로드 스피너 문구 + 코덱스 MCP 기동 상태줄). 화면이 계속 갱신돼도 이 표식이 없으면 대기로 본다.
@@ -290,13 +292,16 @@ export class SessionManager {
     const st = this.live.get(id); if (!st) throw new Error(`session not live: ${id}`);
     const rec = this.sessions.get(id);
     const log = (m) => this.hooks.onLog?.(`${id} ${m}`);
-    const tail = text.replace(/\s+/g, ' ').trim().slice(-10); // 입력창에 요청이 남아 있는지 볼 때 쓰는 꼬리 글자
+    const flat = (s) => s.replace(/\s+/g, ' ').trim();
+    const tail = flat(text).slice(-10); // 입력창에 요청이 남아 있는지 볼 때 쓰는 꼬리 글자
+    // 첫 줄 머리 글자도 본다: 첨부 경로로 끝나는 요청은 CLI 가 경로를 [Image #N] 으로 바꿔 꼬리가 화면에 나오지 않는다(2026-11-05 "입력창에 남았는데 enter ok")
+    const head = flat(text.split('\n').find((l) => l.trim()) || '').slice(0, 10);
     const sentAt = Date.now();
     st.worked = true; // 이 뒤의 busy→끝 전환은 '작업 완료'(setStatus done) — 화면 알림 근거
     st.pty.write('\x1b[200~' + text + '\x1b[201~');
     log(`send${first ? ' first' : ''} ${text.length}c`);
     const alive = () => this.live.get(id) === st;
-    const composerHolds = (screen) => tail && screen.replace(/\s+/g, ' ').includes(tail) && !WORKING_RE.test(screen);
+    const composerHolds = (screen) => { const s = flat(screen); return !WORKING_RE.test(screen) && ((tail && s.includes(tail)) || (head && s.includes(head))); };
     const verify = (n) => {
       if (!alive()) return;
       const screen = this.screenText(id, 10);
@@ -312,11 +317,13 @@ export class SessionManager {
       try { st.pty.write('\r'); } catch { return; }
       setTimeout(() => verify(n), ENTER_VERIFY_MS);
     };
-    // 화면 출력이 ENTER_QUIET_MS 동안 멈추면(붙여넣기를 다 소화함) Enter. 스피너 등으로 계속 움직여도 ENTER_MAX_WAIT_MS 뒤엔 친다.
+    // 붙여넣기 뒤 화면이 반응했고 그 출력이 ENTER_QUIET_MS 동안 멈추면(붙여넣기를 다 소화함) Enter. 스피너 등으로 계속 움직여도 ENTER_MAX_WAIT_MS 뒤엔 친다.
+    // 붙여넣기 전 출력만 보고 "조용하다"고 치지 않는다 — 그림을 읽느라 침묵하는 동안 친 Enter 는 빠진다. 끝내 반응이 없으면 ENTER_NO_ECHO_MAX_MS 뒤에 친다.
     const settle = () => {
       if (!alive()) return;
-      const quiet = Date.now() - (rec?.lastOutputAt || 0);
-      if (quiet >= ENTER_QUIET_MS || Date.now() - sentAt >= ENTER_MAX_WAIT_MS) return pressEnter(1);
+      const now = Date.now(), last = rec?.lastOutputAt || 0, echoed = last > sentAt;
+      if (echoed && now - last >= ENTER_QUIET_MS) return pressEnter(1);
+      if (now - sentAt >= (echoed ? ENTER_MAX_WAIT_MS : ENTER_NO_ECHO_MAX_MS)) return pressEnter(1);
       setTimeout(settle, 50);
     };
     setTimeout(settle, Math.min(ENTER_QUIET_MS, 150));
