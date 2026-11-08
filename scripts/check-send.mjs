@@ -23,7 +23,8 @@ class FakeCli {
   resize() {} kill() {}
   write(d) {
     const t = Date.now(); this.writes.push({ t, d });
-    if (d.startsWith('\x1b[200~')) { this.pastedAt = t; setTimeout(() => { this.landed = true; this.landedAt = Date.now(); this.emit(`\x1b[2J\x1b[H${this.composer}`); }, this.echoMs); return; }
+    // 실제 CLI 처럼 입력틀 아래 테두리(─)까지 그린다 — 테두리 없는 `❯ 글` + 들여쓴 줄은 선택 상자(sessions.mjs selectNear)로 읽힌다
+    if (d.startsWith('\x1b[200~')) { this.pastedAt = t; setTimeout(() => { this.landed = true; this.landedAt = Date.now(); this.emit(`\x1b[2J\x1b[H${this.composer}\r\n${'─'.repeat(40)}`); }, this.echoMs); return; }
     if (d === '\r') {
       if (!this.landed) { this.earlyEnters = (this.earlyEnters || 0) + (this.dropEarly ? 1 : 0); if (this.dropEarly) return; }
       if (this.dropFirstLateEnter && this.lateEnters++ === 0) return; // 반응한 뒤인데도 한 번 빠지는 경우
