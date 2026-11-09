@@ -197,6 +197,27 @@ let up;
   ok((await off.check()).checkError.includes('no network'), '확인 실패: fetch 자체가 터져도 info 를 돌려준다');
 }
 
+// ---- 7b) 두 갈래 배포(2026-11-09): 사전 공개(최신판)는 IRIS 안 업데이트로 받지 않는다 ----
+{
+  const preRel = (tag, names) => JSON.stringify({ tag_name: tag, prerelease: true, published_at: '2026-11-10T00:00:00Z', body: '최신판', assets: names });
+  const STABLE_JSON = JSON.stringify({
+    face: { version: '2.58.0', tag: 'iris-face--v2.58.0', asset: 'iris-face-v2.58.0.zip', size: FACE_ZIP.length, url: 'https://pub-6bb549660d7d4bd79ed07a7b6523f5c5.r2.dev/iris-face-v2.58.0.zip' },
+  });
+  const seen = [];
+  const preFetch = (url, opts) => {
+    seen.push(url);
+    if (/d06-p02-iris-face\/releases\/latest$/.test(url)) return Promise.resolve(R(200, preRel('iris-face--v2.59.0', [asset('iris-face-v2.59.0.zip', 10), asset('iris-face-v2.59.0.zip.sha256', 80)])));
+    if (/d09-p03-iris-installer\/releases\/latest$/.test(url)) return Promise.resolve(R(200, JSON.stringify({ tag_name: 'iris-installer--v9.9.9', draft: true, assets: [asset('IRIS-Setup_v9.9.9_x.zip', 10)] })));
+    if (/\/latest\.json$/.test(url)) return Promise.resolve(R(200, STABLE_JSON));
+    return fakeFetch(url, opts);
+  };
+  const pre = new Updater({ root, faceRoot: faceHome, stateDir: fs.mkdtempSync(path.join(tmp, 'st-pre-')), modulesDir, keys: KEYS, now: () => nowMs, log: () => {}, broadcast: () => {}, fetchImpl: preFetch });
+  const info = await pre.check();
+  ok(info.latest.face?.version === '2.58.0' && info.latest.face?.viaMirror === true, '두 갈래: 사전 공개 창 2.59.0 은 무시하고 안정판 전용 latest.json(2.58.0)을 쓴다');
+  ok(!info.latest.package || info.latest.package.version !== '9.9.9', '두 갈래: 초안(draft) 구조판은 받지 않는다');
+  ok(seen.some(u => /latest\.json$/.test(u)), '두 갈래: 사전 공개를 거른 뒤 미러 latest.json 을 읽는다');
+}
+
 // ---- 8) 설정 토글 · 타이머 끔 플래그 ----
 {
   const t = new Updater({ root, faceRoot: faceHome, stateDir, modulesDir, keys: KEYS, fetchImpl: fakeFetch, now: () => nowMs });

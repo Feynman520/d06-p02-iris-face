@@ -237,6 +237,9 @@ export class Updater {
     let rel, ghErr = null;
     try { rel = await this.json(src.api); }
     catch (e) { rel = null; ghErr = e; this.log?.(`update: ${name || src.api} github api failed (${String(e.message).slice(0, 80)}) → mirror latest.json`); }
+    // 안정판만(2026-11-09 두 갈래 배포, P03 docs\설계-배포채널-2026-11-09.md): 최신판(사전 공개)은 홈페이지에서만 받는다.
+    // releases/latest 는 사전 공개·초안을 주지 않지만, 주소가 바뀌거나 응답이 이상해도 사전 공개 판은 받지 않는다(이중 안전장치) → 안정판 전용 latest.json 으로.
+    if (rel && (rel.prerelease === true || rel.draft === true)) { this.log?.(`update: ${name || src.api} ignored ${rel.prerelease ? 'prerelease' : 'draft'} ${rel.tag_name || ''} → mirror latest.json`); ghErr = new Error('prerelease ignored'); rel = null; }
     let assets = Array.isArray(rel?.assets) ? rel.assets : [];
     // GitHub API 가 403(익명 rate limit·망 차단 — 2026-09-19 데스크탑 실측 "update check … HTTP 403")이거나 첨부가 없으면
     // 미러의 latest.json(릴리스 도구·mirror-upload 가 부품별로 적음)에서 같은 모양을 만든다. 내려받기·sha256·서명도 미러 주소.
