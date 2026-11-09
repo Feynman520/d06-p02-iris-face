@@ -92,6 +92,27 @@ ok(/e\.key === 'F2'[^\n]*!Settings\.isOpen\(\) && !FolderPicker\.isOpen\(\) && r
 ok(/pencil: '/.test(src('app/icons.js')), 'icons.js(v2.86): pencil 선 아이콘');
 ok(/will-frame-navigate[\s\S]{0,80}\^file:/.test(elec), 'Electron: file:// 이동 안전망');
 
+// 2b) 클립보드 그림 붙여넣기(2026-11-09 신고 "캡처 도구로 찍고 Ctrl+V 해도 안 들어감") — 고르는 함수를 그대로 떼어 가짜 클립보드로 돌린다
+{
+  const a = main.indexOf('// paste-pick-begin'), b = main.indexOf('// paste-pick-end');
+  ok(a > 0 && b > a, '붙여넣기: pastedFiles 표식 있음');
+  const pastedFiles = new Function(`${main.slice(a, b)}\nreturn pastedFiles;`)();
+  const fakeDT = ({ text = '', files = [] }) => ({ getData: (t) => (t === 'text/plain' ? text : ''), items: files.map(f => ({ kind: 'file', getAsFile: () => f })) });
+  const png = (name = 'image.png', type = 'image/png') => new File([new Uint8Array([137, 80, 78, 71])], name, { type });
+  let out = pastedFiles(fakeDT({ files: [png()] }), '20261109-140501');
+  ok(out.length === 1 && out[0].name === 'capture-20261109-140501.png' && out[0].type === 'image/png' && out[0].size === 4, '붙여넣기: 캡처 그림(image.png) → capture-<시각>.png 로 첨부');
+  out = pastedFiles(fakeDT({ files: [png(), png('image.jpeg', 'image/jpeg')] }), 'T');
+  ok(out.map(f => f.name).join() === 'capture-T-1.png,capture-T-2.jpg', '붙여넣기: 그림 여러 장 = 번호 · jpeg→jpg');
+  out = pastedFiles(fakeDT({ files: [png('보고서.pdf', 'application/pdf')] }), 'T');
+  ok(out.length === 1 && out[0].name === '보고서.pdf', '붙여넣기: 탐색기에서 복사한 파일은 제 이름 그대로');
+  ok(pastedFiles(fakeDT({ text: 'A1\tB1', files: [png()] }), 'T').length === 0, '붙여넣기: 글이 함께 실리면(엑셀 셀 등) 첨부하지 않고 글만 넣는다');
+  ok(pastedFiles(fakeDT({ text: '그냥 글' }), 'T').length === 0 && pastedFiles(null, 'T').length === 0, '붙여넣기: 글만 있거나 클립보드 없음 = 아무것도 안 함');
+  ok(pastedFiles(fakeDT({ text: '  \r\n', files: [png()] }), 'T').length === 1, '붙여넣기: 빈 글(공백)만 곁들인 그림은 첨부');
+  const h = main.slice(main.indexOf("document.addEventListener('paste'"), main.indexOf("document.addEventListener('paste'") + 600);
+  ok(/isContentEditable/.test(h) && /INPUT\|TEXTAREA\|SELECT/.test(h) && /mode !== 'chat'/.test(h), '붙여넣기: 이름 고치기·설정 칸·터미널 보기의 붙여넣기는 건드리지 않음');
+  ok(/e\.preventDefault\(\);\s*await uploadAll\(files\)/.test(h), '붙여넣기: 버튼·끌어다 놓기와 같은 uploadAll 길(50MB 한도 포함)');
+}
+
 // ---------- 3) 화면 ----------
 const req = createRequire(import.meta.url);
 let pw = null;
