@@ -46,6 +46,7 @@
     "verify:midreport": "node scripts/check-midreport.mjs",
     "verify:auth": "node scripts/check-auth.mjs",
     "verify:rename-drop": "node scripts/check-rename-drop.mjs",
+    "verify:uploads": "node scripts/check-uploads.mjs",
     "verify:settings": "node scripts/check-settings.mjs",
     "verify:tutorial": "node scripts/check-tutorial.mjs",
     "verify:deck": "node scripts/check-deck.mjs",
