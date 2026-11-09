@@ -89,6 +89,10 @@ window.Settings = (() => {
     $('#st-root').textContent = health?.root || '';
     // 알림(2026-09-11): 작업 완료 알림 켬/끔 · 창이 뒤에 있을 때 OS 알림
     $('#st-notify').checked = cfg.notifyDone !== false; $('#st-notify-os').checked = cfg.notifyOs !== false; $('#st-notify-os').disabled = cfg.notifyDone === false;
+    // 끊긴 세션 이어 열기(autoResume, 기본 켬): 데몬 환경 변수 IRIS_FACE_AUTO_RESUME 가 있으면 그 값이 이기므로 스위치를 잠그고 까닭을 보인다
+    const arEnv = health?.autoResume?.source === 'env';
+    $('#st-autoresume').checked = arEnv ? !!health.autoResume.enabled : cfg.autoResume !== false;
+    $('#st-autoresume').disabled = arEnv; $('#st-autoresume-env').hidden = !arEnv;
     // 권한 기본값(Claude --permission-mode / Codex -a · --sandbox). 목록은 데몬 /api/agents 에서.
     // 목록은 데몬(/api/agents)이 주지만, 데몬이 재시작 전이라 목록이 없으면 같은 내용을 화면 쪽 사본으로 보여 준다
     const FALLBACK = {
@@ -437,6 +441,7 @@ window.Settings = (() => {
     $('#st-perm').addEventListener('change', (e) => pick({ permission: e.target.value }));
     $('#st-approval').addEventListener('change', (e) => pick({ approval: e.target.value }));
     $('#st-sandbox').addEventListener('change', (e) => pick({ sandbox: e.target.value }));
+    $('#st-autoresume').addEventListener('change', (e) => pick({ autoResume: e.target.checked }));
     $('#st-notify').addEventListener('change', (e) => pick({ notifyDone: e.target.checked }));
     $('#st-notify-os').addEventListener('change', (e) => { if (e.target.checked) Notify.requestOs(); pick({ notifyOs: e.target.checked }); });
     $('#st-notify-test').onclick = () => Notify.preview();
