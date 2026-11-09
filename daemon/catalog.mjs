@@ -11,9 +11,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CATALOG_FILE = process.env.IRIS_FACE_CATALOG || path.join(ROOT, 'daemon', 'catalog.json');
 // 미러(2026-09-14): 일부 네트워크가 GitHub 릴리스 첨부 서버만 끊는다. 릴리스 도구가 같은 첨부를 Cloudflare R2 공개 버킷에도 올리므로,
 // GitHub 첨부 내려받기가 실패하면 <MIRROR_BASE>/<첨부 이름> 을 한 번 더 시도한다. sha256·서명 검사는 어느 쪽에서 받았든 똑같이 거친다.
-export const MIRROR_BASE = 'https://pub-6bb549660d7d4bd79ed07a7b6523f5c5.r2.dev';
-export const ALLOWED_HOSTS = ['api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com', new URL(MIRROR_BASE).hostname];
+// 2026-11-09: 미러 1순위를 같은 버킷의 빠른 창구(Cloudflare Pages, P03 mirror-worker)로 바꿨다 — 학교 유선 실측 r2.dev 초당 60~80KB(미국 LA)
+// vs pages.dev 초당 30~43MB(서울). r2.dev 는 미러의 latest.json 이 적은 주소(옛 창 호환)라 허용 목록에 남기고, 그 주소는 fastMirror() 로 빠른 창구에 돌린다.
+export const MIRROR_BASE = 'https://iris-workspace-dl.pages.dev';
+export const LEGACY_MIRROR_BASE = 'https://pub-6bb549660d7d4bd79ed07a7b6523f5c5.r2.dev';
+export const ALLOWED_HOSTS = ['api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com', new URL(MIRROR_BASE).hostname, new URL(LEGACY_MIRROR_BASE).hostname];
 export const mirrorUrl = (assetName) => `${MIRROR_BASE}/${encodeURIComponent(String(assetName))}`;
+/** 옛 r2.dev 미러 주소면 같은 경로의 빠른 창구 주소로, 아니면 그대로. 내용 검사(sha256·서명)는 어느 주소든 같다. */
+export const fastMirror = (url) => { const s = String(url ?? ''); return s.startsWith(`${LEGACY_MIRROR_BASE}/`) ? MIRROR_BASE + s.slice(LEGACY_MIRROR_BASE.length) : s; };
 export const MAX_ZIP_BYTES = 50 * 1024 * 1024;
 const MAX_HOPS = 5;
 

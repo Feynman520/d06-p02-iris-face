@@ -29,6 +29,7 @@
     "verify:launcher": "node scripts/check-launcher.mjs",
     "verify:stage": "node scripts/check-stage.mjs",
     "verify:update": "node scripts/check-update.mjs",
+    "verify:mirror": "node scripts/check-mirror.mjs",
     "verify:finalize": "node scripts/check-finalize.mjs",
     "verify:progress": "node scripts/check-progress.mjs",
     "verify:handoff": "node scripts/check-handoff.mjs",

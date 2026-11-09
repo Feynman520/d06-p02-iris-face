@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { zipRead, zipOpenFile, zipEntryDataFile } from './zip.mjs';
 import { verifyManifest, OFFICIAL_PUBLIC_KEYS } from './modsign.mjs';
 import { checkPaths, checkManifest } from './modinstall.mjs';
-import { ALLOWED_HOSTS, loadCatalog, CATALOG_FILE, mirrorUrl } from './catalog.mjs';
+import { ALLOWED_HOSTS, loadCatalog, CATALOG_FILE, mirrorUrl, fastMirror } from './catalog.mjs';
 import { soulRoot } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -246,8 +246,9 @@ export class Updater {
       if (m && m.version && m.asset && m.url) {
         this.log?.(`update: ${name} using mirror latest.json → ${m.version}`);
         return {
-          version: String(m.version), tag: String(m.tag || ''), asset: String(m.asset), url: String(m.url), size: Number(m.size) || 0,
-          sha256Url: m.sha256Url || mirrorUrl(`${m.asset}.sha256`), sigUrl: m.sigUrl || mirrorUrl(`${m.asset}.sha256.sig`),
+          // latest.json 은 옛 창 호환으로 r2.dev 주소를 적는다 — 그 주소는 같은 버킷의 빠른 창구로 돌린다(2026-11-09, catalog.mjs fastMirror).
+          version: String(m.version), tag: String(m.tag || ''), asset: String(m.asset), url: fastMirror(m.url), size: Number(m.size) || 0,
+          sha256Url: fastMirror(m.sha256Url || mirrorUrl(`${m.asset}.sha256`)), sigUrl: fastMirror(m.sigUrl || mirrorUrl(`${m.asset}.sha256.sig`)),
           publishedAt: m.publishedAt || null, notes: '', viaMirror: true,
         };
       }
