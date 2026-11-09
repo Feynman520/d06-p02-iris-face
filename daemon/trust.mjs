@@ -11,7 +11,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const claudeProjectKey = (cwd) => String(cwd).replace(/\\/g, '/').replace(/\/+$/, '');
+// 시작 안내창 미리 닫기(v2.99, 2026-11-09 학교 컴퓨터실 실측): 클로드코드 2.1.27x 는 새 PC 첫 실행 때 창 3개를 연달아 띄운다.
+//   ① 크롬 연동 안내(--chrome)  ② "새 전체화면 렌더러 써 볼래요?"  ③ "자동 모드를 기본으로 할까요?"(첫 칸 = Yes)
+// Face 의 첫 요청문 Enter 가 이 창에 먹혀 ②가 수락되면 클로드가 **새 대화 번호로 재시작**(freshIfNoTranscript)해 대화창이 비고,
+// ③이 수락되면 settings.json 기본 권한이 auto 로 영구 저장됐다. 값의 뜻 = "이미 봤음"(2.1.272 본체: hasCompletedClaudeInChromeOnboarding,
+// fullscreenUpsellSeenCount ≥ 3 이면 권유 안 함, hasSeenAutoDefaultNudge). 이 개발 PC 의 .claude.json 에는 셋 다 이미 들어 있다.
+export const CLAUDE_START_NUDGES = Object.freeze({ hasCompletedClaudeInChromeOnboarding: true, fullscreenUpsellSeenCount: 3, hasSeenAutoDefaultNudge: true });
+
+export const claudeProjectKey =(cwd) => String(cwd).replace(/\\/g, '/').replace(/\/+$/, '');
 export const codexProjectKey = (cwd) => String(cwd).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 
 function writeAtomic(file, text) {
@@ -35,6 +42,9 @@ export function trustClaude(cwd, configDir) {
   if (fresh) data = {};
   let changed = false;
   if (data.hasCompletedOnboarding === undefined) { data.hasCompletedOnboarding = true; changed = true; }
+  for (const [k, v] of Object.entries(CLAUDE_START_NUDGES)) if (data[k] === undefined) { data[k] = v; changed = true; }
+  // 권유 횟수는 "본 횟수"라 올리기만 한다(한두 번 보고 넘긴 PC 도 다시 뜨지 않게). 다른 값은 있는 그대로.
+  if (typeof data.fullscreenUpsellSeenCount === 'number' && data.fullscreenUpsellSeenCount < CLAUDE_START_NUDGES.fullscreenUpsellSeenCount) { data.fullscreenUpsellSeenCount = CLAUDE_START_NUDGES.fullscreenUpsellSeenCount; changed = true; }
   if (data.projects === undefined || data.projects === null || typeof data.projects !== 'object') { if (data.projects === undefined) { data.projects = {}; changed = true; } else return 'skipped:projects-not-object'; }
   const p = data.projects[key];
   if (p === undefined) { data.projects[key] = { hasTrustDialogAccepted: true }; changed = true; }

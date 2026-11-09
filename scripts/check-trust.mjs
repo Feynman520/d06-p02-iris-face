@@ -21,7 +21,12 @@ const cdir = path.join(tmp, 'claude');
 ok(trustClaude(cwd, cdir) === 'created', '클로드 .claude.json 새로 만듦');
 let j = JSON.parse(fs.readFileSync(path.join(cdir, '.claude.json'), 'utf8'));
 ok(j.hasCompletedOnboarding === true && j.projects[claudeProjectKey(cwd)].hasTrustDialogAccepted === true, '클로드 신뢰 키 두 개');
+ok(j.hasCompletedClaudeInChromeOnboarding === true && j.fullscreenUpsellSeenCount === 3 && j.hasSeenAutoDefaultNudge === true, '클로드 시작 안내창 3종 = 이미 봤음(v2.99)');
 ok(trustClaude(cwd, cdir) === 'unchanged', '클로드 두 번째 = 변경 없음');
+fs.writeFileSync(path.join(cdir, '.claude.json'), JSON.stringify({ hasCompletedClaudeInChromeOnboarding: false, fullscreenUpsellSeenCount: 1, hasSeenAutoDefaultNudge: true, projects: { [claudeProjectKey(cwd)]: { hasTrustDialogAccepted: true } } }), 'utf8');
+ok(trustClaude(cwd, cdir) === 'added', '클로드 권유 횟수 1 → 올림');
+j = JSON.parse(fs.readFileSync(path.join(cdir, '.claude.json'), 'utf8'));
+ok(j.fullscreenUpsellSeenCount === 3 && j.hasCompletedClaudeInChromeOnboarding === false, '클로드 권유 횟수만 3으로, 다른 있는 값(false)은 그대로');
 // 기존 값 보존 + 다른 프로젝트 추가
 fs.writeFileSync(path.join(cdir, '.claude.json'), JSON.stringify({ oauthAccount: { id: 'keep' }, hasCompletedOnboarding: false, projects: { 'C:/x': { allowedTools: ['a'] } } }), 'utf8');
 ok(trustClaude('C:\\x', cdir) === 'added', '클로드 기존 프로젝트에 키 추가');
