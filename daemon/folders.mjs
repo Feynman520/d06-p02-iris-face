@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { findRoot } from './workspace.mjs';
 import { pythonExe } from './paths.mjs';
 import { parseFolder } from './tutorial.mjs';
+import { appRel, nativePath } from './platform.mjs';
 
 const IRIS = findRoot(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')); // 영혼 폴더(작업공간 루트)
 const GRAPH = path.join(IRIS, '_ontology', 'graph.json');
@@ -16,7 +17,8 @@ let graphCache = { mtime: 0, list: [], generated: null };
 let freshCache = { at: 0, value: null };
 
 const codesOf = (rel) => rel.split('\\').map(seg => (seg.match(/(?:^|〗)([RDPST]\d{2}(?:\.\d{2})?)/) || [])[1]).filter(Boolean);
-const entry = (rel, n = {}) => ({ path: path.join(IRIS, rel), rel, type: n.type, code: n.code, lifecycle: n.lifecycle || 'active', frozen: !!n.frozen, name: rel.split('\\').pop(), codes: codesOf(rel) });
+// rel 은 화면 약속(`\` 구분)이고, 절대경로(path)는 이 OS 대로 준다(macOS 는 `/`).
+const entry = (rel, n = {}) => ({ path: path.join(IRIS, nativePath(rel)), rel, type: n.type, code: n.code, lifecycle: n.lifecycle || 'active', frozen: !!n.frozen, name: rel.split('\\').pop(), codes: codesOf(rel) });
 
 /** 디스크의 R → D(그룹 접두 포함) → P 폴더(이름 규칙 = 튜토리얼 parseFolder). 이 PC 폴더 635개 실측 11ms. */
 export function scanDisk(root = IRIS) {
@@ -24,7 +26,7 @@ export function scanDisk(root = IRIS) {
   const TYPE = { R: 'role', D: 'domain', P: 'project' };
   const out = [];
   const walk = (relDir, letter) => {
-    for (const n of dirs(path.join(root, relDir))) {
+    for (const n of dirs(path.join(root, nativePath(relDir)))) {
       const f = parseFolder(n); if (!f || f.letter !== letter || (letter === 'R' && f.group)) continue;
       const rel = relDir ? `${relDir}\\${n}` : n;
       out.push({ rel, type: TYPE[letter], code: f.code });
@@ -46,7 +48,7 @@ export function listFolders() {
   if (st !== graphCache.mtime) {
     let g = null; try { g = st ? JSON.parse(fs.readFileSync(GRAPH, 'utf8')) : null; } catch {}
     const nodes = g ? (Array.isArray(g.nodes) ? g.nodes : Object.values(g.nodes || {})) : [];
-    const list = nodes.filter(n => n && typeof n.path === 'string').map(n => entry(n.path.replace(/\//g, '\\'), n));
+    const list = nodes.filter(n => n && typeof n.path === 'string').map(n => entry(appRel(n.path), n)); // macOS 의 graph.json 은 `/` 로 잇는다
     graphCache = { mtime: st, list, generated: g?.generated || null };
   }
   const disk = scanDisk();

@@ -4,10 +4,12 @@
 //   최소화·Ctrl+W(내려놓기) = 세션 유지. 트레이: 창 열기 · 세션 N개 · 전부 종료(확인) · 화면 다시 띄우기(세션 유지, 창 코드만 새로 읽음).
 //   ×·⏻·트레이 「전부 종료」는 모두 quitAll() 한 길 → 데몬 POST /api/shutdown?wait=1(정리·확인이 끝난 뒤 보고) 한 길.
 //   (v2.96 까지: 창 × = 트레이로 숨김, 트레이 「창만 닫기 (세션 유지)」)
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, ipcMain } = require('electron');
+//   macOS: 빨간 닫기 단추·Cmd+Q(앱 메뉴 끝내기 → 창 close) 도 같은 길, Cmd+W = 내려놓기.
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, ipcMain, clipboard, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+const { contextMenuTemplate } = require('./context-menu.cjs');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -20,6 +22,23 @@ const TIP = `IRIS · by ${String(PKG.author || '').replace(/\s*\(.*\)$/, '') || 
 // (별의 구 아이콘 — 이 PC의 바탕화면 바로가기가 쓰던 그 파일.) 없으면 예전처럼 그려 쓰는 마름모로 되돌아간다.
 const ICON_PATH = path.join(ROOT, 'app', 'iris.ico');
 const ICON = fs.existsSync(ICON_PATH) ? ICON_PATH : null;
+const IS_MAC = process.platform === 'darwin';
+// macOS 의 nativeImage 는 .ico 를 읽지 못한다 — iris.ico 안에 든 PNG 판(16~256px)을 꺼내 쓴다(원천 파일은 그대로 하나).
+function icoPng(size) {
+  try {
+    const d = fs.readFileSync(ICON_PATH);
+    for (let i = 0, n = d.readUInt16LE(4); i < n; i++) {
+      const e = 6 + 16 * i, w = d[e] || 256, len = d.readUInt32LE(e + 8), off = d.readUInt32LE(e + 12);
+      if (w === size && d.readUInt32BE(off) === 0x89504e47) return d.subarray(off, off + len);
+    }
+  } catch {}
+  return null;
+}
+function macImage(reps) { // reps = [[px, scaleFactor], …]
+  const img = nativeImage.createEmpty();
+  for (const [px, scaleFactor] of reps) { const buffer = icoPng(px); if (buffer) img.addRepresentation({ scaleFactor, buffer }); }
+  return img.isEmpty() ? null : img;
+}
 let win = null, tray = null, quitting = false, lastHealth = null;
 let quitFlow = null, closeAsking = false; // 전부 종료 진행 중(약속 하나) · 페이지에 "닫아도 되나" 묻는 중 — 연속 ×·되풀이 close 를 한 번으로 묶는다
 const QUIT_TIMEOUT_MS = 35_000;           // 데몬 쪽 상한(모듈 2.5초 + 세션 20초)보다 넉넉히. 넘으면 거짓 완료 없이 사용자에게 알린다.
@@ -31,6 +50,8 @@ app.setAppUserModelId('IRIS-Face');
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   // 두 번째 실행(바로가기 재클릭): 내려놓은 창을 다시 띄우고, 데몬이 새로 떴을 수 있으니 페이지를 다시 연다(종료 중이면 아무것도 안 함)
   app.on('second-instance', async () => { if (quitFlow) return; await ensureDaemon(); showWindow(); if (win) win.loadURL(URL_); });
+  // macOS: Dock 아이콘을 누르면(창을 내려놓았어도) 창을 다시 띄운다(종료 중이면 아무것도 안 함).
+  if (IS_MAC) app.on('activate', () => { if (lastHealth && !quitFlow) showWindow(); });
   app.whenReady().then(main);
 }
 
@@ -42,7 +63,10 @@ function spawnDaemon() {
   fs.mkdirSync(STATE, { recursive: true });
   const out = fs.openSync(path.join(STATE, 'daemon.out.log'), 'a');
   // Electron 안의 node가 아니라 시스템 node로 데몬을 띄운다(node-pty ABI = Node). node.exe라 shell 불필요.
-  const child = spawn('node', [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: true });
+  // macOS 의 창 실행기에는 PATH 에 node 가 없을 수 있다 — 실행기(IRIS.app → launch.mjs)가 넘긴 동봉 node 를 쓴다.
+  const node = IS_MAC && process.env.IRIS_FACE_NODE ? process.env.IRIS_FACE_NODE : 'node';
+  const child = spawn(node, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: true });
+  child.on('error', () => {}); // node 를 못 찾으면 아래 health 대기가 실패를 알린다(여기서 창이 죽지 않게)
   child.unref();
 }
 async function ensureDaemon() {
@@ -68,6 +92,8 @@ async function ensureDaemon() {
 }
 
 function trayIcon() {
+  // macOS 메뉴 막대: 16pt(1x 16px · 2x 32px). 막대 높이에 맞춰 그 두 판만 쓴다.
+  if (IS_MAC && ICON) { const img = macImage([[16, 1], [32, 2]]); if (img) return img; }
   // app/iris.ico 가 있으면 그것(윈도가 트레이 크기에 맞는 판을 고른다), 없으면 아래 그려 쓰는 마름모(◈).
   if (ICON) { try { const img = nativeImage.createFromPath(ICON); if (!img.isEmpty()) return img; } catch {} }
   const S = 32, buf = Buffer.alloc(S * S * 4, 0);
@@ -76,20 +102,34 @@ function trayIcon() {
     const inner = d <= 6, ring = d <= 14 && d >= 9.5;
     if (inner || ring) { const o = (y * S + x) * 4; buf[o] = 247; buf[o + 1] = 162; buf[o + 2] = 122; buf[o + 3] = 255; } // #7aa2f7
   }
-  return nativeImage.createFromBitmap(buf, { width: S, height: S });
+  return nativeImage.createFromBitmap(buf, IS_MAC ? { width: S, height: S, scaleFactor: 2 } : { width: S, height: S });
+}
+
+// 작은 화면 맞춤(2026-10-28 macOS 960×540 신고): 최소 900×600 이 화면 작업 영역보다 크면, 다른 앱에 갔다 돌아올 때
+// 창이 최소 크기로 다시 늘어나 아래(입력창)가 화면 밖으로 밀린다. 최소·기본 크기를 창이 놓인 화면의 작업 영역 안으로 줄인다.
+const BASE = { width: 1440, height: 920, minWidth: 900, minHeight: 600 };
+function workArea(bounds) { try { return (bounds ? screen.getDisplayMatching(bounds) : screen.getPrimaryDisplay()).workAreaSize; } catch { return null; } }
+function fitMinimumSize() {
+  if (!win || win.isDestroyed()) return;
+  const wa = workArea(win.getBounds()); if (!wa) return;
+  win.setMinimumSize(Math.min(BASE.minWidth, wa.width), Math.min(BASE.minHeight, wa.height));
 }
 
 function createWindow() {
+  const wa = workArea() || { width: BASE.width, height: BASE.height };
   win = new BrowserWindow({
-    width: 1440, height: 920, minWidth: 900, minHeight: 600, backgroundColor: '#0f1218', title: 'IRIS', autoHideMenuBar: true, show: false,
-    ...(ICON ? { icon: ICON } : {}),
+    width: Math.min(BASE.width, wa.width), height: Math.min(BASE.height, wa.height),
+    minWidth: Math.min(BASE.minWidth, wa.width), minHeight: Math.min(BASE.minHeight, wa.height),
+    backgroundColor: '#0f1218', title: 'IRIS', autoHideMenuBar: true, show: false,
+    ...(ICON && !IS_MAC ? { icon: ICON } : {}), // macOS 창 아이콘은 Dock 아이콘(main 의 app.dock.setIcon)
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') },
   });
   win.loadURL(URL_);
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); if (IS_MAC) app.focus({ steal: true }); }); // macOS: 실행기가 띄운 창이 다른 앱 뒤에 깔리지 않게
   // 키 입력 자가 복구(2026-09-10): 페이지가 "눌렀는데 초점이 없다"고 알리면 창을 blur→focus 해 OS 키보드 초점을 되찾는다.
   // (네이티브 alert/confirm 뒤 창이 초점을 잃어 입력이 죽던 버그의 안전망 — 원인 자체는 app/dialog.js 로 제거)
   win.on('focus', () => { try { win.webContents.focus(); } catch {} });
+  win.on('moved', fitMinimumSize); // 다른 화면으로 옮기면 그 화면 기준으로 최소 크기를 다시 맞춘다
   // Esc 중계(2026-09-10): 초점이 대화 안 미리보기 iframe(PDF 뷰어 등)에 있으면 페이지 문서에 keydown이 오지 않아 Esc 중단이 죽는다.
   // before-input-event는 어느 프레임에 초점이 있든 창 단위로 먼저 받으므로, 여기서 잡아 페이지에 알린다(페이지가 중복은 300ms 가드로 걸러냄).
   win.webContents.on('before-input-event', (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape' && !input.isAutoRepeat) { try { win.webContents.send('iris:escape'); } catch {} } });
@@ -102,10 +142,30 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   // 끌어다 놓기 안전망(v2.85): 페이지가 놓기를 못 막은 경우에도 창·프레임이 놓은 파일(file://)로 넘어가지 않게(화면은 전부 http 데몬 주소라 file:// 이동은 쓸 일이 없다)
   win.webContents.on('will-frame-navigate', (e) => { if (/^file:/i.test(e.url || '')) { e.preventDefault(); } });
-  const menu = Menu.buildFromTemplate([{ label: '보기', submenu: [{ role: 'reload', accelerator: 'F5' }, { role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }, { label: '창 내려놓기 (세션 유지)', accelerator: 'Ctrl+W', click: () => { if (win && !win.isDestroyed()) win.minimize(); } }] }]);
+  // 우클릭 메뉴(2026-10-28 macOS 신고): 잘라내기·복사·붙여넣기·모두 선택, 선택 글 복사, 링크 열기/복사, 이미지 복사, 맞춤법 제안.
+  // macOS 에만 켠다 — Windows 는 네이티브 창이 키보드 초점을 빼앗던 전례(app/dialog.js)가 있어 그 PC 에서 확인한 뒤 켠다.
+  if (IS_MAC) win.webContents.on('context-menu', (_e, params) => {
+    const items = contextMenuTemplate(params).map((it) => {
+      if (!it.action) return it;
+      const click = {
+        replace: () => win.webContents.replaceMisspelling(it.word),
+        openLink: () => shell.openExternal(it.url),
+        copyLink: () => clipboard.writeText(it.url),
+        copyImage: () => win.webContents.copyImageAt(it.x, it.y),
+      }[it.action];
+      return { label: it.label, click };
+    });
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
+  // macOS: 앱 메뉴(끝내기 Cmd+Q = 창 close → 전부 종료, v2.97) + 편집 메뉴 — 편집 메뉴가 없으면 입력창에서 Cmd+C/V/X/A 가 먹지 않는다.
+  const menu = Menu.buildFromTemplate(IS_MAC ? [
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { label: '보기', submenu: [{ role: 'reload', accelerator: 'Cmd+R' }, { role: 'toggleDevTools', accelerator: 'Alt+Cmd+I' }, { type: 'separator' }, { role: 'minimize', accelerator: 'Cmd+M' }, { label: '창 내려놓기 (세션 유지)', accelerator: 'Cmd+W', click: () => { if (win && !win.isDestroyed()) win.minimize(); } }] },
+  ] : [{ label: '보기', submenu: [{ role: 'reload', accelerator: 'F5' }, { role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }, { label: '창 내려놓기 (세션 유지)', accelerator: 'Ctrl+W', click: () => { if (win && !win.isDestroyed()) win.minimize(); } }] }]);
   Menu.setApplicationMenu(menu);
 }
-function showWindow() { if (!win) createWindow(); win.show(); win.focus(); }
+function showWindow() { if (!win) createWindow(); win.show(); win.focus(); if (IS_MAC) app.focus({ steal: true }); }
 // 사용자가 방금 이 창을 눌렀을 때만 페이지가 부르므로, 앞창 자리를 되찾는(steal) 것이 곧 사용자의 뜻이다(윈도의 앞창 잠금 우회).
 ipcMain.handle('iris:refocus', () => { if (!win || win.isDestroyed()) return false; try { win.show(); win.focus(); app.focus({ steal: true }); win.webContents.focus(); } catch {} return true; });
 // 무대 실측(2026-09-13, v2.51): 프로세스별 CPU%(한 코어 = 100, 지난 호출 이후 평균; 첫 호출은 0) — 페이지의 stars.js calibrate() 가 GPU 프로세스+렌더러의 추가 부담을 잰다
@@ -201,11 +261,16 @@ ipcMain.handle('iris:quit-all', () => { quitAll(); return true; }); // 화면 �
 async function main() {
   const h = await ensureDaemon(); if (!h) return;
   lastHealth = h;
+  if (IS_MAC && ICON) { const img = macImage([[256, 1]]); if (img) try { app.dock.setIcon(img); } catch {} }
   tray = new Tray(trayIcon());
   tray.setToolTip(TIP);
   tray.setContextMenu(buildTrayMenu());
   tray.on('click', showWindow);
   createWindow();
+  // macOS 시스템 끄기·재시작: OS 가 어차피 모두 끝내므로 막지 않는다(Windows session-end 와 같은 뜻 — 아래 before-quit 이 그냥 통과)
+  if (IS_MAC) try { require('electron').powerMonitor.on('shutdown', () => { quitting = true; }); } catch {}
+  // 해상도·Dock·화면 연결이 바뀌면 최소 크기를 다시 맞춘다(창을 다시 만들어도 한 번만 걸리게 여기서 등록)
+  for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(ev, fitMinimumSize);
   let downTicks = 0;
   setInterval(async () => {
     if (quitFlow) return; // 전부 종료 중에는 quitAll() 이 결과를 판정한다
@@ -219,4 +284,5 @@ async function main() {
   }, 5000);
 }
 app.on('window-all-closed', (e) => { /* 트레이 상주 */ });
-app.on('before-quit', () => { quitting = true; });
+// macOS: Cmd+Q·Dock 「끝내기」는 app.quit() 으로 오므로 여기서 창 × 와 같은 전부 종료(v2.97)로 돌린다 — 그대로 두면 창만 닫히고 세션이 창 없이 남는다.
+app.on('before-quit', (e) => { if (IS_MAC && !quitting) { e.preventDefault(); requestClose(); return; } quitting = true; });

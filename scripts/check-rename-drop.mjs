@@ -4,7 +4,7 @@
 //      - 사용자 이름(source=user)은 자동 이름(ai·gen·first)이 덮지 못한다 · 48자 자름 · 공백 정리 · 저장 파일에 남는다
 //      - 빈 글 = 처음 고칠 때 맡겨 둔 자동 이름으로 되돌림 → 그 뒤 다시 자동 갱신을 받는다
 //      - 에이전트 바꾸기(replaceAgent) 뒤에도 사용자 이름은 user 로 남고, 되돌릴 자동 이름은 fixed 로 굳는다
-//   2) 데몬 라우트·화면 코드 정적 검사: 같은 출처 검사 · 목록/머리 다시 그리기 보호 · Esc 두 길 · 키 차단 · 끌기 구분 · 폴더 거름 · Electron 안전망
+//   2) 데몬 라우트·화면 코드 정적 검사: 같은 출처 검사 · 목록/머리 다시 그리기 보호 · Esc 두 길 · 키 차단 · 끌기 구분 · 폴더 거름 · 붙여넣기 첨부 · Electron 안전망
 //   3) 화면(playwright 있을 때): 실제 index.html·style.css 로 안내 막이 기본 숨김·창 전체를 덮고 맨 위인지, 이름 입력칸이 사이드바 줄을 넘치지 않는지
 // playwright 없으면 3) SKIP. IRIS_CAPTURE_DIR 를 주면 캡처 PNG 를 남긴다.
 import fs from 'node:fs';
@@ -81,6 +81,11 @@ ok(/includes\('Files'\)/.test(main) && /'dragenter', 'dragover'/.test(main) && /
 ok(/isDirectory/.test(main) && /uploadAll\(picked\.filter\(x => !x\.dir\)/.test(main), '화면: 폴더는 거르고 파일만 같은 업로드 길로');
 ok(/f\.size > UPLOAD_MAX/.test(main) && /50 \* 1024 \* 1024/.test(server), '화면: 50MB 초과는 보내기 전에 거름(데몬 한도와 같음)');
 ok(/id="drop-hint" class="drop-hint" hidden/.test(html), 'index.html: 안내 막 기본 숨김');
+// 붙여넣기 첨부: 글 없는 파일·그림만 · 터미널 보기와 한 줄 입력칸 제외 · 같은 업로드 길 · 캡처 이름 겹침 방지
+const ps = main.slice(main.indexOf("document.addEventListener('paste'"), main.indexOf("document.addEventListener('paste'") + 900);
+ok(ps.length > 100 && /cd\.getData\('text\/plain'\)/.test(ps) && /closest\?\.\('#term-wrap'\)/.test(ps) && /tagName === 'INPUT'/.test(ps), '화면(붙여넣기): 글이 실리면 평소 붙여넣기 · 터미널 보기·한 줄 입력칸은 건드리지 않음');
+ok(/e\.preventDefault\(\);[\s\S]*await uploadAll\(files\.map/.test(ps), '화면(붙여넣기): 첨부할 때만 기본 동작을 막고 끌어다 놓기와 같은 uploadAll 로');
+ok(/\/\^image\\\.\\w\+\$\/i\.test\(f\.name\)/.test(ps) && /paste-\$\{stamp\}/.test(ps) && /slice\(0, 19\)/.test(ps), '화면(붙여넣기): image.png 는 밀리초까지 붙인 paste-… 이름으로(같은 초 덮어쓰기 방지)');
 // v2.86: 말 안 해도 보이는 길(사용자 선택 ①+④+F2)
 ok(/<button class="srename"[^>]*>\$\{Icons\.svg\('pencil'/.test(main) && /\.srename'\)\.onclick = \(e\) => \{ e\.stopPropagation\(\); startRename\(s\.id/.test(main), '화면(v2.86): 사이드바 연필 = 줄 선택으로 번지지 않고 그 자리에서 고침');
 ok(/id="vh-name" class="vh-name"><span id="vh-title"[^>]*><\/span><button id="vh-rename"/.test(html), 'index.html(v2.86): 머리 제목 + 연필 묶음');

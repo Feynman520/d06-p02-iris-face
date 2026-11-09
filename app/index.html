@@ -54,6 +54,12 @@
         <section class="st-grp"><h3><span class="chip codex">Codex</span></h3>
           <div class="st-opt"><span class="st-opt-text">승인<small>명령을 실행하기 전에 물을지</small></span><select id="st-approval" class="pick"></select></div>
           <div class="st-opt"><span class="st-opt-text">샌드박스<small>파일·네트워크에 닿을 수 있는 범위</small></span><select id="st-sandbox" class="pick"></select></div></section>
+        <section class="st-grp"><h3>다시 켤 때</h3>
+          <label class="st-opt"><span class="st-opt-text">끊긴 세션 이어 열기<small>IRIS를 켠 채 PC가 꺼졌거나 갑자기 닫힌 세션을 다음 실행 때 같은 카드에서 다시 엽니다</small></span><input id="st-autoresume" class="sw" type="checkbox"></label>
+          <p class="st-hint"><b>켬 권장</b> · 일을 마치면 세션을 닫는 데 익숙한 터미널 사용자. 갑자기 꺼졌을 때만 이어 줍니다.</p>
+          <p class="st-hint"><b>끔 권장</b> · 데스크톱 앱처럼 대화 카드를 여러 개 남겨 두고 기록을 보며 일하는 사람. 켜 두면 PC를 켤 때 남은 카드가 한꺼번에 열려 느려집니다.</p>
+          <p class="st-hint">전부 종료나 창 닫기로 끈 세션은 이 설정과 상관없이 다시 열리지 않습니다. 바꾼 값은 다음 실행부터 적용됩니다.</p>
+          <p class="st-hint" id="st-autoresume-env" hidden>환경 변수 <code>IRIS_FACE_AUTO_RESUME</code> 값을 따르고 있어 여기서는 바꿀 수 없습니다. 이 스위치를 쓰려면 환경 변수를 지우세요.</p></section>
       </div>
       <!-- v2.91: 온톨로지(app/ontology.js — 구조 = 역할 캐릭터 격자 + 트리(app/persona.js), 관계 = 나무 밖 관계 그래프) · 도구(app/tools.js — 스킬·MCP·플러그인). 묶음을 처음 열 때 데몬에서 읽는다. -->
       <div class="st-pane wide" data-pane="ontology" hidden>

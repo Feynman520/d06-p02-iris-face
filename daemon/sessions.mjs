@@ -2,7 +2,6 @@
 // 세션 관리자: node-pty 세션 생성·입력·크기·종료(PID) · 200KB 링버퍼 · 헤드리스 화면 상태 판정 · sessions.json
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR } from './agents.mjs';
 import { preTrust } from './trust.mjs';
@@ -12,11 +11,23 @@ import { generateTitle } from './titler.mjs';
 import { parseApproval } from './approval.mjs';
 import { readReceipt, soulRoot, toolPath } from './paths.mjs';
 import { applyLongKey } from './auth.mjs';
+import { killTree, bundledBinDirs, launchedProgram, resolveOnPath, nativePath } from './platform.mjs';
 import { alignThreadProvider, exitReasonFrom } from './codexcompat.mjs';
 import { readTable, readTableSync, descendants, isOwnProcess, stillRunning, taskkillTree, waitGone } from './proctree.mjs';
 
 const require = createRequire(import.meta.url);
+ensurePtyHelper();
 const pty = require('node-pty');
+
+// macOS: node-pty 는 자식을 spawn-helper 로 띄우는데, npm 미리빌드판은 그 파일의 실행 권한이 빠진 채 오는 일이 있다
+// (그러면 모든 세션이 "posix_spawnp failed" 로 즉시 끝난다). 불러오기 전에 0755 로 맞춘다 — 이미 맞으면 손대지 않는다.
+function ensurePtyHelper() {
+  if (process.platform === 'win32') return;
+  let base; try { base = path.dirname(require.resolve('node-pty/package.json')); } catch { return; }
+  for (const f of [path.join(base, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'), path.join(base, 'build', 'Release', 'spawn-helper')]) {
+    try { if ((fs.statSync(f).mode & 0o111) !== 0o111) fs.chmodSync(f, 0o755); } catch {}
+  }
+}
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
 
 const BUFFER_MAX = 200 * 1024;
@@ -28,6 +39,8 @@ const BUSY_WINDOW_MS = 2000;
 //   → 화면 출력이 ENTER_QUIET_MS 동안 멈춘(붙여넣기를 다 소화한) 뒤 Enter를 치고, 이후에도 입력창에 요청이 남아 있으면 Enter를 다시 친다(최대 ENTER_TRIES회).
 const ENTER_QUIET_MS = Number(process.env.IRIS_FACE_ENTER_QUIET_MS ?? 300);     // 마지막 화면 출력 뒤 이만큼 조용해야 Enter
 const ENTER_MAX_WAIT_MS = Number(process.env.IRIS_FACE_ENTER_MAX_WAIT_MS ?? 3000); // 스피너 등으로 화면이 계속 움직여도 이 시간 뒤엔 Enter
+// 붙여넣기에 화면이 아직 한 번도 반응하지 않았으면 이만큼까지 기다린다 — 이미지 경로가 든 글은 CLI 가 그림을 다 읽을 때까지(실측 0.5~1.8초) 아무것도 출력하지 않는다(2026-11-05)
+const ENTER_NO_ECHO_MAX_MS = 10000;
 const ENTER_VERIFY_MS = 1200;   // Enter 뒤 이만큼 지나도 요청이 입력창에 그대로면 미전송으로 판정
 const ENTER_TRIES = 3;
 // 작업 중 표식(두 CLI 공통 "esc to interrupt" + 클로드 스피너 문구 + 코덱스 MCP 기동 상태줄). 화면이 계속 갱신돼도 이 표식이 없으면 대기로 본다.
@@ -41,11 +54,34 @@ const ATTENTION_RE = /(Do you trust|trust the contents|Press t to trust|enter to
 const CODEX_UPDATE_PROMPT_RE = /Update available[\s\S]*2\. Skip/;
 // 입력 프롬프트: 클로드 ❯(~2.1.265) 또는 >(2.1.266부터) / 코덱스 ›(빈 입력창)·»(글이 든 입력창) — 헤드리스 화면의 아래쪽 줄에서만 찾는다
 const PROMPT_RE = /(^|\n)\s*(❯|›|»|>)(\s|$)/;
+// 번호도 안내줄도 없는 선택 상자(2026-10-28 macOS 실설치, 클로드 2.1.308 「Make auto mode your default permission mode?」 —
+// 하단 안내줄이 꺼져 있어 ATTENTION_RE 에 안 걸리고 커서 줄 `❯ Yes, …` 가 PROMPT_RE 에 걸려 '대기'로 보였다 → 첫 요청이 상자에 들어가 사라지고
+// Enter 가 Yes 를 골랐다). 커서 줄 바로 위나 아래가 더 들여쓴 다른 선택지이고, 그 아래로 입력틀 테두리(─)가 없으면 선택 상자다.
+// 입력창에 쓴 글(`❯ 글`, 여러 줄이면 들여쓴 이어지는 줄)은 아래에 입력틀 테두리가 오므로 걸리지 않는다.
+const RULE_RE = /^\s*[╰└]?─{8,}/;
+export function selectNear(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (RULE_RE.test(lines[i])) return false; // 아래에서부터 테두리를 먼저 만나면 입력창 쪽
+    const m = lines[i].match(/^(\s*)❯\s+\S/);
+    if (!m) continue;
+    const sibling = (l) => l != null && !l.includes('❯') && !RULE_RE.test(l) && (l.match(/^\s*/)[0].length > m[1].length) && /\S/.test(l);
+    return sibling(lines[i + 1]) || sibling(lines[i - 1]);
+  }
+  return false;
+}
 
 // 데몬 재시작 뒤 잃어버린 세션 자동 재개(2026-09-11 16:31 사고 — 데몬 PID 종료 = ConPTY 자식인 세션 전부 동반 종료):
 //   저장 상태가 살아 있던 것(busy·idle·attention)인데 PID가 없으면 "예기치 않게 잃은 세션(lost)"으로 보고 시작 뒤 같은 카드에서 --resume 한다.
-//   CLI가 스스로 끝난 세션(exited)·이미 dead 였던 카드·세션 id를 모르는 카드(첫 메시지 전)는 되살리지 않는다. 끄기: IRIS_FACE_AUTO_RESUME=0
+//   CLI가 스스로 끝난 세션(exited)·이미 dead 였던 카드·세션 id를 모르는 카드(첫 메시지 전)는 되살리지 않는다.
+//   끄기: 설정 → 세션 기본값 「끊긴 세션 이어 열기」(settings.autoResume) 또는 IRIS_FACE_AUTO_RESUME=0 — 환경 변수가 있으면 그쪽이 이긴다(autoResumeState).
 const AUTO_RESUME = process.env.IRIS_FACE_AUTO_RESUME !== '0';
+/** 자동 재개를 할지: 환경 변수 IRIS_FACE_AUTO_RESUME 가 있으면 그 값(0 = 끔), 없으면 설정 autoResume, 둘 다 없으면 켬. */
+export function autoResumeState(settings = {}, env = process.env) {
+  const v = env.IRIS_FACE_AUTO_RESUME;
+  if (v != null && v !== '') return { enabled: v !== '0', source: 'env' };
+  if (typeof settings?.autoResume === 'boolean') return { enabled: settings.autoResume, source: 'setting' };
+  return { enabled: true, source: 'default' };
+}
 const AUTO_RESUME_GAP_MS = Number(process.env.IRIS_FACE_AUTO_RESUME_GAP_MS ?? 2500); // 프록시·CPU 부하를 나누기 위한 세션 간 간격
 const LIVE_STATUSES = new Set(['busy', 'idle', 'attention']);
 export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시작되어 이 세션이 끊겼다가 같은 카드에서 자동으로 다시 열렸습니다. 파일은 그대로입니다. 직전에 하던 작업과 어디까지 끝났는지를 3줄 이내로 알리고 새 지시를 기다리세요(스스로 이어서 실행하지 마세요).';
@@ -81,7 +117,7 @@ export function codexKeys(prompt) {
   return { ...prompt, options: prompt.options.map((o) => ({ ...o, key: fix(o.key) })), actions: Array.isArray(prompt.actions) ? prompt.actions : prompt.actions };
 }
 
-export function applyReceiptEnv(env, receipt = readReceipt()) {
+export function applyReceiptEnv(env, receipt = readReceipt(), { platform } = {}) {
   const r = receipt?.env;
   if (!r) return env;
   if (r.CLAUDE_CONFIG_DIR && !env.CLAUDE_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = r.CLAUDE_CONFIG_DIR;
@@ -89,13 +125,12 @@ export function applyReceiptEnv(env, receipt = readReceipt()) {
   if (r.ANTHROPIC_BASE_URL && !env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = r.ANTHROPIC_BASE_URL;
   const root = soulRoot();
   const shims = path.join(root, '_agent', 'shared', 'shims');
-  const nodeDir = toolPath('node');
   const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
   const cur = env[key] || '';
   const already = new Set(cur.split(path.delimiter).map((s) => s.trim().toLowerCase()).filter(Boolean));
   // shims → node → git → python 순으로 PATH 맨 앞에(2026-09-14 실기: 다른 PC 의 시스템 Git 2.51 이 먼저 잡혀 v7 기반 검사기가 WinGet 업그레이드를 시도하다 멈췄다.
   // 동봉본이 정본(가이드 8-1)이므로 세션·마무리 파이프라인 모두 동봉 Git·Node·Python 을 먼저 본다).
-  const add = [shims, nodeDir, toolPath('git', 'cmd'), toolPath('python')].filter((p) => !already.has(p.toLowerCase()));
+  const add = [shims, ...bundledBinDirs(toolPath, { platform })].filter((p) => !already.has(p.toLowerCase()));
   if (add.length) env[key] = [...add, cur].filter(Boolean).join(path.delimiter);
   return env;
 }
@@ -125,9 +160,9 @@ export class SessionManager {
   /** 잃은 세션(lost) 목록 */
   lost() { return this.list().filter(r => r.lost && r.status === 'dead'); }
   /** 시작 직후: 잃은 세션을 하나씩 간격을 두고 자동 재개한다. 돌려주는 값 = 재개 대상 id 목록(비동기로 진행). */
-  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE } = {}) {
+  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE, enabled = AUTO_RESUME } = {}) {
     const ids = this.lost().map(r => r.id);
-    if (!AUTO_RESUME || !ids.length) return [];
+    if (!enabled || !ids.length) return [];
     ids.forEach((id, i) => setTimeout(() => {
       const rec = this.sessions.get(id); if (!rec || rec.status !== 'dead') return; // 그 사이 사용자가 지웠거나 손으로 재개함
       try { this.resume(id, { prompt: note }); this.hooks.onLog?.(`${id} auto-resume ok pid=${rec.pid} [${rec.cmdline}]`); }
@@ -150,6 +185,7 @@ export class SessionManager {
 
   /** 새 세션: 폴더 + 에이전트·모델·사고깊이(사용자가 고른 그대로) + 첫 요청문(선택) */
   create({ cwd, agent, model, effort, readOnly, permission, approval, sandbox, prompt, cols = 120, rows = 36 }) {
+    cwd = cwd && nativePath(cwd); // 화면이 루트 + '\\' + 상대경로로 잇는 곳이 있다(튜토리얼 첫 대화)
     if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error(`folder not found: ${cwd}`);
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
     const cmd = buildCommand(sel, cwd);
@@ -175,12 +211,12 @@ export class SessionManager {
   spawn(cmd, cwd, cols, rows) {
     const env = childEnv();
     // 폴더 신뢰 물음 선답(daemon/trust.mjs, 2026-09-19): CLI 가 이 폴더를 처음 볼 때 묻는 "Do you trust…" 를 미리 "예"로 적어 둔다.
-    const agent = /^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude';
+    const agent = launchedProgram(cmd) === 'codex' ? 'codex' : 'claude';
     const t = preTrust({ agent, cwd, env, fallback: { claudeConfigDir: CLAUDE_CONFIG_DIR, codexHome: CODEX_HOME } });
     if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${agent} ${cwd} → ${t.result}`);
     // 1년 열쇠(v2.84, 2026-10-15 "Login expired" 사고): 살아 있으면 클로드 세션은 30일 /login 열쇠 대신 그것을 쓴다(daemon/auth.mjs).
     if (agent === 'claude') { const k = applyLongKey(env, { configDir: CLAUDE_CONFIG_DIR }); if (k.applied) this.hooks.onLog?.('[auth] long key → session'); }
-    return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
+    return pty.spawn(resolveOnPath(cmd.file, env), cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
   }
 
   /** 모델·사고깊이 바꾸기 = 재개 재시작: 현 PID 종료 → 같은 카드로 --resume / codex resume. 에이전트는 못 바꾼다. */
@@ -190,7 +226,7 @@ export class SessionManager {
     const sel = normalize({ agent: rec.agent, model: model ?? rec.model, effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id);
     // 코덱스 재개 전: 이 대화를 만든 연결 이름이 지금 설정과 다르면(설치 패키지 2.0.49 의 openai → iris 등) 맞춘다.
     // 지금 연결이 이 PC 중계기일 때만 맞추고(원본 백업 + history.jsonl), 아니면 이유만 남겨 곧 끝날 때 화면에 보인다.
@@ -216,7 +252,7 @@ export class SessionManager {
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id);
     const cmd = buildCommand(sel, rec.cwd);
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
@@ -264,19 +300,22 @@ export class SessionManager {
     const st = this.live.get(id); if (!st) throw new Error(`session not live: ${id}`);
     const rec = this.sessions.get(id);
     const log = (m) => this.hooks.onLog?.(`${id} ${m}`);
-    const tail = text.replace(/\s+/g, ' ').trim().slice(-10); // 입력창에 요청이 남아 있는지 볼 때 쓰는 꼬리 글자
+    const flat = (s) => s.replace(/\s+/g, ' ').trim();
+    const tail = flat(text).slice(-10); // 입력창에 요청이 남아 있는지 볼 때 쓰는 꼬리 글자
+    // 첫 줄 머리 글자도 본다: 첨부 경로로 끝나는 요청은 CLI 가 경로를 [Image #N] 으로 바꿔 꼬리가 화면에 나오지 않는다(2026-11-05 "입력창에 남았는데 enter ok")
+    const head = flat(text.split('\n').find((l) => l.trim()) || '').slice(0, 10);
     const sentAt = Date.now();
     st.worked = true; // 이 뒤의 busy→끝 전환은 '작업 완료'(setStatus done) — 화면 알림 근거
     st.pty.write('\x1b[200~' + text + '\x1b[201~');
     log(`send${first ? ' first' : ''} ${text.length}c`);
     const alive = () => this.live.get(id) === st;
-    const composerHolds = (screen) => tail && screen.replace(/\s+/g, ' ').includes(tail) && !WORKING_RE.test(screen);
+    const composerHolds = (screen) => { const s = flat(screen); return !WORKING_RE.test(screen) && ((tail && s.includes(tail)) || (head && s.includes(head))); };
     const verify = (n) => {
       if (!alive()) return;
       const screen = this.screenText(id, 10);
       if (WORKING_RE.test(screen)) { log(`enter ok (${n}) working`); return; }
       if (!composerHolds(screen)) { log(`enter ok (${n})`); return; }
-      if (ATTENTION_RE.test(screen)) { log(`enter (${n}): 확인 프롬프트가 떠 있어 재시도하지 않음`); return; }
+      if (ATTENTION_RE.test(screen) || selectNear(screen.split('\n'))) { log(`enter (${n}): 확인 프롬프트가 떠 있어 재시도하지 않음`); return; }
       if (n >= ENTER_TRIES) { log(`enter FAILED: ${n}회 뒤에도 요청이 입력창에 남아 있음 — 터미널에서 Enter를 눌러야 함`); return; }
       log(`enter retry ${n + 1}: 요청이 입력창에 남아 있음`);
       pressEnter(n + 1);
@@ -286,11 +325,13 @@ export class SessionManager {
       try { st.pty.write('\r'); } catch { return; }
       setTimeout(() => verify(n), ENTER_VERIFY_MS);
     };
-    // 화면 출력이 ENTER_QUIET_MS 동안 멈추면(붙여넣기를 다 소화함) Enter. 스피너 등으로 계속 움직여도 ENTER_MAX_WAIT_MS 뒤엔 친다.
+    // 붙여넣기 뒤 화면이 반응했고 그 출력이 ENTER_QUIET_MS 동안 멈추면(붙여넣기를 다 소화함) Enter. 스피너 등으로 계속 움직여도 ENTER_MAX_WAIT_MS 뒤엔 친다.
+    // 붙여넣기 전 출력만 보고 "조용하다"고 치지 않는다 — 그림을 읽느라 침묵하는 동안 친 Enter 는 빠진다. 끝내 반응이 없으면 ENTER_NO_ECHO_MAX_MS 뒤에 친다.
     const settle = () => {
       if (!alive()) return;
-      const quiet = Date.now() - (rec?.lastOutputAt || 0);
-      if (quiet >= ENTER_QUIET_MS || Date.now() - sentAt >= ENTER_MAX_WAIT_MS) return pressEnter(1);
+      const now = Date.now(), last = rec?.lastOutputAt || 0, echoed = last > sentAt;
+      if (echoed && now - last >= ENTER_QUIET_MS) return pressEnter(1);
+      if (now - sentAt >= (echoed ? ENTER_MAX_WAIT_MS : ENTER_NO_ECHO_MAX_MS)) return pressEnter(1);
       setTimeout(settle, 50);
     };
     setTimeout(settle, Math.min(ENTER_QUIET_MS, 150));
@@ -306,7 +347,9 @@ export class SessionManager {
     // 화면 맨 아래 4줄 안에 "빈 입력 프롬프트"(❯ › > 만 있는 줄; 입력틀 테두리·상태줄이 그 아래 1~3줄)가 보이면 대기가 우선 —
     // 승인 대화상자는 입력틀을 통째로 덮으므로 빈 프롬프트가 보이면 확인 요청이 아니다. 사용자가 보낸 글의 메아리("> 좋아 …")는 빈 줄이 아니라 안 걸린다.
     const promptNear = lines.slice(-4).some(l => /^\s*(❯|›|>)\s*$/.test(l));
-    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : (ATTENTION_RE.test(tail) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
+    // 코덱스 업데이트 물음도 노란불(2026-11-09): 0.165 부터 안내줄이 "enter continue · esc skip" 이라 ATTENTION_RE("Press enter")에 안 걸리고,
+    // 커서 줄 `› 1. Update now` 가 PROMPT_RE 에 걸려 '대기'로 보였다 → 아래 자동 응답(2)이 안 돌고 첫 요청+Enter 가 「Update now」를 눌러 세션이 끝났다.
+    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : ((ATTENTION_RE.test(tail) || selectNear(lines) || CODEX_UPDATE_PROMPT_RE.test(tail)) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
     // v2.73(2026-09-21): 화면 글자로는 '대기'라도 대화 기록의 차례가 아직 열려 있으면(도구 결과 대기·요청 직후) 바쁨으로 둔다.
     // 도구 출력에 섞인 `>` 줄·빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 알린 사건(2026-09-20 사용자 실측)의 교차 확인.
     // 기록이 답 글로 끝나 있으면(null) 화면 판정을 그대로 믿는다 — 기록이 잠시 뒤처져도 다음 폴링에서 따라잡는다.
@@ -415,14 +458,14 @@ export class SessionManager {
     const own = isOwnProcess(table, rec.pid, since);
     return own === true ? 'own' : own === false ? 'reused' : 'unknown';
   }
-  /** 명시적 닫기: 그 세션의 cmd.exe PID 트리 하나만 종료하고 목록에서 제거 */
+  /** 명시적 닫기: 그 세션의 PID 트리 하나만 종료하고 목록에서 제거 */
   close(id) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const st = this.live.get(id); clearTimeout(st?.timer);
     // 이전 실행이 남긴 카드는 PID 재사용부터 확인한다(v2.97) — 남의 프로그램이면 건드리지 않고 카드만 치운다
     const owner = this.live.has(id) ? 'own' : pidAlive(rec.pid) ? this.ownership(id, readTableSync()) : 'gone';
     if (owner === 'reused') this.hooks.onLog?.(`${id} close: pid ${rec.pid} now belongs to another program — not killed`);
-    else if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    else if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id); this.sessions.delete(id); this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -430,7 +473,7 @@ export class SessionManager {
   pause(id) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const st = this.live.get(id); clearTimeout(st?.timer);
-    if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (pidAlive(rec.pid)) killTree(rec.pid);
     this.live.delete(id); rec.pid = null; this.setStatus(id, 'exited'); this.save();
     return rec;
   }

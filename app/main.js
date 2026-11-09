@@ -374,6 +374,17 @@
     await uploadAll(picked.filter(x => !x.dir).map(x => x.file));
     if (mode === 'chat') $('#composer-text').focus();
   });
+  // 붙여넣기 첨부(Ctrl+V): 클립보드에 글 없이 파일·그림만 있을 때(화면 캡처, 복사한 그림)만 끌어다 놓기와 같은 uploadAll 로 보낸다.
+  // 글이 함께 실리면(엑셀 칸 복사 = 글 + 칸 그림) 평소 붙여넣기 그대로. 터미널 보기(xterm·CLI 의 붙여넣기)와 한 줄 입력칸(이름 바꾸기 등)은 건드리지 않는다.
+  // 캡처 그림은 늘 image.png 로 오고 데몬 저장 이름은 초 단위라, 같은 초에 두 번 붙여도 겹치지 않게 밀리초까지 붙인 이름으로 바꾼다.
+  document.addEventListener('paste', async (e) => {
+    const cd = e.clipboardData, files = [...(cd?.files || [])];
+    if (!files.length || cd.getData('text/plain') || e.target.closest?.('#term-wrap') || e.target.tagName === 'INPUT') return;
+    e.preventDefault();
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 19).replace('.', '-'); // 20261105-053012-345
+    await uploadAll(files.map((f, i) => /^image\.\w+$/i.test(f.name) ? new File([f], `paste-${stamp}${files.length > 1 ? `-${i + 1}` : ''}.${f.name.split('.').pop()}`, { type: f.type }) : f));
+    if (mode === 'chat') $('#composer-text').focus();
+  });
   let camStream = null;
   $('#btn-cam').onclick = async () => { try { camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false }); $('#cam-video').srcObject = camStream; $('#cam').hidden = false; } catch (err) { Dialog.alert('카메라를 열 수 없습니다: ' + err.message); } };
   function camStop() { camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('#cam').hidden = true; }
@@ -637,23 +648,26 @@
     };
     grip.ondblclick = () => { apply(RAIL_DEF); try { localStorage.setItem('iris.railW', String(RAIL_DEF)); } catch {} };
   })();
+  // macOS: Ctrl 단축키를 Cmd 로도 받는다(Ctrl 도 그대로 됨). 단 Cmd+M 은 시스템의 「최소화」라 음성 입력은 Ctrl+M 만.
+  const MAC = /Mac/i.test(navigator.platform || '');
+  const mod = (e) => e.ctrlKey || (MAC && e.metaKey);
   document.addEventListener('keydown', (e) => {
     // 확인 카드(v2.43): 대화 보기에서 카드가 떠 있고 입력창이 비어 있으면 숫자·y·n 한 글자 = 그 선택지(터미널과 같은 키)
     if (mode === 'chat' && !Settings.isOpen() && !FolderPicker.isOpen() && Approval.handleKey(e)) return;
-    if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); goHome(); FolderPicker.show(); }
-    if (e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#btn-folder').click(); }
-    if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); $('#btn-rail').click(); }
-    if (e.ctrlKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleDash(); }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); const first = modules.find(x => x.catalog !== false) || modules[0]; if (first) modClick(first.name); } // 첫 카탈로그 모듈: 미설치 → 설치 확인 · 실행 중 → 서랍 · 멈춤 → 설정
-    if (e.ctrlKey && e.key === ',') { e.preventDefault(); Settings.isOpen() ? Settings.hide() : Settings.show(); }
+    if (mod(e) && e.key.toLowerCase() === 'n') { e.preventDefault(); goHome(); FolderPicker.show(); }
+    if (mod(e) && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#btn-folder').click(); }
+    if (mod(e) && e.key.toLowerCase() === 'b') { e.preventDefault(); $('#btn-rail').click(); }
+    if (mod(e) && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleDash(); }
+    if (mod(e) && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); const first = modules.find(x => x.catalog !== false) || modules[0]; if (first) modClick(first.name); } // 첫 카탈로그 모듈: 미설치 → 설치 확인 · 실행 중 → 서랍 · 멈춤 → 설정
+    if (mod(e) && e.key === ',') { e.preventDefault(); Settings.isOpen() ? Settings.hide() : Settings.show(); }
     if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !Settings.isOpen() && !FolderPicker.isOpen() && renameCurrentByKey()) { e.preventDefault(); return; }
     if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm' && mode !== 'term') { e.preventDefault(); Voice.toggle(); }
     // Esc: 페이지 keydown(초점이 페이지 안일 때)과 Electron 메인의 before-input-event 중계(초점이 미리보기 iframe 안이라
     // keydown이 이 문서에 오지 않을 때) 두 길로 들어온다 → 한 함수(onEscape)로 처리, 같은 키를 두 번 처리하지 않게 300ms 가드.
     // e.code 도 보는 이유: 한글 IME가 키를 가로채면 e.key가 'Process'로 올 수 있다.
     if (e.key === 'Escape' || e.code === 'Escape') { e.preventDefault(); onEscape(); return; }
-    if (e.ctrlKey && e.key.toLowerCase() === 't' && current) { e.preventDefault(); setMode(mode === 'term' ? 'chat' : 'term'); }
-    if (e.ctrlKey && /^[1-9]$/.test(e.key)) { const s = sessions[Number(e.key) - 1]; if (s) { e.preventDefault(); select(s.id); } }
+    if (mod(e) && e.key.toLowerCase() === 't' && current) { e.preventDefault(); setMode(mode === 'term' ? 'chat' : 'term'); }
+    if (mod(e) && /^[1-9]$/.test(e.key)) { const s = sessions[Number(e.key) - 1]; if (s) { e.preventDefault(); select(s.id); } }
   });
   let lastEscAt = 0;
   function onEscape() {

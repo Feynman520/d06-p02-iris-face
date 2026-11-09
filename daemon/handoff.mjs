@@ -113,6 +113,9 @@ export function markMessengerPrompted(root) {
 const ARG_RE = /^--[a-z][a-z0-9-]{0,20}$/;
 /** 계약(P03 `docs\인수문서-handoff-v2.md`)이 정한 **단 하나의** 설치기 사본 자리. 다른 값은 받지 않는다. */
 export const CONTRACT_INSTALLER_PATH = '_agent/setup/installer/IRIS-설치.cmd';
+/** macOS 판 설치기가 같은 자리에 두는 사본(P03 setup/handoff.mjs RESUME_INSTALLER_PATH_MAC). */
+export const CONTRACT_INSTALLER_PATH_MAC = '_agent/setup/installer/IRIS-설치.command';
+const contractPath = (platform = process.platform) => (platform === 'win32' ? CONTRACT_INSTALLER_PATH : CONTRACT_INSTALLER_PATH_MAC);
 /**
  * cmd.exe 가 명령줄을 **다시 읽으면서** 뜻을 갖는 글자들. `&`·`|` 는 명령을 하나 더 붙일 수 있고 `%` 는 따옴표 안에서도 환경변수로 바뀐다.
  * 우리는 따옴표로 감싸고 그대로 넘기지만(아래 `resume()`), 그래도 이런 글자가 든 경로는 아예 실행하지 않는다(겹겹 방어).
@@ -128,15 +131,16 @@ const normRel = (s) => String(s).replace(/\\/g, '/').replace(/^\.\//, '').toLowe
  * 인자도 `--소문자` 형태만 통과시킨다.
  * @returns {{ok:true, file:string, args:string[]}|{ok:false, reason:string}}
  */
-export function resumeTarget(root, handoff) {
+export function resumeTarget(root, handoff, { platform = process.platform } = {}) {
   const rel = String(handoff?.resume?.installerPath || '').trim();
   if (!rel) return { ok: false, reason: '인수 문서에 설치기 경로가 없습니다' };
-  if (/^[A-Za-z]:|^\\\\/.test(rel)) return { ok: false, reason: '설치기 경로는 영혼 폴더 안 상대경로여야 합니다' };
-  if (normRel(rel) !== normRel(CONTRACT_INSTALLER_PATH)) {
-    return { ok: false, reason: `설치기 경로가 계약과 다릅니다(${CONTRACT_INSTALLER_PATH} 만 허용): ${rel.slice(0, 120)}` };
+  if (/^[A-Za-z]:|^\\\\|^\//.test(rel)) return { ok: false, reason: '설치기 경로는 영혼 폴더 안 상대경로여야 합니다' };
+  const contract = contractPath(platform);
+  if (normRel(rel) !== normRel(contract)) {
+    return { ok: false, reason: `설치기 경로가 계약과 다릅니다(${contract} 만 허용): ${rel.slice(0, 120)}` };
   }
   const base = path.resolve(root);
-  const file = path.resolve(base, rel.replace(/\//g, path.sep));
+  const file = path.resolve(base, rel.replace(/[\\/]/g, path.sep)); // 두 방향 모두 이 OS 의 구분자로(Windows 는 전과 같다)
   if (!(file.toLowerCase() === base.toLowerCase() || file.toLowerCase().startsWith(base.toLowerCase() + path.sep))) {
     return { ok: false, reason: '설치기 경로가 영혼 폴더 밖을 가리킵니다' };
   }
@@ -188,6 +192,7 @@ export class HandoffFlow {
     this.log = o.log || (() => {});
     this.broadcast = o.broadcast || (() => {});
     this.spawnImpl = o.spawnImpl || spawn;
+    this.platform = o.platform || process.platform; // 시험이 Windows·macOS 길을 둘 다 볼 수 있게
     this.now = o.now || (() => Date.now());
     this.card = null;       // 지금 화면에 띄울 카드(없으면 null)
     this.last = null;       // 마지막 runOnce 결과
@@ -335,9 +340,16 @@ export class HandoffFlow {
   resume() {
     const h = readHandoff(this.root);
     if (!h) return { ok: false, reason: '인수 문서를 읽지 못했습니다' };
-    const t = resumeTarget(this.root, h);
+    const t = resumeTarget(this.root, h, { platform: this.platform });
     if (!t.ok) { this.log(`handoff resume 거부: ${t.reason}`); return t; }
     try {
+      // macOS: 셸 재해석 없이 /bin/sh 에 경로·인자를 배열로 넘긴다(P03 lib/handoff.mjs 의 .command 재실행과 같은 길). 설치기는 브라우저 화면을 스스로 연다.
+      if (this.platform !== 'win32') {
+        const child = this.spawnImpl('/bin/sh', [t.file, ...t.args], { detached: true, stdio: 'ignore', cwd: this.root });
+        child?.unref?.();
+        this.log(`handoff resume: ${t.file} ${t.args.join(' ')} pid=${child?.pid ?? '?'}`);
+        return { ok: true, file: t.file, args: t.args, pid: child?.pid ?? null };
+      }
       // 명령줄을 **우리가 직접 만들어 그대로** 넘긴다(`windowsVerbatimArguments`). Node 가 배열을 조립할 때는 cmd 의 재해석을
       // 염두에 두지 않아 경로 속 `&` 같은 글자가 명령 구분자가 될 수 있다 — 여기서 경로를 따옴표로 감싸 한 덩어리로 못 박는다.
       // (그런 글자가 든 경로는 resumeTarget 이 이미 거부했다. 이것은 두 번째 자물쇠다.)

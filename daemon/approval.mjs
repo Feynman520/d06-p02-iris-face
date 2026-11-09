@@ -9,6 +9,8 @@
    - 다중 선택(AskUserQuestion multiSelect): `1. [ ] Apple` / `2. [✔] Pear` → 숫자 = 토글, Tab = 다음(마지막이면 답 검토 화면).
    - 번호 없는 선택지(폴더 신뢰 물음 `❯ No, exit` / `  Yes, I trust this folder`): 숫자 키가 없으므로
      키 = 화살표(↓/↑ × 거리) + Enter 를 한 번에 보낸다(실측 OK). 기본 선택이 "No, exit"라 Enter 만 보내면 세션이 꺼진다.
+     2.1.308 「Make auto mode your default permission mode?」(`❯ Yes, set auto mode…` / `No, keep bypass permissions`)도 이 꼴이다 —
+     선택지 글에 "bypass permissions" 가 들어 있어 상태줄 거르기는 `bypass permissions on`(상태줄 글)만 지운다(2026-10-28).
    - `(y/n)` 한 줄 물음 → y·n. 그 밖(모르는 형식) → raw: 원문 + Enter/Esc + 글 입력칸(화면이 붙인다).
    노란불 자체는 ATTENTION_RE(sessions.mjs)가 켜므로 여기서 판정하지 않는다. */
 
@@ -20,7 +22,7 @@ const MARKED_RE = new RegExp(`^(\\s*)(${MARK})\\s+(\\S.*?)\\s*$`);
 const YN_RE = /\((y\/n|Y\/n|y\/N)\)|\[(y\/n|Y\/n|y\/N)\]/;
 const BORDER_ONLY_RE = /^[\s╭╮╰╯┌┐└┘├┤│┃|]*$/;
 const DIVIDER_RE = /^[\s╭╮╰╯┌┐└┘├┤─━═╌▔▁]{8,}.*$/; // 상자 위·아래 모서리 줄(╭──╮)도 경계   // 가로줄(대화상자 위·아래 경계). 오른쪽에 작업 이름이 붙기도 한다(`──── create-hello-file ─`)
-const STATUS_LINE_RE = /⏵⏵|⏸ manual mode|bypass permissions|shift\+tab to cycle|← for agents|esc to interrupt|ctrl\+c to interrupt|Enter to confirm|Esc to cancel|Enter to select|Tab to next|Tab to amend|Tab\/Arrow keys|↑\/↓ to navigate|Press enter to continue|ctrl\+g to edit|shift\+tab to approve|Security guide|\? for shortcuts/i;
+const STATUS_LINE_RE = /⏵⏵|⏸ manual mode|bypass permissions on\b|shift\+tab to cycle|← for agents|esc to interrupt|ctrl\+c to interrupt|Enter to confirm|Esc to cancel|Enter to select|Tab to next|Tab to amend|Tab\/Arrow keys|↑\/↓ to navigate|Press enter to continue|ctrl\+g to edit|shift\+tab to approve|Security guide|\? for shortcuts/i;
 const TABS_RE = /(?:^|\s)[☐☒]\s+\S/;                     // AskUserQuestion 머리줄: `←  ☐ Color  ☒ Fruit  ✔ Submit  →`
 const TAB_ITEM_RE = /([☐☒])\s+([^☐☒✔←→]+?)(?=\s{2,}|\s*$)/g;
 const QUESTION_MAX_LINES = 18, QUESTION_MAX_CHARS = 1600, MAX_DESC = 2;

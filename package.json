@@ -21,6 +21,7 @@
     "verify:subagents": "node scripts/check-subagents.mjs",
     "verify:resume": "node scripts/check-resume.mjs",
     "verify:codexcompat": "node scripts/check-codexcompat.mjs",
+    "verify:codex-update": "node scripts/check-codex-update.mjs",
     "verify:approval": "node scripts/check-approval.mjs",
     "verify:first-session": "node scripts/check-first-session.mjs",
     "verify:wake": "node scripts/check-wake.mjs",
@@ -43,12 +44,14 @@
     "verify:midreport": "node scripts/check-midreport.mjs",
     "verify:auth": "node scripts/check-auth.mjs",
     "verify:rename-drop": "node scripts/check-rename-drop.mjs",
+    "verify:uploads": "node scripts/check-uploads.mjs",
     "verify:settings": "node scripts/check-settings.mjs",
     "verify:tutorial": "node scripts/check-tutorial.mjs",
     "verify:deck": "node scripts/check-deck.mjs",
     "verify:folders": "node scripts/check-folders.mjs",
     "verify:shutdown": "node scripts/check-shutdown.mjs",
-    "verify:close-window": "node scripts/check-close-window.mjs"
+    "verify:close-window": "node scripts/check-close-window.mjs",
+    "verify:send": "node scripts/check-send.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { SessionManager } from './sessions.mjs';
+import { SessionManager, autoResumeState } from './sessions.mjs';
 import { titleFromPrompt } from './title.mjs';
 import { AGENTS } from './agents.mjs';
 import { TranscriptTail } from './transcript.mjs';
@@ -29,6 +29,8 @@ import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
 import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
+import { openInDesktop, isSystemPath, isLocalAbsolute, isExecutableFile, nativePath } from './platform.mjs';
+import { sweepUploads, UPLOAD_KEEP_DAYS } from './uploads.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -274,7 +276,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/favicon.ico') { res.writeHead(204); return res.end(); }
     // 전부 종료 중(v2.97)에는 새 세션·재개·전송을 받지 않는다 — 정리하는 사이에 새 CLI 가 떠서 남는 일이 없게(종료 요청·조회는 그대로)
     if (shuttingDown && req.method !== 'GET' && p !== '/api/shutdown') return json(res, 503, { error: 'IRIS 가 종료하는 중입니다' });
-    if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features() });
+    if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features(), autoResume: autoResumeState(settings.get()) });
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
     if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
     if (req.method === 'GET' && p === '/api/agents') return json(res, 200, activeAgentsMap(AGENTS));
@@ -346,10 +348,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (p === '/api/ontology/rebuild') { const o = await runOntology(WS_ROOT, { python: ontologyPython(WS_ROOT, pythonExe()), log }); return json(res, 200, { ontology: o, graph: ontologyGraph(WS_ROOT) }); }
       // 폴더 열기(튜토리얼 「폴더 열기」·온톨로지 노드): 영혼 폴더 안의 **폴더**만, explorer.exe 에 경로 하나만 넘긴다.
-      const dir = path.resolve(WS_ROOT, String(b.rel || ''));
+      const dir = path.resolve(WS_ROOT, nativePath(b.rel || ''));
       if (!(dir + path.sep).toLowerCase().startsWith((path.resolve(WS_ROOT) + path.sep).toLowerCase()) || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return json(res, 404, { error: '영혼 폴더 안의 폴더만 열 수 있습니다' });
       // windowsHide 를 주지 않는다 — explorer.exe 는 받은 SW_HIDE 를 새 폴더 창에 그대로 써서 창이 "열렸지만 안 보이는" 상태가 된다(2026-10-21 실측·사용자 신고, v2.92).
-      try { spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref(); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
+      try { openInDesktop(dir, { folder: true }); log(`open-folder ${dir}`); return json(res, 200, { ok: true }); }
       catch (e) { return json(res, 500, { error: e.message }); }
     }
     if (req.method === 'GET' && p === '/api/relay/ready') {
@@ -422,7 +424,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...f, recent: recent.get(), fresh, live });
     }
     if (req.method === 'POST' && p === '/api/upload') {
-      // 사진·파일 첨부: state/uploads/<시각>-<이름> 에 저장하고 절대경로를 돌려준다(요청문에 경로로 삽입)
+      // 사진·파일 첨부: state/uploads/<시각>-<이름> 에 저장하고 절대경로를 돌려준다(요청문에 경로로 삽입). 30일 지나면 sweepUploads 가 지운다.
       const name = decodeURIComponent(req.headers['x-file-name'] || 'file.bin').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
       const dir = path.join(STATE, 'uploads'); fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}-${name}`);
@@ -449,17 +451,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/file') {
       // 대화 안 삽입용 로컬 파일(이미지·HTML·PDF 등). 이 PC 로컬 데몬 전용 — 시스템 폴더는 막는다.
-      const raw = url.searchParams.get('path') || ''; const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
+      const raw = nativePath(url.searchParams.get('path') || ''); const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
       const ext = path.extname(file).toLowerCase();
       const okExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.html', '.htm', '.pdf', '.txt', '.md', '.csv', '.json'];
-      if (!okExt.includes(ext) || /^[A-Za-z]:\\(windows|program files|program files \(x86\)|programdata)\\/i.test(file)) { log(`403 file ${file}`); return json(res, 403, { error: `열 수 없는 파일 종류이거나 시스템 폴더입니다: ${file}` }); }
+      if (!okExt.includes(ext) || isSystemPath(file)) { log(`403 file ${file}`); return json(res, 403, { error: `열 수 없는 파일 종류이거나 시스템 폴더입니다: ${file}` }); }
       if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { log(`404 file ${file}`); return json(res, 404, { error: `파일이 없습니다: ${file}` }); }
       return serveFile(res, file);
     }
     if (req.method === 'GET' && p === '/api/doc') {
       // 문서(한/글·워드·엑셀·PPT)를 PDF로 변환해 삽입용으로 서빙. 원본은 읽기 전용, 결과는 state/doc-cache 캐시.
-      const raw = url.searchParams.get('path') || ''; const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
-      if (/^[A-Za-z]:\\(windows|program files|program files \(x86\)|programdata)\\/i.test(file)) { log(`403 doc ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
+      const raw = nativePath(url.searchParams.get('path') || ''); const file = path.resolve(raw.replace(/^\/([A-Za-z]:)/, '$1'));
+      if (isSystemPath(file)) { log(`403 doc ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
       if (!isConvertible(file)) { log(`403 doc ext ${file}`); return json(res, 403, { error: `변환할 수 없는 문서 형식입니다: ${file}` }); }
       if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { log(`404 doc ${file}`); return json(res, 404, { error: `파일이 없습니다: ${file}` }); }
       try {
@@ -470,11 +472,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/open') {
       // 원본 파일을 이 PC의 기본 앱(한/글·워드·엑셀 …)으로 연다. 브라우저가 못 여는 문서의 ⧉ 전용.
       // explorer.exe 에 경로 하나만 넘긴다(cmd.exe /c start 는 인용부호 재해석으로 한글·공백 경로가 깨질 수 있음).
-      const b = await readBody(req); const file = path.resolve(String(b.path || '').replace(/^\/([A-Za-z]:)/, '$1'));
-      if (!/^[A-Za-z]:\\/.test(file) || /^[A-Za-z]:\\(windows|program files|program files \(x86\)|programdata)\\/i.test(file)) { log(`403 open ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
-      if (/\.(exe|bat|cmd|com|ps1|vbs|js|msi|scr|lnk)$/i.test(file)) { log(`403 open exec ${file}`); return json(res, 403, { error: `실행 파일은 열지 않습니다: ${file}` }); }
+      const b = await readBody(req); const file = path.resolve(nativePath(b.path || '').replace(/^\/([A-Za-z]:)/, '$1'));
+      if (!isLocalAbsolute(file) || isSystemPath(file)) { log(`403 open ${file}`); return json(res, 403, { error: `시스템 폴더는 열 수 없습니다: ${file}` }); }
+      if (isExecutableFile(file)) { log(`403 open exec ${file}`); return json(res, 403, { error: `실행 파일은 열지 않습니다: ${file}` }); }
       if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { log(`404 open ${file}`); return json(res, 404, { error: `파일이 없습니다: ${file}` }); }
-      try { spawn('explorer.exe', [file], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); log(`open ${file}`); return json(res, 200, { ok: true }); }
+      try { openInDesktop(file); log(`open ${file}`); return json(res, 200, { ok: true }); }
       catch (e) { log(`500 open ${file}: ${e.message}`); return json(res, 500, { error: e.message }); }
     }
     if (req.method === 'GET' && p === '/api/transcript-preview') {
@@ -602,9 +604,12 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   try { memory.start(); log(`memory: commit=${memory.features().commit} sweep=${memory.features().sweep ? 'on' : 'off'}`); } catch (e) { log(`memory init error: ${e?.message || e}`); }
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
-  try { const ids = sm.resumeLost(); if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
+  try { const ar = autoResumeState(settings.get()); const ids = sm.resumeLost({ enabled: ar.enabled }); if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
   try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
+  // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
+  const sweepUp = () => { try { const r = sweepUploads(path.join(STATE, 'uploads')); if (r.removed) log(`uploads: removed ${r.removed} file(s) older than ${UPLOAD_KEEP_DAYS} days (${Math.round(r.bytes / 1024)}KB), kept ${r.kept}`); } catch (e) { log(`uploads sweep error: ${e?.message || e}`); } };
+  sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();
   // 세팅 마무리 자동 실행(v2.60): 가이드가 pending-finalize 를 남기면 창이 대신 마무리한다.
   try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); }
   try { setupProgress.start(); } catch (e) { log(`setup progress init error: ${e?.message || e}`); }

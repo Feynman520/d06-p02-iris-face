@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dashDir, soulRoot, readReceipt } from './daemon/paths.mjs';
 import { handoffExists } from './daemon/handoff.mjs';
+import { isMac, macWindowExecutable, openUrl } from './daemon/platform.mjs';
 
 // 영수증 env(2026-09-20, v2.71): 설치기가 등록한 사용자 환경변수(TEAMCLAUDE_CONFIG·CLAUDE_CONFIG_DIR·CODEX_HOME)가 이 실행기의
 // env 에 없으면(환경변수 등록 직후의 같은 로그온 세션, 다른 사용자 계정의 바로가기 등) 영수증 값으로 채운다 — 없으면 ensure-proxy 가
@@ -36,6 +37,7 @@ const say = (m, isErr = false) => {
 const HIDDEN = !ARGV.includes('--console'); // 창 없이 돌 때만 알림창을 띄운다(보이는 창이면 글로 충분)
 // 알림창: 콘솔이 없을 때 치명 실패를 사람에게 알리는 유일한 길. 한글이 코드페이지에 깨지지 않도록 -EncodedCommand(UTF-16LE base64).
 function msgbox(text) {
+  if (isMac()) { macAlert(text); return; }
   if (process.platform !== 'win32') return;
   // 본문은 환경변수로 넘긴다(따옴표·줄바꿈·한글을 명령줄에 싣지 않음).
   const ps = "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show($env:IRIS_FACE_MSG, 'IRIS-Face', 'OK', 'Error')";
@@ -44,6 +46,11 @@ function msgbox(text) {
     spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', enc],
       { windowsHide: true, timeout: 60000, env: { ...process.env, IRIS_FACE_MSG: text } });
   } catch {}
+}
+// macOS: 같은 약속(본문은 환경변수로) — JXA 가 NSProcessInfo 로 읽으므로 한글이 UTF-8 그대로 온다.
+function macAlert(text) {
+  const js = "const a = Application.currentApplication(); a.includeStandardAdditions = true; a.displayAlert('IRIS', { message: $.NSProcessInfo.processInfo.environment.objectForKey('IRIS_FACE_MSG').js, as: 'critical' });";
+  try { spawnSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', js], { timeout: 60000, stdio: 'ignore', env: { ...process.env, IRIS_FACE_MSG: text } }); } catch {}
 }
 function fatal(text) {
   say(text, true);
@@ -139,7 +146,10 @@ if (firstSessionSpec) {
   }
 }
 // 기본 = Electron 창(설치돼 있으면), --browser = 기본 브라우저, --no-open = 데몬만
-const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
+// macOS 는 Electron.app 꾸러미 안의 실행 파일을 바로 띄운다(`electron .` 과 같은 방식 — env·인수를 그대로 넘길 수 있다).
+// 꾸러미는 이름·아이콘을 IRIS 로 바꾼 state/ 의 복제본(Dock 에 「Electron」 이 뜨지 않게, platform.mjs macWindowExecutable).
+const ELECTRON = isMac() ? (process.argv.includes('--no-open') || process.argv.includes('--browser') ? '' : macWindowExecutable(ROOT, { stateDir: STATE, log: say }))
+  : path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
 if (process.argv.includes('--no-open')) { /* 데몬만 */ }
 else if (!process.argv.includes('--browser') && fs.existsSync(ELECTRON)) {
   const out = fs.openSync(path.join(STATE, 'app.out.log'), 'a');
@@ -147,12 +157,12 @@ else if (!process.argv.includes('--browser') && fs.existsSync(ELECTRON)) {
   const child = spawn(ELECTRON, [path.join(ROOT, 'app', 'electron', 'main.cjs')], { cwd: ROOT, detached: true, stdio: ['ignore', out, out], windowsHide: false, env: { ...process.env, IRIS_FACE_PORT: String(PORT) } });
   // 창이 5초 안에 죽으면(SAC·백신이 electron.exe 를 막음, 그래픽 드라이버 문제 등) 기본 브라우저로 대신 연다 — 사용자가 빈손이 되지 않게.
   let gone = false;
-  child.once('exit', (code) => { gone = true; if (code !== 0) { say(`[iris-face] electron window exited early (code ${code}) — opening the browser instead`, true); spawn('cmd.exe', ['/c', 'start', '', URL_], { windowsHide: true, detached: true, stdio: 'ignore' }).unref(); } });
+  child.once('exit', (code) => { gone = true; if (code !== 0) { say(`[iris-face] electron window exited early (code ${code}) — opening the browser instead`, true); openUrl(URL_); } });
   setTimeout(() => { if (!gone) child.unref(); }, 5000).unref?.();
   say('[iris-face] electron window launched');
 } else {
   if (!process.argv.includes('--browser')) say('[iris-face] electron.exe not found — opening the browser instead', true);
-  spawn('cmd.exe', ['/c', 'start', '', URL_], { windowsHide: true, detached: true, stdio: 'ignore' }).unref();
+  openUrl(URL_);
 }
 say(`[iris-face] ${URL_}`);
 await teamclaude; // 프록시 기동(회귀 검사 포함, 최대 90초)이 끝날 때까지 실행기는 기다린다 — 창은 이미 떠 있다

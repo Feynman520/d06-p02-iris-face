@@ -8,7 +8,7 @@
 //   잔여물 미리보기는 IRIS 잔여물 청소기(orphan-sweeper.py)가 있는 PC 에서만 — 인자 없이(미리보기) 돌리며 --apply 는 이 파일 어디에도 없다.
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 
 export const SAMPLE_MS = 2000;
 export const KEEP = 900;              // 2초 × 900 = 30분
@@ -132,16 +132,49 @@ export function groupProcesses(procs, sessions = [], { selfPid = process.pid, li
   return groups.sort((a, b) => b.priv - a.priv).slice(0, limit).map(x => ({ ...x, priv: g2(x.priv), ws: g2(x.ws) }));
 }
 
+/**
+ * macOS: `vm_stat` → 쓸 수 있는 메모리(바이트). os.freemem() 은 macOS 에서 '빈 쪽'만 세어 캐시로 쓰이다 곧 돌려받을
+ * 메모리(비활성·예측·제거 가능 쪽)를 빼 버린다 — 늘 95% 넘게 '위험'으로 보였다(2026-10-27 실측: 99%).
+ * 활성 상태 보기와 같은 기준으로 free + inactive + speculative + purgeable 을 '쓸 수 있음'으로 본다.
+ */
+export function parseVmStat(text) {
+  const t = String(text || '');
+  const size = Number((/page size of (\d+) bytes/.exec(t) || [])[1]);
+  const pages = (name) => Number((new RegExp(`^Pages ${name}:\\s+(\\d+)`, 'm').exec(t) || [])[1]);
+  const parts = ['free', 'inactive', 'speculative', 'purgeable'].map(pages);
+  if (!(size > 0) || parts.some((n) => !Number.isFinite(n))) return null;
+  return parts.reduce((a, b) => a + b, 0) * size;
+}
+
 /** 계기판 본체. sessions() = [{ id, title, pid }], sweeper = 청소기 .py 경로 또는 null, python = () => 파이썬 경로 또는 null. */
 export class MemoryMonitor {
   constructor({ log = () => {}, broadcast = () => {}, sessions = () => [], sweeper = null, python = () => null, platform = process.platform, probe, osMem, execImpl = execFile, now = Date.now } = {}) {
     Object.assign(this, { log, broadcast, sessions, sweeper, python, platform, execImpl, now });
     this.probe = probe || new CommitProbe({ log, platform, now });
-    this.osMem = osMem || (() => ({ total: os.totalmem(), free: os.freemem() }));
+    // macOS: vm_stat 을 10초마다 한 번 읽어 둔 '쓸 수 있는 메모리'를 쓴다(못 읽으면 os.freemem 그대로).
+    this.macAvail = null; this.macTimer = null;
+    this.osMem = osMem || (platform === 'darwin'
+      ? () => ({ total: os.totalmem(), free: this.macAvail ?? os.freemem() })
+      : () => ({ total: os.totalmem(), free: os.freemem() }));
+    this.useVmStat = !osMem && platform === 'darwin';
     this.buf = []; this.timer = null; this.topCache = null; this.topBusy = null; this.sweepBusy = null;
   }
-  start() { this.probe.start(); this.tick(); this.timer = setInterval(() => { try { this.tick(); } catch (e) { this.log(`memory tick error: ${e.message}`); } }, SAMPLE_MS); this.timer.unref?.(); }
-  stop() { clearInterval(this.timer); this.probe.stop(); }
+  readVmStat() {
+    try {
+      this.execImpl('/usr/bin/vm_stat', [], { timeout: 5000, encoding: 'utf8' }, (err, out) => {
+        const v = err ? null : parseVmStat(out);
+        if (v != null && v <= os.totalmem()) this.macAvail = v;
+      });
+    } catch { /* vm_stat 없음 — os.freemem 그대로 */ }
+  }
+  start() {
+    if (this.useVmStat) {
+      // 첫 표본부터 맞게: 시작할 때 한 번은 기다려 읽는다(이후는 10초마다 비동기).
+      try { const v = parseVmStat(execFileSync('/usr/bin/vm_stat', { timeout: 5000, encoding: 'utf8' })); if (v != null && v <= os.totalmem()) this.macAvail = v; } catch {}
+      this.macTimer = setInterval(() => this.readVmStat(), 10000); this.macTimer.unref?.();
+    }
+    this.probe.start(); this.tick(); this.timer = setInterval(() => { try { this.tick(); } catch (e) { this.log(`memory tick error: ${e.message}`); } }, SAMPLE_MS); this.timer.unref?.(); }
+  stop() { clearInterval(this.timer); clearInterval(this.macTimer); this.probe.stop(); }
   sample() {
     const { total, free } = this.osMem(); const c = this.probe.read();
     const s = { t: this.now(), ru: g2(total - free), rt: g2(total), cu: c ? g2(c.used) : null, cl: c ? g2(c.limit) : null };
