@@ -374,34 +374,6 @@
     await uploadAll(picked.filter(x => !x.dir).map(x => x.file));
     if (mode === 'chat') $('#composer-text').focus();
   });
-  // 클립보드 그림 붙여넣기(2026-11-09 사용자 신고 "캡처 도구로 찍고 Ctrl+V 해도 안 들어감"): 글 입력칸은 글만 받아
-  // 그림 붙여넣기를 조용히 버렸다. 붙여넣기에 파일(캡처 그림·탐색기에서 복사한 파일)이 실려 있으면 끌어다 놓기·버튼과 같은
-  // uploadAll 로 첨부한다. 글이 함께 실린 붙여넣기(엑셀 셀·워드 글은 그림을 곁들여 싣는다)는 지금처럼 글만 넣는다.
-  // 캡처 그림은 이름이 늘 image.png 라 capture-<날짜-시각>.png 로 바꿔 첨부 칩에서 구별되게 한다.
-  // paste-pick-begin
-  function pastedFiles(dt, stamp) {
-    if (!dt) return [];
-    if (String(dt.getData?.('text/plain') ?? '').trim()) return [];
-    const files = [...(dt.items || [])].filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean);
-    return files.map((f, i) => {
-      if (f.name && !/^image\.\w+$/i.test(f.name)) return f;
-      const ext = ((f.type || '').split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/[^\w]/g, '') || 'png';
-      return new File([f], `capture-${stamp}${files.length > 1 ? `-${i + 1}` : ''}.${ext}`, { type: f.type || 'image/png' });
-    });
-  }
-  // paste-pick-end
-  const pasteStamp = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
-  // 입력칸에서, 또는 아무 입력칸에도 초점이 없을 때(대화 보기)만 받는다 — 이름 고치기·설정 칸의 붙여넣기는 건드리지 않는다.
-  document.addEventListener('paste', async (e) => {
-    const t = e.target, ta = $('#composer-text');
-    const editable = t && t !== ta && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''));
-    if (editable || (t !== ta && mode !== 'chat')) return;
-    const files = pastedFiles(e.clipboardData, pasteStamp());
-    if (!files.length) return;
-    e.preventDefault();
-    await uploadAll(files);
-    ta.focus();
-  });
   let camStream = null;
   $('#btn-cam').onclick = async () => { try { camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false }); $('#cam-video').srcObject = camStream; $('#cam').hidden = false; } catch (err) { Dialog.alert('카메라를 열 수 없습니다: ' + err.message); } };
   function camStop() { camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('#cam').hidden = true; }
