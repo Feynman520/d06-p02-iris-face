@@ -4,7 +4,7 @@
 //   최소화·Ctrl+W(내려놓기) = 세션 유지. 트레이: 창 열기 · 세션 N개 · 전부 종료(확인) · 화면 다시 띄우기(세션 유지, 창 코드만 새로 읽음).
 //   ×·⏻·트레이 「전부 종료」는 모두 quitAll() 한 길 → 데몬 POST /api/shutdown?wait=1(정리·확인이 끝난 뒤 보고) 한 길.
 //   (v2.96 까지: 창 × = 트레이로 숨김, 트레이 「창만 닫기 (세션 유지)」)
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, ipcMain, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -79,9 +79,22 @@ function trayIcon() {
   return nativeImage.createFromBitmap(buf, { width: S, height: S });
 }
 
+// 작은 화면 맞춤(2026-10-28 macOS 960×540 신고): 최소 900×600 이 화면 작업 영역보다 크면, 다른 앱에 갔다 돌아올 때
+// 창이 최소 크기로 다시 늘어나 아래(입력창)가 화면 밖으로 밀린다. 최소·기본 크기를 창이 놓인 화면의 작업 영역 안으로 줄인다.
+const BASE = { width: 1440, height: 920, minWidth: 900, minHeight: 600 };
+function workArea(bounds) { try { return (bounds ? screen.getDisplayMatching(bounds) : screen.getPrimaryDisplay()).workAreaSize; } catch { return null; } }
+function fitMinimumSize() {
+  if (!win || win.isDestroyed()) return;
+  const wa = workArea(win.getBounds()); if (!wa) return;
+  win.setMinimumSize(Math.min(BASE.minWidth, wa.width), Math.min(BASE.minHeight, wa.height));
+}
+
 function createWindow() {
+  const wa = workArea() || { width: BASE.width, height: BASE.height };
   win = new BrowserWindow({
-    width: 1440, height: 920, minWidth: 900, minHeight: 600, backgroundColor: '#0f1218', title: 'IRIS', autoHideMenuBar: true, show: false,
+    width: Math.min(BASE.width, wa.width), height: Math.min(BASE.height, wa.height),
+    minWidth: Math.min(BASE.minWidth, wa.width), minHeight: Math.min(BASE.minHeight, wa.height),
+    backgroundColor: '#0f1218', title: 'IRIS', autoHideMenuBar: true, show: false,
     ...(ICON ? { icon: ICON } : {}),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') },
   });
@@ -90,6 +103,7 @@ function createWindow() {
   // 키 입력 자가 복구(2026-09-10): 페이지가 "눌렀는데 초점이 없다"고 알리면 창을 blur→focus 해 OS 키보드 초점을 되찾는다.
   // (네이티브 alert/confirm 뒤 창이 초점을 잃어 입력이 죽던 버그의 안전망 — 원인 자체는 app/dialog.js 로 제거)
   win.on('focus', () => { try { win.webContents.focus(); } catch {} });
+  win.on('moved', fitMinimumSize); // 다른 화면으로 옮기면 그 화면 기준으로 최소 크기를 다시 맞춘다
   // Esc 중계(2026-09-10): 초점이 대화 안 미리보기 iframe(PDF 뷰어 등)에 있으면 페이지 문서에 keydown이 오지 않아 Esc 중단이 죽는다.
   // before-input-event는 어느 프레임에 초점이 있든 창 단위로 먼저 받으므로, 여기서 잡아 페이지에 알린다(페이지가 중복은 300ms 가드로 걸러냄).
   win.webContents.on('before-input-event', (_e, input) => { if (input.type === 'keyDown' && input.key === 'Escape' && !input.isAutoRepeat) { try { win.webContents.send('iris:escape'); } catch {} } });
@@ -206,6 +220,8 @@ async function main() {
   tray.setContextMenu(buildTrayMenu());
   tray.on('click', showWindow);
   createWindow();
+  // 해상도·Dock·화면 연결이 바뀌면 최소 크기를 다시 맞춘다(창을 다시 만들어도 한 번만 걸리게 여기서 등록)
+  for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(ev, fitMinimumSize);
   let downTicks = 0;
   setInterval(async () => {
     if (quitFlow) return; // 전부 종료 중에는 quitAll() 이 결과를 판정한다
