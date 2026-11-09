@@ -158,6 +158,7 @@
         else if (m.phase === 'error' || m.phase === 'resume-failed') Notify.push({ title: '세팅 마무리 오류', sub: m.error || '', status: 'attention', force: true });
       }
       else if (m.type === 'modules') setModules(m.list);                                                   // 모듈 콘센트: 상태·panel·배지
+      else if (m.type === 'tools') window.ToolsView?.onTools(m);                                          // 도구 설치·제거 진행(판 B, 2026-11-10)
       else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
       else if (m.type === 'subtranscript') SubPanel.onTranscript(m);          // 서랍이 보고 있는 보조의 기록

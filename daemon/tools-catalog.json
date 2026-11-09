@@ -1,0 +1,445 @@
+{
+  "schema": 1,
+  "note": "판 B(2026-11-10) — 엄선 도구 목록. 손으로 고치지 말고 scripts/build-tools-catalog.mjs(해시) + 실제 설치 시험(tested)으로 만든다. 설계 = docs\\설계-도구화면-2026-11-10.md",
+  "base": {
+    "mcp": [
+      "playwright",
+      "self-improve",
+      "hwp-automation",
+      "excel-automation",
+      "ppt-automation",
+      "word-automation",
+      "pdf-automation"
+    ],
+    "pluginMarket": "iris-local"
+  },
+  "items": [
+    {
+      "id": "canvas-design",
+      "kind": "skill",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "포스터·시각 자료 디자인",
+      "desc": "포스터·안내판 같은 한 장짜리 그림 자료(PNG·PDF)를 디자인합니다",
+      "vendor": "Anthropic",
+      "license": "Apache-2.0",
+      "home": "https://github.com/anthropics/skills/tree/main/skills/canvas-design",
+      "account": null,
+      "effects": [],
+      "icon": "canvas-design.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "repo": "anthropics/skills",
+        "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+        "path": "skills/canvas-design",
+        "treeSha256": "b72c7942953229e250d88889b7aa8f34413ef9430c374a8ccf5bd7f167bd6602"
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "internal-comms",
+      "kind": "skill",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "공지·보고 글쓰기",
+      "desc": "업무 공지·진행 보고·소식지 같은 안내 글을 정해진 틀로 씁니다",
+      "vendor": "Anthropic",
+      "license": "Apache-2.0",
+      "home": "https://github.com/anthropics/skills/tree/main/skills/internal-comms",
+      "account": null,
+      "effects": [],
+      "icon": "internal-comms.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "repo": "anthropics/skills",
+        "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+        "path": "skills/internal-comms",
+        "treeSha256": "0e8e5b541e7bb1458327caabee90bd3f1c3c79f4243f1779784f1ef614fd93f7"
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "theme-factory",
+      "kind": "skill",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "문서·슬라이드 테마",
+      "desc": "슬라이드·문서·보고서에 색과 글꼴 테마(10종)를 입힙니다",
+      "vendor": "Anthropic",
+      "license": "Apache-2.0",
+      "home": "https://github.com/anthropics/skills/tree/main/skills/theme-factory",
+      "account": null,
+      "effects": [],
+      "icon": "theme-factory.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "repo": "anthropics/skills",
+        "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+        "path": "skills/theme-factory",
+        "treeSha256": "d9944ae87ce97f44060b55e768ebc04e33b690293b54b544cb8b8664e44b9964"
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "skill-creator",
+      "kind": "skill",
+      "agents": [
+        "claude"
+      ],
+      "name": "나만의 스킬 만들기",
+      "desc": "반복하는 일을 스킬로 만들고 시험해 다듬도록 도와줍니다",
+      "vendor": "Anthropic",
+      "license": "Apache-2.0",
+      "home": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
+      "account": null,
+      "effects": [],
+      "icon": "skill-creator.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "repo": "anthropics/skills",
+        "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
+        "path": "skills/skill-creator",
+        "treeSha256": "c37bb7f01b531c4fd751ad94ea29bf1dfe9de1e66a5c520157b3c27e53b91e53"
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "context7",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Context7 (최신 개발 문서)",
+      "desc": "프로그래밍 라이브러리의 최신 공식 문서를 찾아 답에 반영합니다",
+      "vendor": "Upstash",
+      "license": "서비스 약관",
+      "home": "https://github.com/upstash/context7",
+      "account": null,
+      "effects": [
+        "찾는 라이브러리 이름이 Context7 서버로 전송됩니다"
+      ],
+      "icon": "context7.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.context7.com/mcp"
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "notion",
+      "kind": "plugin",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "노션 (Notion)",
+      "desc": "노션 페이지·데이터베이스를 찾고 읽고 씁니다",
+      "vendor": "Notion",
+      "license": "MIT",
+      "home": "https://developers.notion.com/guides/mcp/overview",
+      "account": "Notion 계정 로그인",
+      "effects": [
+        "노션 페이지를 만들거나 고칠 수 있습니다"
+      ],
+      "icon": "notion.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "claude": {
+          "repo": "makenotion/claude-code-notion-plugin",
+          "commit": "9847f2aa1a15f25df35ed1fb7b4557dbb60cd651",
+          "path": ".",
+          "plugin": "notion",
+          "treeSha256": "0e438cf33099fad7c9cb454a08818c69adff548d756fd5b09ba1641f8f912109"
+        },
+        "codex": {
+          "repo": "openai/plugins",
+          "commit": "d420d13051bffe4543ed39e30fa46b87148e47dd",
+          "path": "plugins/notion",
+          "plugin": "notion",
+          "treeSha256": "54379580d7ad141127d85b3795feaef2ac62ee9108339b75c4e4631aecadd312",
+          "entry": {
+            "name": "notion",
+            "policy": {
+              "installation": "AVAILABLE",
+              "authentication": "ON_INSTALL"
+            },
+            "category": "Productivity"
+          }
+        }
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "github",
+      "kind": "plugin",
+      "agents": [
+        "codex"
+      ],
+      "name": "GitHub",
+      "desc": "저장소·이슈·풀 리퀘스트를 다룹니다",
+      "vendor": "OpenAI",
+      "license": "MIT",
+      "home": "https://github.com/openai/plugins/tree/main/plugins/github",
+      "account": "GitHub 로그인",
+      "effects": [
+        "저장소에 글·코드를 올릴 수 있습니다"
+      ],
+      "icon": "github.svg",
+      "iconSource": "official: GitHub Primer Octicons mark-github (MIT, © GitHub Inc.) — GitHub Logo Policy 제3자 앱 사용, 흰색판",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "codex": {
+          "repo": "openai/plugins",
+          "commit": "d420d13051bffe4543ed39e30fa46b87148e47dd",
+          "path": "plugins/github",
+          "plugin": "github",
+          "treeSha256": "c96d2447e811dec9e4f01d39c114f2d3ac15b6124ca865e3fdfa53f4dc2bfe45",
+          "entry": {
+            "name": "github",
+            "policy": {
+              "installation": "AVAILABLE",
+              "authentication": "ON_INSTALL"
+            },
+            "category": "Developer Tools"
+          }
+        }
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "google-calendar",
+      "kind": "plugin",
+      "agents": [
+        "codex"
+      ],
+      "name": "구글 캘린더",
+      "desc": "일정 확인·빈 시간 찾기·일정 만들기",
+      "vendor": "OpenAI",
+      "license": "MIT",
+      "home": "https://github.com/openai/plugins/tree/main/plugins/google-calendar",
+      "account": "Google 계정 연결",
+      "effects": [
+        "일정을 만들거나 지울 수 있습니다"
+      ],
+      "icon": "google-calendar.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "codex": {
+          "repo": "openai/plugins",
+          "commit": "d420d13051bffe4543ed39e30fa46b87148e47dd",
+          "path": "plugins/google-calendar",
+          "plugin": "google-calendar",
+          "treeSha256": "cee3864b10317784d97c8412cf062450605e7be1c9e6149aba5f012e69348d2a",
+          "entry": {
+            "name": "google-calendar",
+            "policy": {
+              "installation": "AVAILABLE",
+              "authentication": "ON_INSTALL"
+            },
+            "category": "Productivity"
+          }
+        }
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "gmail",
+      "kind": "plugin",
+      "agents": [
+        "codex"
+      ],
+      "name": "Gmail",
+      "desc": "메일 요약·정리·회신 초안",
+      "vendor": "OpenAI",
+      "license": "MIT",
+      "home": "https://github.com/openai/plugins/tree/main/plugins/gmail",
+      "account": "Google 계정 연결",
+      "effects": [
+        "메일을 보낼 수 있습니다"
+      ],
+      "icon": "gmail.webp",
+      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "codex": {
+          "repo": "openai/plugins",
+          "commit": "d420d13051bffe4543ed39e30fa46b87148e47dd",
+          "path": "plugins/gmail",
+          "plugin": "gmail",
+          "treeSha256": "b07862c14d6fa5ccf31a524766db875f9919bfcaad681db729ab682e07fb3642",
+          "entry": {
+            "name": "gmail",
+            "policy": {
+              "installation": "AVAILABLE",
+              "authentication": "ON_INSTALL"
+            },
+            "category": "Communication"
+          }
+        }
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    },
+    {
+      "id": "google-drive",
+      "kind": "plugin",
+      "agents": [
+        "codex"
+      ],
+      "name": "구글 드라이브",
+      "desc": "드라이브·문서·시트·슬라이드를 찾고 다룹니다",
+      "vendor": "OpenAI",
+      "license": "MIT",
+      "home": "https://github.com/openai/plugins/tree/main/plugins/google-drive",
+      "account": "Google 계정 연결",
+      "effects": [
+        "파일을 고치거나 공유 범위를 바꿀 수 있습니다"
+      ],
+      "icon": "google-drive.png",
+      "iconSource": "official: Google Drive branding page logo (developers.google.com/workspace/drive/api/guides/branding) — 사전 승인 불필요·크기 외 변형 금지",
+      "iconChecked": "2026-11-10",
+      "install": {
+        "codex": {
+          "repo": "openai/plugins",
+          "commit": "d420d13051bffe4543ed39e30fa46b87148e47dd",
+          "path": "plugins/google-drive",
+          "plugin": "google-drive",
+          "treeSha256": "5e53eb11487bb59d9ab1e3790a7921bfe641682c2db7b598a3bac70feb5f8852",
+          "entry": {
+            "name": "google-drive",
+            "policy": {
+              "installation": "AVAILABLE",
+              "authentication": "ON_INSTALL"
+            },
+            "category": "Productivity"
+          }
+        }
+      },
+      "tested": {
+        "at": "2026-11-09",
+        "claude": [
+          "2.1.272",
+          "2.1.319"
+        ],
+        "codex": [
+          "0.154.0",
+          "0.167.0"
+        ],
+        "steps": "install→verify→remove→verify"
+      }
+    }
+  ]
+}

@@ -30,6 +30,10 @@ import { HandoffFlow, relayReady } from './handoff.mjs';
 import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
 import { sweepUploads, UPLOAD_KEEP_DAYS } from './uploads.mjs';
+import { ToolManager, makeRunner } from './toolinstall.mjs';
+import { childEnv } from './sessions.mjs';
+import { CLAUDE_CONFIG_DIR, CODEX_HOME } from './agents.mjs';
+import { taskkillTree, pidAlive } from './proctree.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -61,6 +65,15 @@ const sm = new SessionManager(STATE, {
 });
 const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
+// 도구 설치·제거(판 B, 2026-11-10 — docs\설계-도구화면-2026-11-10.md): 엄선 목록만, 세션과 같은 환경으로 공식 CLI 실행.
+// 살아 있는 세션 수 = 파일 삭제를 미루는 기준(세션이 지운 파일을 나중에 부르지 않게).
+const tools = new ToolManager({
+  root: WS_ROOT, claudeDir: CLAUDE_CONFIG_DIR, codexDir: CODEX_HOME, cacheDir: path.join(STATE, 'tools-cache'),
+  run: makeRunner({ env: childEnv(), killTree: taskkillTree }), log: (m) => log(m), broadcast: (o) => broadcast(o),
+  // orphan = 데몬이 다시 떠서 직접 붙잡지 못했지만 PID 가 살아 있던 세션 — 그 세션도 도구를 쓰므로 센다(코덱스 코드 검토 2차 B5).
+  // orphan 표시는 시작 때 한 번 정해져 그대로 남으므로 PID 가 지금도 살아 있을 때만(안 그러면 「제거 대기」가 영영 안 풀림).
+  liveSessions: () => sm.list().filter((r) => ['busy', 'idle', 'attention'].includes(r.status) || (r.status === 'orphan' && pidAlive(r.pid))).length,
+});
 // 세팅 마무리 자동 실행(v2.60): soul-state.json 이 pending-finalize 면 세션을 닫고 finalize-pipeline.ps1 을 돌린 뒤 이어 연다(finalize.mjs).
 var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadcast });
 // 세팅 진행 막대(v2.65): 가이드가 기록하는 _agent\setup\setup-progress.json 을 읽어 화면 위에 그린다(progress.mjs).
@@ -359,7 +372,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ready: await relayReady(agent), relay: true, agent });
     }
     if (req.method === 'GET' && p === '/api/ontology/graph') return json(res, 200, ontologyGraph(WS_ROOT));
-    if (req.method === 'GET' && p === '/api/tools') return json(res, 200, listTools(WS_ROOT));
+    // 판 B: 설치된 도구(출처 base·iris·manual 붙임) + 엄선 목록 상태. 설치·제거는 같은 출처만, 한 번에 하나(엔진 큐).
+    if (req.method === 'GET' && p === '/api/tools') return json(res, 200, { ...tools.annotate(listTools(WS_ROOT)), catalog: tools.status() });
+    if (req.method === 'POST' && (p === '/api/tools/install' || p === '/api/tools/remove' || p === '/api/tools/cancel')) {
+      if (!sameOrigin(req)) { log(`403 tools: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      const b = await readBody(req); const id = String(b?.id || '');
+      if (!/^[a-z0-9][a-z0-9-]{1,48}$/.test(id)) return json(res, 400, { error: 'bad id' });
+      const r = p.endsWith('/install') ? await tools.install(id) : p.endsWith('/remove') ? await tools.remove(id) : await tools.cancelRemove(id);
+      return json(res, r.ok ? 200 : 409, r);
+    }
     if (req.method === 'POST' && (p === '/api/handoff/resume' || p === '/api/handoff/dismiss')) {
       if (!sameOrigin(req)) { log(`403 handoff ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       if (p === '/api/handoff/dismiss') { handoff.dismiss(); return json(res, 200, { ok: true, ...handoff.info() }); }
@@ -609,6 +630,9 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
   const sweepUp = () => { try { const r = sweepUploads(path.join(STATE, 'uploads')); if (r.removed) log(`uploads: removed ${r.removed} file(s) older than ${UPLOAD_KEEP_DAYS} days (${Math.round(r.bytes / 1024)}KB), kept ${r.kept}`); } catch (e) { log(`uploads sweep error: ${e?.message || e}`); } };
   sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();
+  // 도구(판 B): 중간에 끊긴 설치·제거를 실제 상태와 맞추고(같은 잠금 아래), 세션이 0 일 때 「제거 대기」를 처리한다(1분마다 확인 — 세션이 있으면 아무것도 안 함).
+  tools.reconcile().then((r) => { if (r?.changed) log('tools: reconciled ledger'); }).catch((e) => log(`tools reconcile error: ${e?.message || e}`));
+  setInterval(() => { tools.processPending().catch((e) => log(`tools pending error: ${e?.message || e}`)); }, 60 * 1000).unref();
   // 세팅 마무리 자동 실행(v2.60): 가이드가 pending-finalize 를 남기면 창이 대신 마무리한다.
   try { const on = finalizer.start(); log(`finalize: watcher ${on ? 'on' : 'off'} root=${WS_ROOT}`); } catch (e) { log(`finalize init error: ${e?.message || e}`); }
   try { setupProgress.start(); } catch (e) { log(`setup progress init error: ${e?.message || e}`); }

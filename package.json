@@ -36,6 +36,8 @@
     "verify:handoff": "node scripts/check-handoff.mjs",
     "verify:trust": "node scripts/check-trust.mjs",
     "verify:relaunch": "node scripts/check-relaunch.mjs",
+    "verify:toolinstall": "node scripts/check-toolinstall.mjs",
+    "verify:tools-ui": "node scripts/check-tools-ui.mjs",
     "verify:turnstate": "node scripts/check-turnstate.mjs",
     "verify:models": "node scripts/check-models.mjs",
     "verify:memory": "node scripts/check-memory.mjs",

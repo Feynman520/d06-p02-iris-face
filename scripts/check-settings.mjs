@@ -61,7 +61,9 @@ else {
     browser = await chromium.launch();
     for (const W of [1280, 900]) {
       const p = await browser.newPage({ viewport: { width: W, height: 860 } });
-      const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.text())) errs.push(m.text()); });
+      const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.text()) && !/^Failed to load resource/.test(m.text())) errs.push(m.text()); });
+      // 404 는 콘솔 글에 주소가 없어 원인을 못 찾으므로 응답에서 주소와 함께 잡는다
+      p.on('response', r => { if (r.status() >= 400 && !/favicon/.test(r.url())) errs.push(`${r.status()} ${r.url().replace(/^https?:\/\/[^/]+/, '')}`); });
       await p.goto(`http://127.0.0.1:${PORT}/`); await sleep(2000);
       await p.evaluate(() => { try { localStorage.removeItem('iris.settings.pane'); } catch {} });
       await p.keyboard.press('Escape'); await sleep(200);

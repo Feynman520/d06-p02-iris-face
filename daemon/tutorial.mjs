@@ -257,7 +257,19 @@ function skillsIn(dir, agent) {
   let names = []; try { names = fs.readdirSync(dir); } catch { return out; }
   for (const n of names) {
     const meta = skillMeta(readText(path.join(dir, n, 'SKILL.md')));
-    if (meta) out.push({ agent, name: meta.name || n, description: clip(meta.description) });
+    if (meta) out.push({ agent, name: meta.name || n, dir: n, description: clip(meta.description) }); // dir = 실제 폴더 이름(도구 화면의 출처 판정, 판 B)
+  }
+  return out;
+}
+/** codex config.toml 의 [plugins."이름@마켓"] 머리와 enabled 줄(판 B). */
+export function codexPluginsIn(toml) {
+  const out = []; let cur = null;
+  for (const line of String(toml || '').split(/\r?\n/)) {
+    // 머리 뒤 주석·공백·작은따옴표도 받는다 — 도구 엔진(toolinstall.mjs codexPlugins)과 같은 규칙(코덱스 코드 검토 2차 B9)
+    const h = /^\s*\[\s*plugins\s*\.\s*(["'])([^"']+)\1\s*\]\s*(#.*)?$/.exec(line);
+    if (h) { const [name, market] = h[2].split('@'); cur = { name, market: market || '', enabled: true }; out.push(cur); continue; }
+    if (/^\s*\[/.test(line)) { cur = null; continue; }
+    const en = cur && /^\s*enabled\s*=\s*(true|false)/.exec(line); if (en) cur.enabled = en[1] === 'true';
   }
   return out;
 }
@@ -265,8 +277,8 @@ function skillsIn(dir, agent) {
 export function codexMcp(toml) {
   const out = []; let cur = null;
   for (const line of String(toml || '').split(/\r?\n/)) {
-    const h = /^\s*\[mcp_servers\.([^\].]+)\]\s*$/.exec(line);
-    if (h) { cur = { agent: 'codex', name: h[1].replace(/^"|"$/g, ''), kind: 'stdio', program: '' }; out.push(cur); continue; }
+    const h = /^\s*\[\s*mcp_servers\s*\.\s*(["']?)([^\]."']+)\1\s*\]\s*(#.*)?$/.exec(line); // 주석·따옴표 머리도(2차 B9)
+    if (h) { cur = { agent: 'codex', name: h[2], kind: 'stdio', program: '' }; out.push(cur); continue; }
     if (/^\s*\[/.test(line)) { cur = null; continue; }
     if (!cur) continue;
     const c = /^\s*command\s*=\s*"([^"]*)"/.exec(line); if (c) cur.program = path.basename(c[1].replace(/\\\\/g, '\\'));
@@ -291,6 +303,8 @@ export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.home
     const pj = e?.installPath ? (readJson(path.join(e.installPath, '.claude-plugin', 'plugin.json')) || {}) : {};
     plugins.push({ agent: 'claude', name, market: market || '', enabled: enabled[id] !== false, version: clip(e?.version || pj.version || '', 20), description: clip(pj.description) });
   }
+  // 코덱스 플러그인(판 B, 2026-11-10): config.toml 의 [plugins."이름@마켓"] — 화면에 코덱스 쪽도 보이게
+  for (const p of codexPluginsIn(readText(path.join(cx, 'config.toml')))) plugins.push({ agent: 'codex', name: p.name, market: p.market, enabled: p.enabled, version: '', description: '' });
   const by = (a, b) => a.name.localeCompare(b.name);
   return { ok: true, counts: { skills: skills.length, mcp: mcp.length, plugins: plugins.length }, skills: skills.sort(by), mcp: mcp.sort(by), plugins: plugins.sort(by) };
 }
