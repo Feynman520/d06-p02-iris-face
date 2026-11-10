@@ -98,6 +98,11 @@ try {
   const loaded = await p.evaluate(async (icons) => Promise.all(icons.map((n) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth > 0); im.onerror = () => res(false); im.src = `/app/tool-icons/${n}`; }))), real);
   ok(real.length >= 10 && loaded.every(Boolean), `카탈로그 아이콘 ${loaded.filter(Boolean).length}/${real.length} 실제로 읽힘`);
   ok(await p.evaluate(() => [...document.querySelectorAll('img.tl-ic')].every((im) => im.getAttribute('src').startsWith('/app/tool-icons/'))), '아이콘 주소 = /app/tool-icons/…(데몬이 내주는 자리)');
+  // v2.102(2026-11-10 사용자 "아이콘 그림을 최대한 크게"): 칸 36px · 그림 파일 128px(코덱스 그림) — 작게 되돌아가면 실패
+  const box = await p.evaluate(() => [...document.querySelectorAll('.tl-ic')].map((e) => Math.round(e.getBoundingClientRect().width)));
+  ok(box.length > 0 && box.every((w) => w === 36), `아이콘 칸 36px(${[...new Set(box)].join(',')})`);
+  const sizes = await p.evaluate(async (icons) => Promise.all(icons.filter((n) => n.endsWith('.webp')).map((n) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth); im.onerror = () => res(0); im.src = `/app/tool-icons/${n}`; }))), real);
+  ok(sizes.length >= 8 && sizes.every((w) => w >= 128), `코덱스 그림 아이콘 128px 이상(${sizes.join(',')})`);
   // 에이전트 탭
   const tabs = await p.locator('#tl-agents [data-agent]').evaluateAll((bs) => bs.map((b) => b.textContent.trim()).join(' | '));
   ok(/전체 \d+/.test(tabs) && /Claude 전용 \d+/.test(tabs), `에이전트 탭 숫자(${tabs})`);

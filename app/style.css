@@ -905,7 +905,7 @@ button.tl-pill[aria-pressed="true"] { border-color: var(--iris); background: var
 .tl-kinds button[aria-pressed="true"] { border-color: var(--iris); background: var(--iris-soft); color: var(--ink); font-weight: 600; } .tl-kinds button[aria-pressed="true"] b { color: var(--iris); }
 .tl-kdesc { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 12px; color: var(--ink-3); } .tl-kdesc svg { color: var(--iris); flex: none; }
 .tl-row { gap: 10px; }
-.tl-ic { flex: none; width: 24px; height: 24px; border-radius: 6px; object-fit: contain; }
+.tl-ic { flex: none; width: 36px; height: 36px; border-radius: 8px; object-fit: contain; } /* v2.102: 24 → 36px(사용자 요청), 그림 128px·88% */
 .tl-ic-k { display: inline-grid; place-items: center; background: var(--raised); color: var(--iris); }
 .tl-badge { flex: none; font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .tl-badge.base { color: var(--iris); background: var(--iris-soft); }

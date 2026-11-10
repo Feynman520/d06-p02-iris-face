@@ -36,7 +36,7 @@ window.ToolsView = (() => {
   }
   const catItems = (k) => (data?.catalog?.items || []).filter(i => i.kind === k.cat);
   const catById = (id) => (data?.catalog?.items || []).find(i => i.id === id) || null;
-  const iconOf = (it, k) => it?.icon ? `<img class="tl-ic" src="/app/tool-icons/${esc(it.icon)}" alt="" draggable="false">` : `<span class="tl-ic tl-ic-k">${Icons.svg(k.icon, 15)}</span>`;
+  const iconOf = (it, k) => it?.icon ? `<img class="tl-ic" src="/app/tool-icons/${esc(it.icon)}" alt="" draggable="false">` : `<span class="tl-ic tl-ic-k">${Icons.svg(k.icon, 22)}</span>`;
   const line = (row, k) => {
     if (k.key === 'mcp') return [row.kind === 'http' ? '인터넷 주소로 연결' : '이 컴퓨터에서 실행', row.program].filter(Boolean).join(' · ');
     if (k.key === 'plugins') return [row.market && `출처 ${row.market}`, row.version && `판 ${row.version}`, row.description].filter(Boolean).join(' · ');
@@ -167,7 +167,7 @@ window.ToolsView = (() => {
       // 아이콘 파일이 없거나 깨지면 종류 기본 선 아이콘으로 바꾼다(빈 네모·깨진 그림 안 보이게). error 는 거품이 없어 잡기 단계에서 받는다.
       host.addEventListener('error', (e) => {
         const img = e.target; if (!(img instanceof HTMLImageElement) || !img.classList.contains('tl-ic')) return;
-        const s = document.createElement('span'); s.className = 'tl-ic tl-ic-k'; s.innerHTML = Icons.svg(K().icon, 15); img.replaceWith(s);
+        const s = document.createElement('span'); s.className = 'tl-ic tl-ic-k'; s.innerHTML = Icons.svg(K().icon, 22); img.replaceWith(s);
       }, true);
       const input = $('#tl-q', host);
       input.addEventListener('input', () => { q = input.value; render(); });
