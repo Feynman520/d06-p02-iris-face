@@ -548,11 +548,11 @@ const server = http.createServer(async (req, res) => {
           const tl = tailFor(before); try { tl?.poll(); } catch {}
           const handoff = buildHandoff(tl?.items || [], before);
           const first = handoff + (b.text ? `\n\n[이어지는 요청]\n${b.text}` : '\n\n위 대화를 이어받았으면 한 줄로 확인만 하고, 다음 요청을 기다려라.');
-          rec = sm.replaceAgent(id, { agent: b.agent, model: b.model, effort: b.effort, readOnly: b.readOnly, permission: b.permission, approval: b.approval, sandbox: b.sandbox, prompt: first });
+          rec = sm.replaceAgent(id, { agent: b.agent, model: b.model, expectModel: b.expectModel, effort: b.effort, readOnly: b.readOnly, permission: b.permission, approval: b.approval, sandbox: b.sandbox, prompt: first });
           tails.delete(id);
           log(`handoff ${id} [${beforeCmd}] -> [${rec.cmdline}] pid=${rec.pid} items=${(tl?.items || []).length} chars=${first.length}`);
         } else {
-          rec = sm.switchTo(id, { model: b.model, effort: b.effort, readOnly: b.readOnly, permission: b.permission, approval: b.approval, sandbox: b.sandbox, prompt: b.text || '' });
+          rec = sm.switchTo(id, { model: b.model, expectModel: b.expectModel, effort: b.effort, readOnly: b.readOnly, permission: b.permission, approval: b.approval, sandbox: b.sandbox, prompt: b.text || '' });
           log(`switch ${id} [${beforeCmd}] -> [${rec.cmdline}] pid=${rec.pid}`);
         }
         broadcast({ type: 'sessions', list: publicList() });

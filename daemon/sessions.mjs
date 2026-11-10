@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR } from './agents.mjs';
+import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR, assertExpected, modelForResume } from './agents.mjs';
 import { preTrust } from './trust.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
@@ -159,9 +159,10 @@ export class SessionManager {
   buffer(id) { return this.live.get(id)?.buffer || ''; }
 
   /** 새 세션: 폴더 + 에이전트·모델·사고깊이(사용자가 고른 그대로) + 첫 요청문(선택) */
-  create({ cwd, agent, model, effort, readOnly, permission, approval, sandbox, prompt, cols = 120, rows = 36 }) {
+  create({ cwd, agent, model, expectModel, effort, readOnly, permission, approval, sandbox, prompt, cols = 120, rows = 36 }) {
     if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error(`folder not found: ${cwd}`);
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
+    assertExpected(sel, expectModel);
     const cmd = buildCommand(sel, cwd);
     const id = `s${++this.seq}`;
     const proc = this.spawn(cmd, cwd, cols, rows);
@@ -194,10 +195,12 @@ export class SessionManager {
   }
 
   /** 모델·사고깊이 바꾸기 = 재개 재시작: 현 PID 종료 → 같은 카드로 --resume / codex resume. 에이전트는 못 바꾼다. */
-  switchTo(id, { model, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
+  switchTo(id, { model, expectModel, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     if (!rec.sessionId) throw new Error('세션 id를 아직 모릅니다(첫 메시지 뒤에 바꿀 수 있습니다)');
-    const sel = normalize({ agent: rec.agent, model: model ?? rec.model, effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
+    // 모델을 따로 고르지 않은 재개(자동 재개·↻)는 이 세션이 실제로 쓰던 모델을 이어 간다(v2.102)
+    const sel = normalize({ agent: rec.agent, model: model ?? modelForResume(rec), effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
+    assertExpected(sel, expectModel);
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
     if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
@@ -221,9 +224,10 @@ export class SessionManager {
   }
 
   /** 에이전트 바꾸기(Claude↔Codex): 같은 카드에서 다른 CLI를 새로 띄우고, 이전 대화를 첫 요청으로 넘겨 맥락을 잇는다 */
-  replaceAgent(id, { agent, model, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
+  replaceAgent(id, { agent, model, expectModel, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
+    assertExpected(sel, expectModel);
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
     if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });

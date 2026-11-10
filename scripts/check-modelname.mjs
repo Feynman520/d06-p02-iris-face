@@ -128,7 +128,38 @@ ok(A.buildCommand(so5, tmp).args.includes('--settings'), 'Opus 는 풀어 낸 �
 ok(!A.buildCommand(s, tmp).args.includes('--settings'), 'Fable 은 fast 아님(9/10 결정: Opus 만)');
 const sc = A.normalize({ agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' });
 ok(sc.model === 'gpt-6-astra' && A.buildCommand(sc, tmp).args.join(' ').includes('-m gpt-6-astra'), '코덱스: 그 PC 에 없는 모델을 고르면 있는 모델로 바뀌고 이름도 그것');
+// 검토3: 5.1 로 시작한 세션이 업데이트(→ fable = 5.2) 뒤 재개되면 「Fable 5.1 (이전)」 줄로 이어 감(몰래 5.2 로 바뀌지 않음)
+ok(A.modelForResume({ agent: 'claude', model: 'fable', modelActual: 'claude-fable-5-1' }) === 'claude-fable-5-1', '검토3: 재개 = 쓰던 정확한 모델(5.1) 유지');
+ok(A.modelForResume({ agent: 'claude', model: 'fable', modelActual: 'claude-fable-5-2' }) === 'fable', '검토3: 쓰던 모델이 지금 최신이면 그 줄 그대로');
 A.setModelRefresher(null);
+
+// 7-0. 코덱스 검토(2026-11-10) 지적 재발 방지
+// ① 설치 PC 심에 relay-ensure.cmd 가 실제로 있어도 그 사전 실행 줄이 아니라 인수(%*)를 넘기는 줄을 따라간다
+fs.writeFileSync(path.join(shims, 'relay-ensure.cmd'), '@echo off\r\nexit /b 0\r\n');
+const viaRelay = M.resolveClaudeChain({ where: () => [path.join(shims, 'claude.cmd')] });
+ok(viaRelay.file && /2\.1\.321[\\/]claude\.exe$/.test(viaRelay.file) && !viaRelay.chain.some((c) => /relay-ensure/.test(c)), `검토1: relay-ensure.cmd 가 있어도 실제 전달 줄을 따라감(${viaRelay.file && path.relative(soul, viaRelay.file)})`);
+// ② 읽기 중 오류 → 손 표의 판 번호를 남기지 않음
+const AG3 = { claude: { models: [{ id: 'opus', label: 'Opus 5.5' }, { id: 'claude-opus-5', label: 'Opus 5 (이전)' }], default: { model: 'opus' } }, codex: { models: [], default: { model: '' } } };
+const cat4 = new ModelCatalog({ AGENTS: AG3, codexHome: cx, cacheFile: path.join(tmp, 'scan4.json'), resolve: () => newBin, scan: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } });
+cat4.refresh({ force: true });
+ok(AG3.claude.models.find((m) => m.id === 'opus').label === 'Opus (이 PC 최신)' && AG3.claude.models.find((m) => m.id === 'opus').actual === null, '검토2: 읽기 오류면 「Opus (이 PC 최신)」(판 번호 없음)');
+// ⑤ 같은 별칭이 겹친 구간에서 두 번 세지지 않고, 서로 다른 값이면 추측하지 않음
+const amb = fakeBin(path.join(tmp, 'amb.exe'), NEW, { fable: 'claude-fable-5-2' });
+fs.appendFileSync(amb, Buffer.from('xx;var b={fable:"claude-fable-5-1"};', 'latin1'));
+const sa = scanClaudeBinary(amb, { chunk: 64, overlap: 300 });
+ok(!sa.alias.fable && sa.ambiguous.includes('fable') && claudeModelsFrom(sa).find((m) => m.id === 'fable')?.label === 'Fable (이 PC 최신)', '검토5: 한 별칭에 다른 값 둘 = 모호 → 판 번호 없이');
+const sameTwice = scanClaudeBinary(newBin, { chunk: 40, overlap: 400 });
+ok(sameTwice.alias.fable === 'claude-fable-5-2' && !sameTwice.ambiguous.length, '검토5: 겹친 구간 중복은 한 번만');
+// ⑥ 코덱스 사고깊이는 그 PC 목록을 따름
+const cx2 = path.join(tmp, 'codex2'); fs.mkdirSync(cx2);
+fs.writeFileSync(path.join(cx2, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-6-astra', visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }] }] }));
+ok(codexModelsFrom(stCodex, readCodexCache(cx2)).find((m) => m.id === 'gpt-6-astra').efforts.join() === 'low,medium', '검토6: 아는 모델도 사고깊이 = 그 PC 코덱스 목록');
+// ③ 고른 뒤 목록이 바뀌면 실행하지 않음 + 재개는 쓰던 모델 유지
+const A0 = await import('../daemon/agents.mjs');
+let thrown = null; try { A0.assertExpected({ modelActual: 'claude-fable-5-2' }, 'claude-fable-5-1'); } catch (e) { thrown = e; }
+ok(thrown?.code === 'MODEL_CHANGED' && /다시/.test(thrown.message), '검토3: 고른 모델(5.1) ≠ 지금(5.2) → 실행 거절·다시 고르기');
+let none = null; try { A0.assertExpected({ modelActual: 'claude-fable-5-2' }, 'claude-fable-5-2'); A0.assertExpected({ modelActual: 'x' }, null); } catch (e) { none = e; }
+ok(!none, '검토3: 같거나 기대값이 없으면 통과(옛 화면 호환)');
 
 // 7. 실제 응답 모델 대조
 ok(modelMatches('claude-fable-5-2', 'claude-fable-5-2') === true && modelMatches('claude-fable-5-1', 'claude-fable-5-2') === false, '대조: 같음/다름');

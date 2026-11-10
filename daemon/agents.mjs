@@ -101,6 +101,21 @@ export function normalize(sel = {}) {
   const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : (agent === 'codex' ? model : null);
   return { agent, model, modelLabel: modelInfo.label, modelActual, effort, permission, approval, sandbox, readOnly };
 }
+/**
+ * 🔴 고른 순간 화면에 보이던 모델(expectModel = 그때 목록의 정확한 이름)과 지금 실제로 넘길 모델이 다르면 실행하지 않는다(v2.102 코덱스 검토 3번).
+ * 고른 뒤 실행 직전에 자동 업데이트가 목록을 바꾸는 몇 초의 틈 — 조용히 다른 모델로 돌리지 않고 다시 고르게 한다. expectModel 이 없으면(옛 화면·API) 검사하지 않는다.
+ */
+export function assertExpected(sel, expectModel) {
+  if (!expectModel || !sel?.modelActual || expectModel === sel.modelActual) return;
+  const e = new Error(`모델 목록이 방금 바뀌었습니다(고른 것: ${expectModel} → 지금: ${sel.modelActual}). 모델을 다시 확인하고 골라 주세요.`);
+  e.code = 'MODEL_CHANGED'; throw e;
+}
+/** 재개 때 쓸 모델: 이 세션이 실제로 쓰던 정확한 이름이 지금 목록에 있으면 그 줄(예: 업데이트 뒤 「Fable 5.1 (이전)」) — 재개가 몰래 새 모델로 바뀌지 않게. */
+export function modelForResume(rec) {
+  const list = AGENTS[rec?.agent]?.models || [];
+  if (rec?.modelActual) { const hit = list.find((m) => m.actual === rec.modelActual); if (hit) return hit.id; }
+  return rec?.model;
+}
 /** 권한 표시용 짧은 말 */
 export function permLabel(s) {
   if (s.agent === 'claude') return [...(isFastClaude(s.model, s.modelActual) ? ['⚡ fast'] : []), ...(s.permission ? [(AGENTS.claude.permissions.find(p => p.id === s.permission)?.label || s.permission).replace('권한: ', '')] : [])].join(' · ');

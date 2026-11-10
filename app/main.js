@@ -132,7 +132,7 @@
       : `${to}으로 같은 대화를 다시 엽니다(현재 프로세스 종료). 계속할까요?`;
     if (!(await Dialog.confirm(msg, { okLabel: '계속' }))) return;
     try {
-      await api('POST', `/api/sessions/${s.id}/switch`, { agent: c.agent, model: c.model, effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox });
+      await api('POST', `/api/sessions/${s.id}/switch`, { agent: c.agent, model: c.model, expectModel: expectOf(c), effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox });
       setupMode = 'new'; renderSetup(); if (cross) { Transcript.clear(); setTimeout(() => loadTranscript(s.id), 1500); }
     } catch (e) { Dialog.alert(e.message); }
   };
@@ -304,6 +304,8 @@
   // 컨텍스트 사용률 = 마지막 요청의 입력 토큰 ÷ 컨텍스트 창(코덱스는 기록값, 클로드는 모델 추정)
   // 🔴 모델 이름 = 실제 모델(v2.102, 사용자 지정): 세션 기록의 실제 응답 모델이 고른 모델과 다르면 머리에 경고.
   // 기대값 = 데몬이 CLI 에 넘긴 정확한 이름(modelActual). 그 전 판 세션은 표시 이름(「Fable 5.1」)에서 만든다.
+  // 고른 순간 화면에 보이던 모델의 정확한 이름 — 데몬이 그 사이 목록이 바뀌었으면(자동 업데이트) 실행하지 않고 다시 고르게 한다(v2.102 코덱스 검토 3번)
+  const expectOf = (c) => AGENTS[c.agent]?.models?.find((m) => m.id === c.model)?.actual ?? null;
   const normModel = (x) => String(x || '').toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   function expectedModel(s) {
     if (!s) return null;
@@ -568,7 +570,7 @@
       } else {
         if (!folder) { FolderPicker.show(); return; }
         const c = currentSel();
-        const rec = await api('POST', '/api/sessions', { cwd: folder.path, agent: c.agent, model: c.model, effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox, prompt: text });
+        const rec = await api('POST', '/api/sessions', { cwd: folder.path, agent: c.agent, model: c.model, expectModel: expectOf(c), effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox, prompt: text });
         select(rec.id);
         Transcript.prime(text); // 기록파일이 생기기 전에도 요청문 + "세션 여는 중"을 바로 보여 준다(멈춘 것처럼 보이지 않게)
       }

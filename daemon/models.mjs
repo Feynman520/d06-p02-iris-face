@@ -34,12 +34,18 @@ export const familyOf = (id) => (String(id).match(/^claude-(opus|sonnet|fable|ha
 export function nextFromCmd(cmdFile, read = (f) => fs.readFileSync(f, 'latin1'), exists = fs.existsSync) {
   let text = ''; try { text = read(cmdFile); } catch { return null; }
   const dir = path.dirname(cmdFile);
-  for (const m of text.matchAll(/"([^"\r\n]*%~dp0[^"\r\n]*)"/g)) {
-    const p = path.resolve(m[1].replace(/%~dp0/gi, dir + path.sep));
-    if (!/\.(exe|cmd|bat|js|mjs)$/i.test(p)) continue;
-    if (exists(p)) return p;
-  }
-  return null;
+  // 코덱스 검토 1번(2026-11-10): 설치 PC 심에는 `if exist "%~dp0relay-ensure.cmd" call "%~dp0relay-ensure.cmd"` 같은 사전 실행 줄이 먼저 있다.
+  // 인수를 넘기는(`%*`) 줄 = 실제 전달 줄만 따라간다. 그런 줄이 하나도 없을 때만 다른 줄을 본다.
+  const lines = text.split(/\r?\n/);
+  const pick = (ls) => {
+    for (const line of ls) for (const m of line.matchAll(/"([^"\r\n]*%~dp0[^"\r\n]*)"/g)) {
+      const p = path.resolve(m[1].replace(/%~dp0/gi, dir + path.sep));
+      if (/\.(exe|cmd|bat|js|mjs)$/i.test(p) && exists(p)) return p;
+    }
+    return null;
+  };
+  const fwd = lines.filter((l) => /%\*/.test(l));
+  return fwd.length ? pick(fwd) : pick(lines);
 }
 /** PATH 의 `claude` → 심·전달 .cmd 를 최대 5단 따라가 .exe(또는 npm 판 cli.js)까지. 못 찾으면 null. */
 export function resolveClaudeBinary(opts = {}) { return resolveClaudeChain(opts).file; }
@@ -83,8 +89,10 @@ const ALIAS_RE = /\b(opus|sonnet|fable|haiku):"(claude-[a-z0-9-]+)"/g;
 const TABLE_RE = /\{id:"(claude-[a-z0-9-]+)",family:"([a-z]+)",display_name:"([^"]{1,40})"/g;
 /** 실행 파일(수백 MB)을 16MB 씩 겹쳐 읽으며 별칭 표·모델 표를 모은다(동기, 처음 한 번 1~2초). */
 export function scanClaudeBinary(file, { chunk = 16 * 1024 * 1024, overlap = 4096 } = {}) {
-  const alias = {}, names = {};
-  const votes = {}; // 같은 별칭이 다른 값으로 여러 번 나오면 가장 많이 나온 값(대개 한 가지)
+  const alias = {}, names = {}, ambiguous = [];
+  // 코덱스 검토 5번: 같은 글자가 겹친 구간에서 두 번 세지지 않게 절대 위치로 한 번만. 한 별칭에 서로 다른 값이 나오면 '모호' — 추측하지 않는다.
+  const seen = new Map(); // family → Set(값)
+  const at = new Set();
   const fd = fs.openSync(file, 'r');
   try {
     const buf = Buffer.alloc(chunk + overlap);
@@ -93,7 +101,11 @@ export function scanClaudeBinary(file, { chunk = 16 * 1024 * 1024, overlap = 409
       const n = fs.readSync(fd, buf, carry, chunk, pos);
       if (n <= 0) break;
       const s = buf.toString('latin1', 0, carry + n);
-      for (const m of s.matchAll(ALIAS_RE)) { const k = `${m[1]}|${m[2]}`; votes[k] = (votes[k] || 0) + 1; }
+      const base = pos - carry; // s[0] 의 파일 안 절대 위치
+      for (const m of s.matchAll(ALIAS_RE)) {
+        const abs = base + m.index; if (at.has(abs)) continue; at.add(abs);
+        if (!seen.has(m[1])) seen.set(m[1], new Set()); seen.get(m[1]).add(m[2]);
+      }
       for (const m of s.matchAll(TABLE_RE)) names[m[1]] = { family: m[2], name: m[3] };
       pos += n;
       const total = carry + n, keep = Math.min(overlap, total);
@@ -102,10 +114,11 @@ export function scanClaudeBinary(file, { chunk = 16 * 1024 * 1024, overlap = 409
     }
   } finally { fs.closeSync(fd); }
   for (const f of FAMILIES) {
-    const cands = Object.entries(votes).filter(([k]) => k.startsWith(f + '|')).sort((a, b) => b[1] - a[1]);
-    if (cands.length) alias[f] = cands[0][0].split('|')[1];
+    const vals = [...(seen.get(f) || [])];
+    if (vals.length === 1) alias[f] = vals[0];
+    else if (vals.length > 1) ambiguous.push(f);
   }
-  return { alias, names };
+  return { alias, names, ambiguous };
 }
 
 /** 스캔 결과 → 모델 선택 목록. 별칭 줄은 풀어 낸 정확한 이름을 `actual` 로 갖는다. */
@@ -113,7 +126,8 @@ export function claudeModelsFrom(scan) {
   const out = [];
   for (const f of FAMILIES) {
     const target = scan.alias[f];
-    if (!target) continue;
+    // 모호(서로 다른 값) = 판 번호를 말하지 않고 별칭 그대로(실제는 화면 경고가 대조)
+    if (!target) { if ((scan.ambiguous || []).includes(f)) out.push({ id: f, label: `${FAMILY_KO[f]} (이 PC 최신)`, actual: null }); continue; }
     const label = scan.names[target]?.name || prettyClaude(target);
     out.push({ id: f, label, actual: target });
     const tv = versionOf(target);
@@ -154,7 +168,8 @@ const effortsOf = (m) => {
 export function codexModelsFrom(staticModels, cache) {
   if (!cache) return staticModels.map((m) => ({ ...m, actual: m.id }));
   const have = new Map(cache.list.map((m) => [m.slug, m]));
-  const kept = staticModels.filter((m) => have.has(m.id)).map((m) => ({ ...m, actual: m.id }));
+  // 코덱스 검토 6번: 사고깊이도 그 PC 코덱스 목록을 따른다(없으면 손 표 값)
+  const kept = staticModels.filter((m) => have.has(m.id)).map((m) => { const e = effortsOf(have.get(m.id)); return { ...m, actual: m.id, ...(e?.length ? { efforts: e } : {}) }; });
   const added = cache.list.filter((m) => !staticModels.some((s) => s.id === m.slug)).map((m) => {
     const e = effortsOf(m); return { id: m.slug, label: m.slug, actual: m.slug, ...(e?.length ? { efforts: e } : {}) };
   });
@@ -199,7 +214,11 @@ export class ModelCatalog {
         if (!models) { models = claudeFallback(this.staticClaude); this.log('models: claude 실행 파일을 읽지 못해 판 번호 없는 이름으로 표시'); }
         this.replace('claude', models); this.claude.key = key; this.claude.source = source; changed = true;
       }
-    } catch (e) { this.log(`models: claude 확인 실패 ${e?.message || e}`); }
+    } catch (e) {
+      // 코덱스 검토 2번: 읽다 실패해도 손 표의 판 번호(「Opus 5.5」)를 남기지 않는다 — 판 번호 없는 이름으로 바꾸고 다음에 다시 시도
+      this.log(`models: claude 확인 실패 ${e?.message || e}`);
+      if (this.claude.source !== 'error') { this.replace('claude', claudeFallback(this.staticClaude)); this.claude.source = 'error'; this.claude.key = 'error'; changed = true; }
+    }
     // 코덱스
     try {
       const f = path.join(this.codexHome, 'models_cache.json');
