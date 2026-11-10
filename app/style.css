@@ -168,6 +168,7 @@ a { color: var(--iris); }
 #view-head .seg-btn { white-space: nowrap; }
 .vh-usage { margin-left: auto; cursor: help; }
 .vh-usage.warn { color: var(--warn); } .vh-usage.bad { color: var(--bad); }
+.vh-mwarn { font-size: 12px; font-weight: 600; color: var(--bad); border: 1px solid var(--bad); border-radius: 999px; padding: 1px 9px; white-space: nowrap; cursor: help; } /* v2.102 모델 불일치 */
 .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; }
 .seg-btn { padding: 4px 11px; font-size: 12.5px; color: var(--ink-3); }
 .seg-btn.active { background: var(--raised); color: var(--ink); }

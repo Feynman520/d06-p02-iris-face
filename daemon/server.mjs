@@ -9,7 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { SessionManager, autoResumeState } from './sessions.mjs';
 import { titleFromPrompt } from './title.mjs';
-import { AGENTS } from './agents.mjs';
+import { AGENTS, setModelRefresher } from './agents.mjs';
+import { ModelCatalog } from './models.mjs';
 import { TranscriptTail } from './transcript.mjs';
 import { SubagentWatcher } from './subagents.mjs';
 import { listFolders, checkFresh, RecentFolders } from './folders.mjs';
@@ -91,6 +92,12 @@ const sleepWatcher = new SleepWatcher({
   onChange: (status) => broadcast(agentsMsg(status)),
 });
 sleepWatcher.start();
+// 🔴 모델 이름 = 실제 모델(v2.102, 2026-11-10 사용자 지정): 그 PC 의 claude 실행 파일·코덱스 모델 목록에서 선택 칸을 만든다.
+// 시작 때 한 번(실행 파일이 그대로면 저장해 둔 결과, 처음·업데이트 뒤엔 0.3~2초 읽기) + 세션 만들기 직전(normalize) + 10분마다.
+const models = new ModelCatalog({ AGENTS, env: () => childEnv(), codexHome: CODEX_HOME, cacheFile: path.join(STATE, 'model-scan.json'), log: (m) => log(m) });
+setModelRefresher(() => { if (models.refresh()) broadcast(agentsMsg()); });
+try { models.refresh({ force: true }); log(`models: claude=${models.info().claude.source} ${AGENTS.claude.models.map((m) => `${m.id}=${m.label}`).join(', ')}`); } catch (e) { log(`models init error: ${e?.message || e}`); }
+setInterval(() => { try { if (models.refresh()) broadcast(agentsMsg()); } catch {} }, 10 * 60_000).unref();
 // ---- 모듈 콘센트(계약 v1, 2026-09-11): modules\<이름>\ 을 별 프로세스로. 모듈이 없으면 아무것도 하지 않는다(바깥 연결 0 = verify:nomodule). ----
 const MODULES_DIR = process.env.IRIS_FACE_MODULES || path.join(ROOT, 'modules');
 const mods = new ModuleHost({

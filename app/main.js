@@ -298,11 +298,28 @@
   function goHome() { current = null; setupMode = 'new'; send({ type: 'detach' }); SubPanel.onSession(null); Transcript.clear(); Approval.render(null); render(); $('#composer-text').focus(); }
   function attach(id) { send({ type: 'attach', id }); setTimeout(doFit, 50); loadTranscript(id); }
   async function loadTranscript(id) {
-    Transcript.clear(); $('#vh-usage').textContent = ''; $('#activity').hidden = true;
+    Transcript.clear(); $('#vh-usage').textContent = ''; $('#vh-mwarn').hidden = true; $('#activity').hidden = true;
     try { const j = await api('GET', `/api/sessions/${id}/transcript`); if (id !== current) return; Transcript.render(j.items || [], j.meta); Transcript.setBusy(cur()?.status === 'busy'); afterTranscript(j.meta); } catch (e) { console.warn('transcript', e); }
   }
   // 컨텍스트 사용률 = 마지막 요청의 입력 토큰 ÷ 컨텍스트 창(코덱스는 기록값, 클로드는 모델 추정)
+  // 🔴 모델 이름 = 실제 모델(v2.102, 사용자 지정): 세션 기록의 실제 응답 모델이 고른 모델과 다르면 머리에 경고.
+  // 기대값 = 데몬이 CLI 에 넘긴 정확한 이름(modelActual). 그 전 판 세션은 표시 이름(「Fable 5.1」)에서 만든다.
+  const normModel = (x) => String(x || '').toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
+  function expectedModel(s) {
+    if (!s) return null;
+    if (s.modelActual) return s.modelActual;
+    if (s.agent === 'codex') return s.model || null;
+    const m = String(s.modelLabel || '').match(/^(Opus|Sonnet|Fable|Haiku) (\d+(?:\.\d+)?)/);
+    return m ? `claude-${m[1].toLowerCase()}-${m[2].replace('.', '-')}` : null;
+  }
+  function checkModel(meta) {
+    const el = $('#vh-mwarn'), s = cur(), act = meta?.model, exp = expectedModel(s);
+    const bad = !!(exp && act && act !== '<synthetic>' && normModel(exp) !== normModel(act));
+    el.hidden = !bad;
+    if (bad) { el.textContent = `모델 불일치 · 실제 ${act}`; el.title = `고른 모델: ${s.modelLabel || s.model} (${exp})\n실제 응답한 모델: ${act}\n\nIRIS 가 보여 준 이름과 실제 모델이 다릅니다. 새 세션을 열면 그 PC 의 실제 모델 이름으로 다시 맞춰집니다.`; }
+  }
   function afterTranscript(meta) {
+    checkModel(meta);
     const u = meta?.usage, w = meta?.window; const el = $('#vh-usage');
     if (!u) { el.textContent = ''; return; }
     const pct = w ? Math.min(100, Math.round(u.in / w * 100)) : null;

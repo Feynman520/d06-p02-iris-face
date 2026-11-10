@@ -19,7 +19,8 @@ const STATE = process.env.IRIS_FACE_STATE || path.join(ROOT, 'state');
 // Face 소유의 작은 설정 파일 { fastMode: true } 를 --settings 로 넘긴다(--settings 는 user 설정보다 우선).
 // 공백·한글·〖〗가 든 이 경로가 cmd.exe /c 를 거쳐도 그대로 도착함을 node-pty 로 실측(2026-09-10).
 // 2026-09-23: `opus` 별칭이 CLI 2.1.280부터 Opus 5.5 — 이전 Opus 5 는 전체 ID 항목이며 둘 다 fast 지원.
-const FAST_MODELS = ['opus', 'claude-opus-5'];
+// v2.102: 모델 목록은 daemon/models.mjs 가 그 PC CLI 에서 읽어 바꾼다 — fast 판정도 별칭이 아니라 풀어 낸 정확한 이름(opus 계열)으로.
+const isFastClaude = (model, actual) => model === 'opus' || /^claude-opus-/.test(actual || model || '');
 const FAST_SETTINGS = path.join(STATE, 'fast-mode.json');
 function fastSettingsFile() {
   const want = JSON.stringify({ fastMode: true }, null, 2) + '\n';
@@ -27,14 +28,18 @@ function fastSettingsFile() {
   fs.mkdirSync(STATE, { recursive: true }); fs.writeFileSync(FAST_SETTINGS, want, 'utf8');
   return FAST_SETTINGS;
 }
-export const isFastModel = (agent, model) => agent === 'codex' || (agent === 'claude' && FAST_MODELS.includes(model));
+export const isFastModel = (agent, model, actual) => agent === 'codex' || (agent === 'claude' && isFastClaude(model, actual));
+// 세션을 만들기·바꾸기 직전 모델 목록을 그 PC CLI 와 맞춘다(daemon/models.mjs ModelCatalog.refresh — 평소엔 stat 한 번).
+let refreshModels = () => {};
+export function setModelRefresher(fn) { refreshModels = typeof fn === 'function' ? fn : () => {}; }
 export const CODEX_HOME = process.env.CODEX_HOME || path.join(soulRoot(), '_agent', 'codex');
 
 export const AGENTS = {
   claude: {
     label: 'Claude',
-    // 별칭(opus·sonnet·fable·haiku)은 CLI 가 최신 판으로 푼다(2.1.311: opus→Opus 5.5, sonnet→5.5, fable→5.1, haiku→5.5).
-    // 표시 이름은 손으로 맞춘다 — 새 판이 나오면 CLI 별칭 대상·모델 카탈로그를 보고 여기 이름만 고친다.
+    // 🔴 v2.102(2026-11-10 사용자 지정): 아래 손 표는 '실행 파일을 못 읽었을 때'의 뼈대일 뿐이다. 실제 목록·이름은
+    // daemon/models.mjs 가 그 PC 의 claude 실행 파일에서 별칭 표·모델 표를 읽어 정하고(이름 = 실제 모델), 세션에는
+    // 별칭 대신 풀어 낸 정확한 이름을 넘긴다. 못 읽으면 별칭 줄은 판 번호 없이 「Opus (이 PC 최신)」으로 보인다.
     // 2026-09-29: Sonnet 5.5 출시 — 이전 Sonnet 5 는 전체 ID 항목. Sonnet 5.5 는 CLI 카탈로그에 fast_mode 가 없어 FAST_MODELS 에 넣지 않는다.
     // 2026-10-27: `haiku` 별칭이 Haiku 5.5 로 풀림(CLI 2.1.311 실측) — 표시 이름만 고침. Haiku 4.5 는 사고깊이가 없어 이전 항목으로 남기지 않는다.
     models: [
@@ -79,6 +84,7 @@ export const AGENTS = {
 };
 
 export function normalize(sel = {}) {
+  try { refreshModels(); } catch {}
   const agent = AGENTS[sel.agent] ? sel.agent : 'claude';
   const a = AGENTS[agent];
   const modelInfo = a.models.find(m => m.id === sel.model) || a.models.find(m => m.id === a.default.model);
@@ -91,11 +97,13 @@ export function normalize(sel = {}) {
   let sandbox = agent === 'codex' && a.sandboxes.some(p => p.id === sel.sandbox) ? sel.sandbox : '';
   if (agent === 'codex' && !sandbox && sel.readOnly) sandbox = 'read-only'; // 예전 필드 호환
   const readOnly = sandbox === 'read-only';
-  return { agent, model, modelLabel: a.models.find(m => m.id === model).label, effort, permission, approval, sandbox, readOnly };
+  // modelActual = CLI 에 실제로 넘기는 정확한 모델 이름(클로드 별칭이 풀린 값, 코덱스는 그대로). 모르면 null(판 번호 없는 이름일 때).
+  const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : (agent === 'codex' ? model : null);
+  return { agent, model, modelLabel: modelInfo.label, modelActual, effort, permission, approval, sandbox, readOnly };
 }
 /** 권한 표시용 짧은 말 */
 export function permLabel(s) {
-  if (s.agent === 'claude') return [...(FAST_MODELS.includes(s.model) ? ['⚡ fast'] : []), ...(s.permission ? [(AGENTS.claude.permissions.find(p => p.id === s.permission)?.label || s.permission).replace('권한: ', '')] : [])].join(' · ');
+  if (s.agent === 'claude') return [...(isFastClaude(s.model, s.modelActual) ? ['⚡ fast'] : []), ...(s.permission ? [(AGENTS.claude.permissions.find(p => p.id === s.permission)?.label || s.permission).replace('권한: ', '')] : [])].join(' · ');
   const parts = ['⚡ fast']; if (s.approval) parts.push(AGENTS.codex.approvals.find(p => p.id === s.approval)?.label);
   if (s.sandbox) parts.push(AGENTS.codex.sandboxes.find(p => p.id === s.sandbox)?.label);
   return parts.join(' · ');
@@ -109,7 +117,7 @@ export function buildCommand(sel, cwd, { resumeId } = {}) {
   const s = normalize(sel);
   if (s.agent === 'claude') {
     const sessionId = resumeId || randomUUID();
-    const base = ['claude', '--chrome', '--model', s.model, '--effort', s.effort, ...(s.permission ? ['--permission-mode', s.permission] : []), ...(FAST_MODELS.includes(s.model) ? ['--settings', fastSettingsFile()] : [])];
+    const base = ['claude', '--chrome', '--model', s.modelActual || s.model, '--effort', s.effort, ...(s.permission ? ['--permission-mode', s.permission] : []), ...(isFastClaude(s.model, s.modelActual) ? ['--settings', fastSettingsFile()] : [])];
     const args = resumeId ? [...base, '--resume', resumeId] : [...base, '--session-id', sessionId];
     const recordPath = path.join(CLAUDE_CONFIG_DIR, 'projects', claudeProjectSlug(cwd), `${sessionId}.jsonl`);
     return { file: 'cmd.exe', args: ['/c', ...args], sessionId, recordPath, resumeCmd: `claude --resume ${sessionId}`, cmdline: args.join(' ') };
@@ -117,7 +125,7 @@ export function buildCommand(sel, cwd, { resumeId } = {}) {
   // --dangerously-bypass-hook-trust(2026-09-19, v2.70): 코덱스 0.154+ 는 hooks.json 이 새것이면 첫 실행에 "Hooks need review" 를 띄운다.
   // 설치기가 config.toml 에 bypass_hook_trust=true 를 적어도 TUI 는 이 물음을 냈다(데스크탑 실측) → 세션 인수로 확실히 건너뛴다.
   // IRIS 세션은 최대 권한(approval never · danger-full-access)이 사용자 결정이고 훅은 설치기가 쓴 것이라 같은 결정의 연장.
-  const base = ['codex', '-m', s.model, '-c', `model_reasoning_effort=${s.effort}`, '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
+  const base = ['codex', '-m', s.modelActual || s.model, '-c', `model_reasoning_effort=${s.effort}`, '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
   const args = resumeId ? [...base, 'resume', resumeId] : base;
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
 }
