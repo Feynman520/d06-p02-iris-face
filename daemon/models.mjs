@@ -42,23 +42,28 @@ export function nextFromCmd(cmdFile, read = (f) => fs.readFileSync(f, 'latin1'),
   return null;
 }
 /** PATH 의 `claude` → 심·전달 .cmd 를 최대 5단 따라가 .exe(또는 npm 판 cli.js)까지. 못 찾으면 null. */
-export function resolveClaudeBinary({ env = process.env, where = defaultWhere, read, exists = fs.existsSync } = {}) {
+export function resolveClaudeBinary(opts = {}) { return resolveClaudeChain(opts).file; }
+/** 같은 길을 따라가며 거친 .cmd 들도 돌려준다 — IRIS 업데이트 도구는 새 판을 새 폴더에 받고 전달 .cmd 만 바꾸므로
+ *  ModelCatalog 가 그 .cmd 의 수정 시각을 보고 즉시 다시 따라간다(최대 10분 늦던 것을 세션 열 때마다로). */
+export function resolveClaudeChain({ env = process.env, where = defaultWhere, read, exists = fs.existsSync } = {}) {
   const hits = where('claude', env);
   for (const first of hits) {
-    let cur = first;
+    let cur = first; const chain = [];
     for (let i = 0; i < 5 && cur; i++) {
-      if (/\.(exe|js|mjs)$/i.test(cur)) return exists(cur) ? cur : null;
+      if (/\.(exe|js|mjs)$/i.test(cur)) return { file: exists(cur) ? cur : null, chain };
       if (/\.(cmd|bat)$/i.test(cur)) {
+        chain.push(cur);
         const nxt = nextFromCmd(cur, read, exists);
         // npm 판 claude.cmd 는 `"%dp0%\node_modules\@anthropic-ai\claude-code\cli.js"` 꼴 — %~dp0 이 아니라 %dp0%
-        if (!nxt) { const js = npmCliFromCmd(cur, read, exists); return js; }
+        if (!nxt) return { file: npmCliFromCmd(cur, read, exists), chain };
         cur = nxt; continue;
       }
       break;
     }
   }
-  return null;
+  return { file: null, chain: [] };
 }
+const mtimeKey = (files) => files.map((f) => { try { const s = fs.statSync(f); return `${s.size}:${Math.round(s.mtimeMs)}`; } catch { return 'x'; } }).join('|');
 function npmCliFromCmd(cmdFile, read = (f) => fs.readFileSync(f, 'latin1'), exists = fs.existsSync) {
   let text = ''; try { text = read(cmdFile); } catch { return null; }
   const m = text.match(/%dp0%\\([^"\r\n]*?cli\.(?:js|mjs))/i);
@@ -162,7 +167,7 @@ export function codexModelsFrom(staticModels, cache) {
  * 클로드 실행 파일이 바뀌었는지(경로·크기·수정 시각)는 refresh() 마다 stat 한 번으로 본다 — 세션 만들기 직전에 부른다.
  */
 export class ModelCatalog {
-  constructor({ AGENTS, env = () => process.env, codexHome, cacheFile, log = () => {}, resolve = resolveClaudeBinary, scan = scanClaudeBinary } = {}) {
+  constructor({ AGENTS, env = () => process.env, codexHome, cacheFile, log = () => {}, resolve = resolveClaudeChain, scan = scanClaudeBinary } = {}) {
     Object.assign(this, { AGENTS, env, codexHome, cacheFile, log, resolve, scan });
     this.staticClaude = AGENTS.claude.models.map((m) => ({ ...m }));
     this.staticCodex = AGENTS.codex.models.map((m) => ({ ...m }));
@@ -175,7 +180,12 @@ export class ModelCatalog {
     let changed = false;
     // 클로드
     try {
-      if (force || !this.claude.file || Date.now() - this.whereAt > 10 * 60_000) { this.claude.file = this.resolve({ env: this.env() }); this.whereAt = Date.now(); }
+      const chainMoved = (this.claude.chain || []).length > 0 && mtimeKey(this.claude.chain) !== this.claude.chainKey;
+      if (force || !this.claude.file || chainMoved || Date.now() - this.whereAt > 10 * 60_000) {
+        const r = this.resolve({ env: this.env() });
+        const o = r && typeof r === 'object' ? r : { file: r || null, chain: [] };
+        this.claude.file = o.file; this.claude.chain = o.chain || []; this.claude.chainKey = mtimeKey(this.claude.chain); this.whereAt = Date.now();
+      }
       const st = this.claude.file ? fs.statSync(this.claude.file) : null;
       const key = st ? `${this.claude.file}|${st.size}|${Math.round(st.mtimeMs)}` : 'none';
       if (key !== this.claude.key) {

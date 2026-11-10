@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as M from '../daemon/models.mjs';
 import {
   scanClaudeBinary, claudeModelsFrom, claudeFallback, resolveClaudeBinary, nextFromCmd,
   readCodexCache, codexModelsFrom, ModelCatalog, modelMatches, versionOf,
@@ -103,6 +104,17 @@ const changed = cat.refresh();
 ok(changed && scans === 2 && AG.claude.models.find((m) => m.id === 'fable').label === 'Fable 5.2', '실행 파일이 바뀌면 다시 읽어 Fable 5.2');
 const cat2 = new ModelCatalog({ AGENTS: { claude: { models: [{ id: 'opus', label: 'x' }], default: { model: 'opus' } }, codex: { models: [], default: { model: '' } } }, codexHome: cx, cacheFile: path.join(tmp, 'scan.json'), resolve: () => live, scan: () => { throw new Error('should use cache'); } });
 cat2.refresh({ force: true }); ok(cat2.AGENTS.claude.models[0].label === 'Opus 5.5', '저장해 둔 읽기 결과를 다시 씀(데몬 재시작)');
+
+// IRIS 업데이트 도구 방식: 새 판을 새 폴더(2.1.321\claude.exe)에 받고 전달 claude.cmd 만 바꾼다(옛 판 폴더는 남김)
+// → 10분을 기다리지 않고 다음 refresh(세션 열 때)에 바로 새 판을 읽어야 한다
+fs.mkdirSync(path.join(tdir, '2.1.321'), { recursive: true }); fs.copyFileSync(newBin, path.join(tdir, '2.1.321', 'claude.exe'));
+const AG2 = { claude: { models: [{ id: 'fable', label: 'x' }], default: { model: 'fable' } }, codex: { models: [], default: { model: '' } } };
+const cat3 = new ModelCatalog({ AGENTS: AG2, codexHome: cx, cacheFile: path.join(tmp, 'scan3.json'), resolve: () => (M.resolveClaudeChain({ where: () => [path.join(shims, 'claude.cmd')] })) });
+cat3.refresh({ force: true });
+ok(AG2.claude.models.find((m) => m.id === 'fable').label === 'Fable 5.1', '업데이트 전: 전달자가 2.1.272 → Fable 5.1');
+fs.writeFileSync(path.join(tdir, 'claude.cmd'), '@echo off\r\n"%~dp02.1.321\\claude.exe" %*\r\n');
+const later = new Date(Date.now() + 9000); fs.utimesSync(path.join(tdir, 'claude.cmd'), later, later);
+ok(cat3.refresh() && AG2.claude.models.find((m) => m.id === 'fable').label === 'Fable 5.2', '전달 .cmd 가 바뀌면 바로 새 판(Fable 5.2) — 10분 기다리지 않음');
 
 // 실제 agents.mjs 경로: normalize → buildCommand 가 별칭이 아닌 정확한 이름을 넘김
 const A = await import('../daemon/agents.mjs');
