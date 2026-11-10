@@ -91,7 +91,8 @@ export function normalize(sel = {}) {
   const model = modelInfo.id;
   const efforts = modelInfo.efforts || a.efforts;
   // 모델 변경 시 지원되는 가장 가까운 이하 깊이로 조정(luna: ultra → max).
-  const effort = a.efforts.slice(0, a.efforts.indexOf(sel.effort) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort;
+  // 3차 검토 6번: 그 PC 코덱스가 사고깊이 목록을 비워 두었으면(지원 안 함) 깊이를 넘기지 않는다(effort = '')
+  const effort = efforts.length === 0 ? '' : (a.efforts.slice(0, a.efforts.indexOf(sel.effort) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort);
   const permission = agent === 'claude' && a.permissions.some(p => p.id === sel.permission) ? sel.permission : '';
   const approval = agent === 'codex' && a.approvals.some(p => p.id === sel.approval) ? sel.approval : '';
   let sandbox = agent === 'codex' && a.sandboxes.some(p => p.id === sel.sandbox) ? sel.sandbox : '';
@@ -100,7 +101,7 @@ export function normalize(sel = {}) {
   // modelActual = CLI 에 실제로 넘기는 정확한 모델 이름(클로드 별칭이 풀린 값, 코덱스는 그대로). 모르면 null(판 번호 없는 이름일 때).
   const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : (agent === 'codex' ? model : null);
   // 재개가 쓰던 정확한 클로드 모델을 지키는 경우(keepResumeModel) — 다시 정규화(buildCommand)해도 그 모델·이름 그대로
-  if (agent === 'claude' && sel.keepActual && typeof sel.modelActual === 'string' && /^claude-[a-z0-9-]+$/.test(sel.modelActual)) {
+  if (sel.keepActual && typeof sel.modelActual === 'string' && /^(claude-[a-z0-9-]+|gpt-[a-z0-9.-]+)$/.test(sel.modelActual) && sel.modelActual.startsWith(agent === 'claude' ? 'claude-' : 'gpt-')) {
     return { agent, model: sel.model || model, modelLabel: sel.modelLabel || sel.modelActual, modelActual: sel.modelActual, keepActual: true, effort, permission, approval, sandbox, readOnly };
   }
   return { agent, model, modelLabel: modelInfo.label, modelActual, effort, permission, approval, sandbox, readOnly };
@@ -124,11 +125,12 @@ export function modelForResume(rec) {
 /**
  * 2차 검토 3번: 쓰던 정확한 클로드 모델이 목록에서 사라졌어도(새 CLI 가 「이전」 줄로 안 보여 줌) 재개는 그 모델 그대로 —
  * 클로드 CLI 는 정확한 모델 이름을 그대로 받는다(2.1.272 에 claude-opus-5-5 를 넘겨도 동작, 2026-11-10 실측). 이름도 쓰던 이름 그대로.
- * 코덱스는 목록에 없는 모델을 거절하므로 바꾸지 않는다(그때는 normalize 가 고른 모델·이름이 함께 바뀐다 — 이름 = 실제 유지).
+ * 3차 검토 3번: 코덱스도 같다 — 목록에서 빠진 모델로 시작한 세션의 재개를 기본 모델로 몰래 바꾸지 않고 그 모델을 그대로 넘긴다(v2.101 까지의 재개와 같은 동작).
+ * 그 모델을 코덱스가 더는 받지 않으면 곧 끝나고 카드 띠에 원인이 보인다(조용한 대체보다 정직).
  */
 export function keepResumeModel(sel, rec) {
-  if (sel.agent !== 'claude' || !rec?.modelActual || sel.modelActual === rec.modelActual) return sel;
-  if (!/^claude-[a-z0-9-]+$/.test(rec.modelActual)) return sel;
+  if (!rec?.modelActual || sel.modelActual === rec.modelActual || rec.agent !== sel.agent) return sel;
+  if (!/^(claude-[a-z0-9-]+|gpt-[a-z0-9.-]+)$/.test(rec.modelActual) || !rec.modelActual.startsWith(sel.agent === 'claude' ? 'claude-' : 'gpt-')) return sel;
   return { ...sel, model: rec.model, modelActual: rec.modelActual, modelLabel: rec.modelLabel || rec.modelActual, keepActual: true };
 }
 /** 권한 표시용 짧은 말 */
@@ -155,7 +157,7 @@ export function buildCommand(sel, cwd, { resumeId } = {}) {
   // --dangerously-bypass-hook-trust(2026-09-19, v2.70): 코덱스 0.154+ 는 hooks.json 이 새것이면 첫 실행에 "Hooks need review" 를 띄운다.
   // 설치기가 config.toml 에 bypass_hook_trust=true 를 적어도 TUI 는 이 물음을 냈다(데스크탑 실측) → 세션 인수로 확실히 건너뛴다.
   // IRIS 세션은 최대 권한(approval never · danger-full-access)이 사용자 결정이고 훅은 설치기가 쓴 것이라 같은 결정의 연장.
-  const base = ['codex', '-m', s.modelActual || s.model, '-c', `model_reasoning_effort=${s.effort}`, '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
+  const base = ['codex', '-m', s.modelActual || s.model, ...(s.effort ? ['-c', `model_reasoning_effort=${s.effort}`] : []), '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
   const args = resumeId ? [...base, 'resume', resumeId] : base;
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
 }

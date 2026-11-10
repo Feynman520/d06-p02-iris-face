@@ -167,7 +167,10 @@ ok(t2?.code === 'MODEL_CHANGED', '2차3: 지금 모델을 확인 못 하면 거�
 const kept = A0.keepResumeModel({ agent: 'claude', model: 'fable', modelLabel: 'Fable 5.3', modelActual: 'claude-fable-5-3', effort: 'high' }, { agent: 'claude', model: 'fable', modelLabel: 'Fable 5.1', modelActual: 'claude-fable-5-1' });
 const kcmd = A0.buildCommand(kept, tmp);
 ok(kept.modelActual === 'claude-fable-5-1' && kept.modelLabel === 'Fable 5.1' && kcmd.args.join(' ').includes('--model claude-fable-5-1'), '2차3: 목록에서 사라진 5.1 세션 재개 = 5.1 그대로(이름도)');
-ok(A0.keepResumeModel({ agent: 'codex', model: 'gpt-6-astra', modelActual: 'gpt-6-astra' }, { agent: 'codex', modelActual: 'gpt-old' }).modelActual === 'gpt-6-astra', '2차3: 코덱스는 목록에 없는 모델을 억지로 쓰지 않음(이름도 바뀐 모델)');
+// 3차 검토 3번: 코덱스도 목록에서 빠진 모델로 시작한 세션의 재개는 그 모델 그대로(기본 모델로 몰래 바뀌지 않음, 이름도 쓰던 이름)
+const ck = A0.keepResumeModel({ agent: 'codex', model: 'gpt-6.1-sol', modelLabel: 'gpt-6.1-sol', modelActual: 'gpt-6.1-sol', effort: 'high' }, { agent: 'codex', model: 'gpt-5.6-sol', modelLabel: 'gpt-5.6-sol (구)', modelActual: 'gpt-5.6-sol' });
+ok(ck.modelActual === 'gpt-5.6-sol' && ck.modelLabel === 'gpt-5.6-sol (구)' && A0.buildCommand(ck, tmp).args.join(' ').includes('-m gpt-5.6-sol'), '3차3: 코덱스 재개 = 쓰던 모델 그대로(이름도)');
+ok(A0.keepResumeModel({ agent: 'claude', model: 'opus', modelActual: 'claude-opus-5-5' }, { agent: 'codex', modelActual: 'gpt-5.6-sol' }).modelActual === 'claude-opus-5-5', '3차3: 다른 에이전트 기록은 섞지 않음');
 // 2차 검토 5번: 옛 스캐너가 남긴 저장 결과는 믿지 않고 다시 읽음
 const cf = path.join(tmp, 'scan-old.json');
 const k0 = (() => { const s = fs.statSync(newBin); return `${newBin}|${s.size}|${Math.round(s.mtimeMs)}`; })();
@@ -179,6 +182,15 @@ ok(rescans === 1 && AG5.claude.models.find((m) => m.id === 'fable').label === 'F
 // 2차 검토 6번: 명시적인 빈 사고깊이 목록은 손 표로 되살리지 않음
 fs.writeFileSync(path.join(cx2, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-6-luna', visibility: 'list', priority: 1, supported_reasoning_levels: [] }] }));
 ok(codexModelsFrom(stCodex, readCodexCache(cx2)).find((m) => m.id === 'gpt-6-luna').efforts.length === 0, '2차6: 빈 목록은 빈 목록 그대로');
+// 3차 검토 6번: 빈 목록이면 실행 명령에도 사고깊이를 넣지 않는다(기본값으로 되살리지 않음)
+const lunaIdx = A0.AGENTS.codex.models.findIndex((m) => m.id === 'gpt-6-luna');
+if (lunaIdx >= 0) {
+  const keep = A0.AGENTS.codex.models[lunaIdx];
+  A0.AGENTS.codex.models[lunaIdx] = { ...keep, efforts: [] };
+  const sl = A0.normalize({ agent: 'codex', model: 'gpt-6-luna', effort: 'high' });
+  ok(sl.effort === '' && !A0.buildCommand(sl, tmp).args.join(' ').includes('model_reasoning_effort'), '3차6: 빈 사고깊이 목록 = 깊이 안 넘김');
+  A0.AGENTS.codex.models[lunaIdx] = keep;
+} else ok(false, '3차6: 시험용 gpt-6-luna 줄이 없음');
 
 // 7. 실제 응답 모델 대조
 ok(modelMatches('claude-fable-5-2', 'claude-fable-5-2') === true && modelMatches('claude-fable-5-1', 'claude-fable-5-2') === false, '대조: 같음/다름');
