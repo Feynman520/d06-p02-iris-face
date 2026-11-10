@@ -85,6 +85,7 @@ function defaultWhere(name, env) {
 }
 
 // ---------- 실행 파일 읽기 ----------
+export const SCAN_VER = 2; // bump when scanClaudeBinary rules change (saved results are re-read)
 const ALIAS_RE = /\b(opus|sonnet|fable|haiku):"(claude-[a-z0-9-]+)"/g;
 const TABLE_RE = /\{id:"(claude-[a-z0-9-]+)",family:"([a-z]+)",display_name:"([^"]{1,40})"/g;
 /** 실행 파일(수백 MB)을 16MB 씩 겹쳐 읽으며 별칭 표·모델 표를 모은다(동기, 처음 한 번 1~2초). */
@@ -169,9 +170,9 @@ export function codexModelsFrom(staticModels, cache) {
   if (!cache) return staticModels.map((m) => ({ ...m, actual: m.id }));
   const have = new Map(cache.list.map((m) => [m.slug, m]));
   // 코덱스 검토 6번: 사고깊이도 그 PC 코덱스 목록을 따른다(없으면 손 표 값)
-  const kept = staticModels.filter((m) => have.has(m.id)).map((m) => { const e = effortsOf(have.get(m.id)); return { ...m, actual: m.id, ...(e?.length ? { efforts: e } : {}) }; });
+  const kept = staticModels.filter((m) => have.has(m.id)).map((m) => { const e = effortsOf(have.get(m.id)); return { ...m, actual: m.id, ...(e ? { efforts: e } : {}) }; }); // 2nd review 6: an explicit empty list stays empty (null = not listed -> hand table)
   const added = cache.list.filter((m) => !staticModels.some((s) => s.id === m.slug)).map((m) => {
-    const e = effortsOf(m); return { id: m.slug, label: m.slug, actual: m.slug, ...(e?.length ? { efforts: e } : {}) };
+    const e = effortsOf(m); return { id: m.slug, label: m.slug, actual: m.slug, ...(e ? { efforts: e } : {}) };
   });
   return [...kept, ...added];
 }
@@ -236,10 +237,11 @@ export class ModelCatalog {
     if (!models.some((m) => m.id === a.default.model) && models.length) a.default.model = models[0].id;
   }
   readCache(key) {
-    try { const c = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8')); return c.key === key ? c.scan : null; } catch { return null; }
+    // 2nd review 5: results saved by an older scanner (different rules) are not trusted - rescan
+    try { const c = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8')); return c.key === key && c.ver === SCAN_VER ? c.scan : null; } catch { return null; }
   }
   writeCache(key, scan) {
-    try { fs.mkdirSync(path.dirname(this.cacheFile), { recursive: true }); const tmp = this.cacheFile + '.tmp'; fs.writeFileSync(tmp, JSON.stringify({ key, scan }, null, 2)); fs.renameSync(tmp, this.cacheFile); } catch {}
+    try { fs.mkdirSync(path.dirname(this.cacheFile), { recursive: true }); const tmp = this.cacheFile + '.tmp'; fs.writeFileSync(tmp, JSON.stringify({ ver: SCAN_VER, key, scan }, null, 2)); fs.renameSync(tmp, this.cacheFile); } catch {}
   }
   info() { return { claude: { file: this.claude.file, source: this.claude.source }, codex: { cache: this.codexKey !== 'none' } }; }
 }

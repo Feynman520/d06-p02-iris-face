@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR, assertExpected, modelForResume } from './agents.mjs';
+import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR, assertExpected, modelForResume, keepResumeModel } from './agents.mjs';
 import { preTrust } from './trust.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
@@ -199,7 +199,8 @@ export class SessionManager {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     if (!rec.sessionId) throw new Error('세션 id를 아직 모릅니다(첫 메시지 뒤에 바꿀 수 있습니다)');
     // 모델을 따로 고르지 않은 재개(자동 재개·↻)는 이 세션이 실제로 쓰던 모델을 이어 간다(v2.102)
-    const sel = normalize({ agent: rec.agent, model: model ?? modelForResume(rec), effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
+    const base = normalize({ agent: rec.agent, model: model ?? modelForResume(rec), effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
+    const sel = model == null ? keepResumeModel(base, rec) : base; // 쓰던 정확한 모델이 목록에서 사라져도 재개는 그 모델 그대로(2차 검토 3번)
     assertExpected(sel, expectModel);
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;

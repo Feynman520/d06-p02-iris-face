@@ -99,6 +99,10 @@ export function normalize(sel = {}) {
   const readOnly = sandbox === 'read-only';
   // modelActual = CLI 에 실제로 넘기는 정확한 모델 이름(클로드 별칭이 풀린 값, 코덱스는 그대로). 모르면 null(판 번호 없는 이름일 때).
   const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : (agent === 'codex' ? model : null);
+  // 재개가 쓰던 정확한 클로드 모델을 지키는 경우(keepResumeModel) — 다시 정규화(buildCommand)해도 그 모델·이름 그대로
+  if (agent === 'claude' && sel.keepActual && typeof sel.modelActual === 'string' && /^claude-[a-z0-9-]+$/.test(sel.modelActual)) {
+    return { agent, model: sel.model || model, modelLabel: sel.modelLabel || sel.modelActual, modelActual: sel.modelActual, keepActual: true, effort, permission, approval, sandbox, readOnly };
+  }
   return { agent, model, modelLabel: modelInfo.label, modelActual, effort, permission, approval, sandbox, readOnly };
 }
 /**
@@ -106,8 +110,9 @@ export function normalize(sel = {}) {
  * 고른 뒤 실행 직전에 자동 업데이트가 목록을 바꾸는 몇 초의 틈 — 조용히 다른 모델로 돌리지 않고 다시 고르게 한다. expectModel 이 없으면(옛 화면·API) 검사하지 않는다.
  */
 export function assertExpected(sel, expectModel) {
-  if (!expectModel || !sel?.modelActual || expectModel === sel.modelActual) return;
-  const e = new Error(`모델 목록이 방금 바뀌었습니다(고른 것: ${expectModel} → 지금: ${sel.modelActual}). 모델을 다시 확인하고 골라 주세요.`);
+  // 고른 때는 정확한 이름이 보였는데 지금은 확인할 수 없음(읽기 실패 → 별칭) 도 거절 — 2차 검토 3번
+  if (!expectModel || expectModel === sel?.modelActual) return;
+  const e = new Error(`모델 목록이 방금 바뀌었습니다(고른 것: ${expectModel} → 지금: ${sel?.modelActual || '확인 못 함'}). 모델을 다시 확인하고 골라 주세요.`);
   e.code = 'MODEL_CHANGED'; throw e;
 }
 /** 재개 때 쓸 모델: 이 세션이 실제로 쓰던 정확한 이름이 지금 목록에 있으면 그 줄(예: 업데이트 뒤 「Fable 5.1 (이전)」) — 재개가 몰래 새 모델로 바뀌지 않게. */
@@ -115,6 +120,16 @@ export function modelForResume(rec) {
   const list = AGENTS[rec?.agent]?.models || [];
   if (rec?.modelActual) { const hit = list.find((m) => m.actual === rec.modelActual); if (hit) return hit.id; }
   return rec?.model;
+}
+/**
+ * 2차 검토 3번: 쓰던 정확한 클로드 모델이 목록에서 사라졌어도(새 CLI 가 「이전」 줄로 안 보여 줌) 재개는 그 모델 그대로 —
+ * 클로드 CLI 는 정확한 모델 이름을 그대로 받는다(2.1.272 에 claude-opus-5-5 를 넘겨도 동작, 2026-11-10 실측). 이름도 쓰던 이름 그대로.
+ * 코덱스는 목록에 없는 모델을 거절하므로 바꾸지 않는다(그때는 normalize 가 고른 모델·이름이 함께 바뀐다 — 이름 = 실제 유지).
+ */
+export function keepResumeModel(sel, rec) {
+  if (sel.agent !== 'claude' || !rec?.modelActual || sel.modelActual === rec.modelActual) return sel;
+  if (!/^claude-[a-z0-9-]+$/.test(rec.modelActual)) return sel;
+  return { ...sel, model: rec.model, modelActual: rec.modelActual, modelLabel: rec.modelLabel || rec.modelActual, keepActual: true };
 }
 /** 권한 표시용 짧은 말 */
 export function permLabel(s) {

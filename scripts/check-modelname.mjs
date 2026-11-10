@@ -160,6 +160,25 @@ let thrown = null; try { A0.assertExpected({ modelActual: 'claude-fable-5-2' }, 
 ok(thrown?.code === 'MODEL_CHANGED' && /다시/.test(thrown.message), '검토3: 고른 모델(5.1) ≠ 지금(5.2) → 실행 거절·다시 고르기');
 let none = null; try { A0.assertExpected({ modelActual: 'claude-fable-5-2' }, 'claude-fable-5-2'); A0.assertExpected({ modelActual: 'x' }, null); } catch (e) { none = e; }
 ok(!none, '검토3: 같거나 기대값이 없으면 통과(옛 화면 호환)');
+// 2차 검토 3번: 고를 때 정확한 이름이 보였는데 지금 확인 못 함(읽기 실패) → 거절
+let t2 = null; try { A0.assertExpected({ modelActual: null }, 'claude-fable-5-2'); } catch (e) { t2 = e; }
+ok(t2?.code === 'MODEL_CHANGED', '2차3: 지금 모델을 확인 못 하면 거절');
+// 2차 검토 3번: 쓰던 정확한 모델이 목록에서 사라져도 재개는 그 모델·그 이름 그대로(버전 안 바뀜), buildCommand 재정규화에도 유지
+const kept = A0.keepResumeModel({ agent: 'claude', model: 'fable', modelLabel: 'Fable 5.3', modelActual: 'claude-fable-5-3', effort: 'high' }, { agent: 'claude', model: 'fable', modelLabel: 'Fable 5.1', modelActual: 'claude-fable-5-1' });
+const kcmd = A0.buildCommand(kept, tmp);
+ok(kept.modelActual === 'claude-fable-5-1' && kept.modelLabel === 'Fable 5.1' && kcmd.args.join(' ').includes('--model claude-fable-5-1'), '2차3: 목록에서 사라진 5.1 세션 재개 = 5.1 그대로(이름도)');
+ok(A0.keepResumeModel({ agent: 'codex', model: 'gpt-6-astra', modelActual: 'gpt-6-astra' }, { agent: 'codex', modelActual: 'gpt-old' }).modelActual === 'gpt-6-astra', '2차3: 코덱스는 목록에 없는 모델을 억지로 쓰지 않음(이름도 바뀐 모델)');
+// 2차 검토 5번: 옛 스캐너가 남긴 저장 결과는 믿지 않고 다시 읽음
+const cf = path.join(tmp, 'scan-old.json');
+const k0 = (() => { const s = fs.statSync(newBin); return `${newBin}|${s.size}|${Math.round(s.mtimeMs)}`; })();
+fs.writeFileSync(cf, JSON.stringify({ key: k0, scan: { alias: { fable: 'claude-fable-9-9' }, names: {} } }));
+let rescans = 0;
+const AG5 = { claude: { models: [{ id: 'fable', label: 'x' }], default: { model: 'fable' } }, codex: { models: [], default: { model: '' } } };
+new ModelCatalog({ AGENTS: AG5, codexHome: cx, cacheFile: cf, resolve: () => newBin, scan: (f) => { rescans++; return scanClaudeBinary(f); } }).refresh({ force: true });
+ok(rescans === 1 && AG5.claude.models.find((m) => m.id === 'fable').label === 'Fable 5.2', '2차5: 옛 형식 저장 결과 무시 → 다시 읽음');
+// 2차 검토 6번: 명시적인 빈 사고깊이 목록은 손 표로 되살리지 않음
+fs.writeFileSync(path.join(cx2, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-6-luna', visibility: 'list', priority: 1, supported_reasoning_levels: [] }] }));
+ok(codexModelsFrom(stCodex, readCodexCache(cx2)).find((m) => m.id === 'gpt-6-luna').efforts.length === 0, '2차6: 빈 목록은 빈 목록 그대로');
 
 // 7. 실제 응답 모델 대조
 ok(modelMatches('claude-fable-5-2', 'claude-fable-5-2') === true && modelMatches('claude-fable-5-1', 'claude-fable-5-2') === false, '대조: 같음/다름');
