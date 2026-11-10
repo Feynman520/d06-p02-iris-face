@@ -41,6 +41,7 @@
     "verify:turnstate": "node scripts/check-turnstate.mjs",
     "verify:models": "node scripts/check-models.mjs",
     "verify:modelname": "node scripts/check-modelname.mjs",
+    "verify:ontology-interview": "node scripts/check-ontology-interview.mjs",
     "verify:memory": "node scripts/check-memory.mjs",
     "verify:notice": "node scripts/check-notice.mjs",
     "verify:bgwork": "node scripts/check-bgwork.mjs",

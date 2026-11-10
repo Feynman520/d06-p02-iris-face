@@ -59,9 +59,47 @@ window.OntologyView = (() => {
     return `<button class="ps-fig${n.lifecycle && n.lifecycle !== 'active' ? ' dim' : ''}" type="button" data-role="${esc(n.id)}" title="${esc(n.name)}">${Persona.pic(short(n, 10), { index: i, sub: `영역 ${d} · 프로젝트 ${p}`, label: `${short(n)} — 영역 ${d}, 프로젝트 ${p}` })}<span class="ps-tag">${esc(codeOf(n))}${n.lifecycle && n.lifecycle !== 'active' ? ` · ${esc(LIFE[n.lifecycle] || n.lifecycle)}` : ''}</span></button>`;
   }
   const genderSw = () => `<span class="on-gsw">모습 ${[['m', '남성'], ['f', '여성']].map(([k, t]) => `<button type="button" class="text-btn${(Persona.gender() || 'm') === k ? ' accent' : ' outline'}" data-gender="${k}" aria-pressed="${(Persona.gender() || 'm') === k}">${t}</button>`).join('')}</span>`;
+  // ---------- 폴더 구조 인터뷰 프롬프트(v2.102, 2026-11-10 사용자 요청) ----------
+  // 아직 R/D/P 를 잡지 않은 사용자가 복사 아이콘 → IRIS 루트 세션에 붙여 넣으면 에이전트가 인터뷰로 폴더를 만든다.
+  // 설치 패키지 PC 에는 대본(_agent/setup/interview.md)이 있어 그것을 따르고, 없으면 2~9번만으로 돈다. 클로드·코덱스 공용 글.
+  // 공개 저장소 — 개인·학교 낱말을 넣지 않는다(verify:ontology-interview).
+  const IV_PROMPT = [
+    'IRIS 폴더 구조 인터뷰를 시작해 줘.',
+    '',
+    '0. 지금 작업 폴더가 IRIS 루트(맨 위 폴더)가 아니면 아무것도 만들지 말고 그 사실만 알려 준 뒤 멈춰.',
+    '1. IRIS 루트의 _agent/setup/interview.md 가 있으면 그 대본을 끝까지 읽고 그대로 따라 해. 없으면 아래 2~9번대로 해.',
+    '2. 폴더 이름 규칙은 루트 AGENTS.md 의 〈폴더 계층〉 절을 따라.',
+    '3. 이미 있는 역할(R)·영역(D)·프로젝트(P) 폴더가 있으면 먼저 목록으로 보여 주고, 그 폴더는 건드리지 말고 새로 더할 것만 물어 봐.',
+    '4. 한 번에 한 질문만 해. 선택 대화상자는 쓰지 말고 번호 목록으로 보여 줘. 전문용어는 처음 나올 때 쉬운 말로 풀어 줘.',
+    '5. 순서는 역할(R) → 역할마다 영역(D) → 지금 진행 중인 프로젝트(P). 단계(S)·세부(T) 폴더는 만들지 마.',
+    '6. 다 정해지면 전체 폴더 나무를 표로 보여 주고, 내가 "네"라고 한 뒤에만 만들어. 폴더마다 AGENTS.md(그 폴더의 한 줄 정체성)와 CLAUDE.md(@AGENTS.md 한 줄)를 함께 만들어.',
+    '7. 만든 뒤 루트에서 python _ontology/build_graph.py --init --write → python _ontology/build_graph.py --compile → python _ontology/render_view.py 를 차례로 실행해. 실패하면 오류 문장을 그대로 보여 주고 멈춰.',
+    '8. 이미 있던 폴더는 이름을 바꾸거나 지우지 마.',
+    '9. 끝나면 "IRIS 설정 → 온톨로지에서 「다시 그리기」를 누르면 새 폴더가 보입니다"라고 알려 줘.',
+  ].join('\n');
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+    try { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(ta); ta.select(); const r = document.execCommand('copy'); ta.remove(); return r; } catch { return false; }
+  }
+  async function copyInterview(btn) {
+    const done = await copyText(IV_PROMPT);
+    const t = btn.querySelector('.iv-t'), ic = btn.querySelector('.iv-ic'), was = t?.textContent;
+    btn.classList.toggle('copied', done);
+    if (t) t.textContent = done ? '복사됨' : '복사 실패 — 아래 글을 직접 복사하세요';
+    if (ic) ic.innerHTML = Icons.svg(done ? 'check' : 'copy', 15);
+    clearTimeout(btn._t); btn._t = setTimeout(() => { btn.classList.remove('copied'); if (t) t.textContent = was; if (ic) ic.innerHTML = Icons.svg('copy', 15); }, 1500);
+  }
+  const copyBtn = (label, cls = '') => `<button type="button" class="iv-copy ${cls}" data-on="iv-copy" title="인터뷰 프롬프트를 복사합니다"><span class="iv-ic">${Icons.svg('copy', 15)}</span><span class="iv-t">${label}</span></button>`;
+  function interviewCard() {
+    return `<section class="iv-card" id="iv-card"><div class="iv-head"><b>폴더 구조 인터뷰로 시작하기</b>${copyBtn('프롬프트 복사', 'accent')}</div>
+      <p>아직 역할(R)·영역(D)·프로젝트(P) 폴더가 없습니다. 에이전트가 질문을 하나씩 하며 내 일에 맞는 폴더 구조를 함께 잡아 줍니다.</p>
+      <ol class="iv-steps"><li>복사 아이콘을 누릅니다.</li><li>폴더 선택에서 <b>맨 위(IRIS 루트)</b>를 고르고 새 대화를 엽니다.</li><li>입력창에 붙여 넣고(Ctrl+V) 보냅니다.</li></ol>
+      <details class="iv-more"><summary>복사되는 글 보기</summary><pre class="iv-pre">${esc(IV_PROMPT)}</pre></details>
+      <p class="iv-alt">다른 방법: 설정 → 업데이트·정보 → 「튜토리얼 다시 보기」의 「내 폴더 만들기」</p></section>`;
+  }
   function gridHtml() {
     const list = roles();
-    if (!list.length) return `<div class="ot-none">${Persona.pic('', { empty: true, placeholder: '나의 첫 역할' })}<p>아직 역할 폴더가 없습니다 — 설정 → 업데이트·정보 → 「튜토리얼 다시 보기」의 「내 폴더 만들기」로 첫 역할을 만들어 보세요.</p></div>`;
+    if (!list.length) return `${interviewCard()}<div class="ot-none">${Persona.pic('', { empty: true, placeholder: '나의 첫 역할' })}<p>아직 역할 폴더가 없습니다 — 위 인터뷰로 첫 역할을 만들어 보세요.</p></div>`;
     return `<div class="ps-pick ot-grid" id="ot-grid">${list.map(figHtml).join('')}</div><p class="on-help">같은 사람의 여러 모습 — 가슴의 명찰이 역할입니다. 누르면 그 역할 아래 영역·프로젝트가 나무로 펼쳐집니다. ${genderSw()}</p>`;
   }
   // ---------- 구조: 고른 역할의 트리 ----------
@@ -171,8 +209,8 @@ window.OntologyView = (() => {
     const body = $('#on-body', host), info = $('#on-sum', host);
     if (!data) { body.className = 'on-body'; body.innerHTML = '<div class="on-empty">불러오는 중…</div>'; return; }
     if (!data.ok) {
-      info.textContent = ''; body.className = 'on-body';
-      body.innerHTML = `<div class="on-empty">${data.reason === 'missing' ? '아직 그래프 파일이 없습니다 — 폴더를 만든 뒤 「다시 그리기」를 누르면 만들어집니다.' : '그래프 파일을 읽지 못했습니다 — 「다시 그리기」를 눌러 보세요.'}</div>`;
+      info.textContent = ''; body.className = 'on-body'; ivBar(false);
+      body.innerHTML = `${data.reason === 'missing' ? interviewCard() : ''}<div class="on-empty">${data.reason === 'missing' ? '아직 그래프 파일이 없습니다 — 위 인터뷰로 폴더를 만든 뒤 「다시 그리기」를 누르면 만들어집니다.' : '그래프 파일을 읽지 못했습니다 — 「다시 그리기」를 눌러 보세요.'}</div>`;
       return;
     }
     const c = data.counts;
@@ -180,8 +218,11 @@ window.OntologyView = (() => {
     index();
     if (role && !byId.has(role)) role = null;
     if (relFocus && !byId.has(relFocus)) relFocus = null;
+    ivBar(roles().length > 0);
     if (mode === 'relation' && data.nodes.length) paintRelation(); else paintStructure();
   }
+  /** 역할이 이미 있으면 위 줄에 작은 복사 단추(역할을 더 늘리거나 다시 정리할 때), 없으면 본문의 큰 카드만. */
+  function ivBar(show) { const b = $('#on-iv', host); if (b) b.hidden = !show; }
 
   // 검색: 구조 화면 = 일치 목록(최대 30줄) → 누르거나 Enter = 그 자리로 · 관계 화면 = 카드 거르기
   function hideResults() { const r = $('#on-res', host); if (r) { r.hidden = true; r.innerHTML = ''; } }
@@ -255,6 +296,7 @@ window.OntologyView = (() => {
       const b = t.closest('[data-on]')?.dataset.on;
       if (b === 'back') return back();
       if (b === 'rel-all') { relFocus = null; return paintRelation(); }
+      if (b === 'iv-copy') { e.stopPropagation(); return copyInterview(t.closest('[data-on="iv-copy"]')); }
       if (t.closest('#on-rebuild')) return rebuild();
       const gs = t.closest('[data-gender]'); if (gs) { Persona.setGender(gs.dataset.gender).then(() => paintStructure()); return; }
       const fig = t.closest('.ps-fig[data-role]');
@@ -296,6 +338,7 @@ window.OntologyView = (() => {
       host = $('#st-onto'); if (!host) return;
       host.innerHTML = `<div class="on-bar"><div class="on-seg" role="group" aria-label="보기"><button type="button" data-mode="structure" aria-pressed="true">구조</button><button type="button" data-mode="relation" aria-pressed="false">관계</button></div>
         <label class="on-search">${Icons.svg('search', 14)}<input id="on-q" type="search" placeholder="폴더 이름 찾기 (Enter = 그 자리로)" spellcheck="false" autocomplete="off"><span id="on-hits" class="on-dim"></span></label>
+        <span id="on-iv" hidden>${copyBtn('인터뷰 프롬프트', 'small')}</span>
         <button id="on-rebuild" class="text-btn outline" type="button" title="폴더를 다시 읽어 그래프를 새로 만듭니다">다시 그리기</button>
         <div class="on-res" id="on-res" hidden></div></div>
         <div class="on-sum"><span id="on-sum"></span><span id="on-status" class="on-dim"></span></div>
