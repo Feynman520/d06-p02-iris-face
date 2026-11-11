@@ -287,7 +287,10 @@ export class ToolManager {
   }
   status() {
     const cat = this.catalog();
-    return { busy: this.busy, errors: cat.errors, items: cat.items.map((it) => ({ ...it, state: this.quickState(it) })) };
+    // baseIcons(v2.103): 기본 도구(설치 패키지가 깐 MCP)의 아이콘 — 카탈로그 base.icons, 화면 표시용 이름·파일만
+    const baseIcons = {};
+    for (const [n, v] of Object.entries(cat.base?.icons || {})) if (v && typeof v.icon === 'string') baseIcons[n] = { icon: v.icon };
+    return { busy: this.busy, errors: cat.errors, items: cat.items.map((it) => ({ ...it, state: this.quickState(it) })), baseIcons };
   }
 
   // ── 설치 ──

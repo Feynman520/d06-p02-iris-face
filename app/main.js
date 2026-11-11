@@ -479,7 +479,7 @@
   function toggleDash(force) {
     const open = force ?? !drawerOpenFor('dash');
     if (open && !dashEnabled) return;   // 도구 없는 PC: Ctrl+D 도 조용히 무시
-    open ? openDrawer('dash', { title: 'TeamClaude 대시보드', url: DASH_URL }) : closeDrawer();
+    open ? openDrawer('dash', { title: '사용량 대시보드', url: DASH_URL }) : closeDrawer();
   }
   function openModule(name) {
     const m = modules.find(x => x.name === name); if (!m || !m.panel || !PANEL_RE.test(m.panel)) return false;

@@ -24,11 +24,25 @@ let win = null, tray = null, quitting = false, lastHealth = null;
 let quitFlow = null, closeAsking = false; // 전부 종료 진행 중(약속 하나) · 페이지에 "닫아도 되나" 묻는 중 — 연속 ×·되풀이 close 를 한 번으로 묶는다
 const QUIT_TIMEOUT_MS = 35_000;           // 데몬 쪽 상한(모듈 2.5초 + 세션 20초)보다 넉넉히. 넘으면 거짓 완료 없이 사용자에게 알린다.
 
+// 앱 이름 = IRIS(v2.103, 2026-11-11 사용자 요청 "작업표시줄 아이콘을 아이리스로"). Electron 은 이 이름으로 시작 메뉴 바로가기
+// (<이름>.lnk)를 찾고, 윈도는 작업표시줄 단추 아이콘·알림 머리 이름을 그 바로가기에서 가져온다 — 이름이 기본값 'Electron' 이면
+// 아이콘 없는 「Electron.lnk」가 생겨 작업표시줄에 Electron 아이콘이 떴다(9/13 부터). 이름만 바꾸고 사용자 데이터 폴더
+// (%APPDATA%\Electron — 화면 설정·localStorage)는 그대로 둔다: 이름을 바꾸면 기본 경로가 따라 바뀌므로 먼저 잡아 두고 되돌린다.
+const USER_DATA = app.getPath('userData');
+app.setName('IRIS');
+app.setPath('userData', USER_DATA);
 // 시험용 두 번째 창(포트가 기본 3458 이 아님)은 사용자 데이터·단일 실행 잠금을 따로 쓴다 — 실제 창에 "두 번째 실행" 신호가 가지 않게(v2.97 검사)
-if (PORT !== 3458) app.setPath('userData', path.join(app.getPath('userData'), `port-${PORT}`));
+if (PORT !== 3458) app.setPath('userData', path.join(USER_DATA, `port-${PORT}`));
 // 윈도 OS 알림(작업 완료, 2026-09-11)은 앱 사용자 모델 ID가 있어야 앱 이름으로 뜬다(없으면 'electron.app.Electron')
-app.setAppUserModelId('IRIS-Face');
-if (!app.requestSingleInstanceLock()) { app.quit(); } else {
+const AUMID = 'IRIS-Face';
+app.setAppUserModelId(AUMID);
+// 시작 메뉴·작업표시줄 고정에서 눌렀을 때(바로가기 인자 --launch): 창만 띄우면 중계기·대시보드 준비를 건너뛰므로
+// 바탕화면 바로가기와 같은 실행기(launch-hidden.vbs → launch.mjs)에 넘기고 이 프로세스는 바로 끝낸다.
+const LAUNCHER_VBS = path.join(ROOT, 'launch-hidden.vbs');
+if (process.argv.includes('--launch') && fs.existsSync(LAUNCHER_VBS)) {
+  try { spawn('wscript.exe', ['//nologo', LAUNCHER_VBS], { cwd: ROOT, detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch {}
+  app.exit(0);
+} else if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   // 두 번째 실행(바로가기 재클릭): 내려놓은 창을 다시 띄우고, 데몬이 새로 떴을 수 있으니 페이지를 다시 연다(종료 중이면 아무것도 안 함)
   app.on('second-instance', async () => { if (quitFlow) return; await ensureDaemon(); showWindow(); if (win) win.loadURL(URL_); });
   app.whenReady().then(main);
@@ -66,6 +80,18 @@ async function ensureDaemon() {
   }
   return h;
 }
+
+// 시작 메뉴 「IRIS.lnk」 = 작업표시줄 단추 아이콘·알림 머리 이름의 원천(v2.103 — 이유·규칙은 shortcut.cjs 머리말).
+// 시험 창(포트 ≠ 3458)·윈도 밖에서는 아무것도 하지 않는다. 실패해도 창은 그대로 뜬다(아이콘만 옛 모습).
+function ensureStartMenuShortcut() {
+  if (process.platform !== 'win32' || PORT !== 3458 || !ICON) return;
+  try {
+    const r = require('./shortcut.cjs').ensureShortcut({ shell, dir: path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+      name: app.getName(), exe: process.execPath, mainScript: __filename, icon: ICON, aumid: AUMID });
+    if (r.written || r.removedOld) logLine(`[iris-face] start menu shortcut${r.written ? ' written' : ''}${r.removedOld ? ', old Electron.lnk removed' : ''}`);
+  } catch (e) { logLine(`[iris-face] start menu shortcut skipped: ${e.message}`); }
+}
+function logLine(s) { try { fs.mkdirSync(STATE, { recursive: true }); fs.appendFileSync(path.join(STATE, 'electron.log'), `${new Date().toISOString()} ${s}\n`); } catch {} }
 
 function trayIcon() {
   // app/iris.ico 가 있으면 그것(윈도가 트레이 크기에 맞는 판을 고른다), 없으면 아래 그려 쓰는 마름모(◈).
@@ -213,6 +239,7 @@ function quitAll() {
 ipcMain.handle('iris:quit-all', () => { quitAll(); return true; }); // 화면 ⏻(페이지가 이미 확인을 받음)
 
 async function main() {
+  ensureStartMenuShortcut(); // 창보다 먼저 — 작업표시줄이 단추를 만들 때 이 바로가기의 아이콘을 읽는다
   const h = await ensureDaemon(); if (!h) return;
   lastHealth = h;
   tray = new Tray(trayIcon());

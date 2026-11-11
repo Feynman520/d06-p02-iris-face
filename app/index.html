@@ -21,16 +21,16 @@
     <div class="top-right">
       <span id="link-dot" class="link-dot" title="데몬 연결 상태"></span>
       <button id="mem" class="mem" hidden aria-label="메모리 사용량"></button>
-      <button id="limits" class="limits" title="TeamClaude 대시보드 열기/닫기 (Ctrl+D)"></button>
+      <button id="limits" class="limits" title="사용량 대시보드 열기/닫기 (Ctrl+D)"></button>
       <span id="mod-btns" class="mod-btns" aria-label="확장 모듈"></span>
       <button id="btn-settings" class="icon-btn" title="설정 (Ctrl+,)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10.3 3h3.4l.5 2.3a7.4 7.4 0 0 1 1.9 1.1l2.2-.8 1.7 3-1.8 1.5a7.6 7.6 0 0 1 0 2.2l1.8 1.5-1.7 3-2.2-.8a7.4 7.4 0 0 1-1.9 1.1L13.7 21h-3.4l-.5-2.3a7.4 7.4 0 0 1-1.9-1.1l-2.2.8-1.7-3 1.8-1.5a7.6 7.6 0 0 1 0-2.2L4 10.6l1.7-3 2.2.8a7.4 7.4 0 0 1 1.9-1.1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     </div>
   </header>
   <aside id="dash" class="dash" hidden>
-    <div class="dash-head"><span id="dash-title">TeamClaude 대시보드</span><span class="dash-actions"><button id="dash-reload" class="icon-btn" title="새로고침">↻</button><button id="dash-ext" class="icon-btn" title="브라우저에서 열기">⧉</button><button id="dash-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>
+    <div class="dash-head"><span id="dash-title">사용량 대시보드</span><span class="dash-actions"><button id="dash-reload" class="icon-btn" title="새로고침">↻</button><button id="dash-ext" class="icon-btn" title="브라우저에서 열기">⧉</button><button id="dash-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>
     <!-- loading="lazy" 를 두지 않는다(v2.56.1): 서랍이 미끄러져 들어오는 동안 화면 밖에 있으면 브라우저가 iframe 을 안 불러
          빈 서랍이 되고 새로고침을 눌러야 떴다. src 는 어차피 서랍을 열 때만 넣는다. -->
-    <iframe id="dash-frame" title="TeamClaude 대시보드"></iframe>
+    <iframe id="dash-frame" title="사용량 대시보드"></iframe>
   </aside>
   <aside id="settings" class="settings" hidden>
     <div class="dash-head"><span>설정</span><span class="dash-actions"><button id="st-close" class="icon-btn" title="닫기 (Esc)">✕</button></span></div>

@@ -11,7 +11,44 @@
       "word-automation",
       "pdf-automation"
     ],
-    "pluginMarket": "iris-local"
+    "pluginMarket": "iris-local",
+    "icons": {
+      "playwright": {
+        "icon": "playwright.svg",
+        "iconSource": "official: Playwright 로고 SVG(playwright.dev/img/playwright-logo.svg, Microsoft) — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+        "iconChecked": "2026-11-11"
+      },
+      "hwp-automation": {
+        "icon": "hwp-automation.png",
+        "iconSource": "official: 한컴오피스 한글 프로그램 아이콘(Hwp.exe 안의 아이콘), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+        "iconChecked": "2026-11-11"
+      },
+      "excel-automation": {
+        "icon": "excel-automation.png",
+        "iconSource": "official: Microsoft Excel 프로그램 아이콘(EXCEL.EXE 안의 아이콘), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+        "iconChecked": "2026-11-11"
+      },
+      "ppt-automation": {
+        "icon": "ppt-automation.png",
+        "iconSource": "official: Microsoft PowerPoint 프로그램 아이콘(POWERPNT.EXE 안의 아이콘), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+        "iconChecked": "2026-11-11"
+      },
+      "word-automation": {
+        "icon": "word-automation.png",
+        "iconSource": "official: Microsoft Word 프로그램 아이콘(WINWORD.EXE 안의 아이콘), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+        "iconChecked": "2026-11-11"
+      },
+      "pdf-automation": {
+        "icon": "pdf-automation.webp",
+        "iconSource": "codex: 회사 앱 아이콘 화풍으로 IRIS 가 새로 그린 그림(실제 회사 로고 아님) — 2026-11-11 사용자 요청",
+        "iconChecked": "2026-11-11"
+      },
+      "self-improve": {
+        "icon": "self-improve.webp",
+        "iconSource": "codex: 회사 앱 아이콘 화풍으로 IRIS 가 새로 그린 그림(실제 회사 로고 아님) — 2026-11-11 사용자 요청",
+        "iconChecked": "2026-11-11"
+      }
+    }
   },
   "items": [
     {
@@ -29,8 +66,8 @@
       "account": null,
       "effects": [],
       "icon": "canvas-design.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "iconSource": "codex: 회사 앱 아이콘 화풍으로 IRIS 가 새로 그린 그림(실제 회사 로고 아님) — 2026-11-11 사용자 요청",
+      "iconChecked": "2026-11-11",
       "install": {
         "repo": "anthropics/skills",
         "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
@@ -65,8 +102,8 @@
       "account": null,
       "effects": [],
       "icon": "internal-comms.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "iconSource": "codex: 회사 앱 아이콘 화풍으로 IRIS 가 새로 그린 그림(실제 회사 로고 아님) — 2026-11-11 사용자 요청",
+      "iconChecked": "2026-11-11",
       "install": {
         "repo": "anthropics/skills",
         "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
@@ -101,8 +138,8 @@
       "account": null,
       "effects": [],
       "icon": "theme-factory.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "iconSource": "codex: 회사 앱 아이콘 화풍으로 IRIS 가 새로 그린 그림(실제 회사 로고 아님) — 2026-11-11 사용자 요청",
+      "iconChecked": "2026-11-11",
       "install": {
         "repo": "anthropics/skills",
         "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
@@ -136,8 +173,8 @@
       "account": null,
       "effects": [],
       "icon": "skill-creator.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "iconSource": "codex: 회사 앱 아이콘 화풍으로 IRIS 가 새로 그린 그림(실제 회사 로고 아님) — 2026-11-11 사용자 요청",
+      "iconChecked": "2026-11-11",
       "install": {
         "repo": "anthropics/skills",
         "commit": "2c5958ecac7cee2b583967a2c4981d0f4a75c579",
@@ -173,9 +210,9 @@
       "effects": [
         "찾는 라이브러리 이름이 Context7 서버로 전송됩니다"
       ],
-      "icon": "context7.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "icon": "context7.svg",
+      "iconSource": "official: Context7 로고 SVG(context7.com) 의 기호 부분만, 모양·색 변형 없음 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
       "install": {
         "via": "http",
         "url": "https://mcp.context7.com/mcp"
@@ -209,9 +246,9 @@
       "effects": [
         "노션 페이지를 만들거나 고칠 수 있습니다"
       ],
-      "icon": "notion.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "icon": "notion.png",
+      "iconSource": "official: Notion 홈페이지 앱 아이콘(www.notion.com/front-static/logo-ios.png), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
       "install": {
         "claude": {
           "repo": "makenotion/claude-code-notion-plugin",
@@ -312,9 +349,9 @@
       "effects": [
         "일정을 만들거나 지울 수 있습니다"
       ],
-      "icon": "google-calendar.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "icon": "google-calendar.png",
+      "iconSource": "official: Google 제품 아이콘(gstatic.com/images/branding/product calendar_2020q4), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
       "install": {
         "codex": {
           "repo": "openai/plugins",
@@ -360,9 +397,9 @@
       "effects": [
         "메일을 보낼 수 있습니다"
       ],
-      "icon": "gmail.webp",
-      "iconSource": "codex: IRIS 화풍 생성 그림(회사 로고 아님)",
-      "iconChecked": "2026-11-10",
+      "icon": "gmail.png",
+      "iconSource": "official: Google 제품 아이콘(gstatic.com/images/branding/product gmail_2020q4), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
       "install": {
         "codex": {
           "repo": "openai/plugins",

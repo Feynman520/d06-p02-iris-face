@@ -55,7 +55,7 @@ function world() {
       cat({ id: 'notion', kind: 'plugin', agents: ['claude', 'codex'], name: '노션', account: 'Notion 계정 로그인', state: { agents: { claude: 'absent', codex: 'absent' } } }),
       // 장부에는 있는데 목록 읽기(listTools)에서 빠진 것 — 「설치됨」에 그대로 보여야 함(코덱스 코드 검토 2차 B9)
       cat({ id: 'ghost-plug', kind: 'plugin', agents: ['codex'], name: '목록에서 빠진 것', state: { agents: { codex: 'installed' }, ledger: 'installed' } }),
-    ] },
+    ], baseIcons: { playwright: { icon: 'playwright.svg' } } },
   };
 }
 
@@ -94,15 +94,27 @@ try {
   await p.waitForTimeout(300);
   ok(await p.locator('.tl-row[data-id="canvas-design"] img.tl-ic').count() === 0 && await p.locator('.tl-row[data-id="canvas-design"] .tl-ic-k').count() === 1, '아이콘 파일이 없으면 기본 선 아이콘으로 대체');
   // 실제 카탈로그 아이콘은 데몬 주소 규칙(/app/…)으로 실제로 읽힌다 — 2026-11-10 'tool-icons/…' 상대 주소가 데몬에서 404 였던 것의 재발 방지
-  const real = JSON.parse(fs.readFileSync(path.join(APP, '..', 'daemon', 'tools-catalog.json'), 'utf8')).items.map((i) => i.icon);
+  // v2.103: 기본 도구 아이콘(base.icons)도 실제 파일로 읽혀야 한다
+  const catJson = JSON.parse(fs.readFileSync(path.join(APP, '..', 'daemon', 'tools-catalog.json'), 'utf8'));
+  const real = [...catJson.items.map((i) => i.icon), ...Object.values(catJson.base?.icons || {}).map((v) => v.icon)];
+  ok(Object.keys(catJson.base?.icons || {}).sort().join() === [...(catJson.base?.mcp || [])].sort().join(), '기본 MCP 마다 아이콘이 있음(base.icons = base.mcp)');
+  ok(real.every((n) => /^[a-z0-9][a-z0-9-]*\.(webp|png|svg)$/.test(n)), '아이콘 파일 이름 꼴(영문 소문자·숫자·하이픈 + webp/png/svg)');
+  ok([...catJson.items, ...Object.values(catJson.base?.icons || {})].every((v) => /^(official|codex):/.test(v.iconSource || '') && v.iconChecked), '아이콘마다 출처(official|codex)·확인일');
   const loaded = await p.evaluate(async (icons) => Promise.all(icons.map((n) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth > 0); im.onerror = () => res(false); im.src = `/app/tool-icons/${n}`; }))), real);
-  ok(real.length >= 10 && loaded.every(Boolean), `카탈로그 아이콘 ${loaded.filter(Boolean).length}/${real.length} 실제로 읽힘`);
+  ok(real.length >= 17 && loaded.every(Boolean), `카탈로그 아이콘 ${loaded.filter(Boolean).length}/${real.length} 실제로 읽힘`);
+  // 기본 도구 줄(origin base)은 base.icons 의 그림을 쓴다 — 예전엔 늘 콘센트 선 아이콘이었다(2026-11-11 사용자 요청)
+  await p.locator('#tl-kinds [data-kind="mcp"]').click(); await p.waitForTimeout(200);
+  ok(await p.evaluate(() => [...document.querySelectorAll('#tl-body .tl-row img.tl-ic')].some((im) => im.getAttribute('src') === '/app/tool-icons/playwright.svg')), '기본 도구(playwright) 줄에 그 회사 아이콘');
+  await p.locator('#tl-kinds [data-kind="skills"]').click(); await p.waitForTimeout(200);
   ok(await p.evaluate(() => [...document.querySelectorAll('img.tl-ic')].every((im) => im.getAttribute('src').startsWith('/app/tool-icons/'))), '아이콘 주소 = /app/tool-icons/…(데몬이 내주는 자리)');
   // v2.102(2026-11-10 사용자 "아이콘 그림을 최대한 크게"): 칸 36px · 그림 파일 128px(코덱스 그림) — 작게 되돌아가면 실패
   const box = await p.evaluate(() => [...document.querySelectorAll('.tl-ic')].map((e) => Math.round(e.getBoundingClientRect().width)));
   ok(box.length > 0 && box.every((w) => w === 36), `아이콘 칸 36px(${[...new Set(box)].join(',')})`);
-  const sizes = await p.evaluate(async (icons) => Promise.all(icons.filter((n) => n.endsWith('.webp')).map((n) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth); im.onerror = () => res(0); im.src = `/app/tool-icons/${n}`; }))), real);
-  ok(sizes.length >= 8 && sizes.every((w) => w >= 128), `코덱스 그림 아이콘 128px 이상(${sizes.join(',')})`);
+  // v2.103: 그림 파일(png·webp — 공식 아이콘 포함) 전부 128px 이상, 그중 코덱스 그림은 6장 이상
+  const raster = real.filter((n) => /\.(webp|png)$/.test(n));
+  const sizes = await p.evaluate(async (icons) => Promise.all(icons.map((n) => new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth); im.onerror = () => res(0); im.src = `/app/tool-icons/${n}`; }))), raster);
+  const codexN = [...catJson.items, ...Object.values(catJson.base?.icons || {})].filter((v) => /^codex:/.test(v.iconSource || '')).length;
+  ok(codexN >= 6 && sizes.length >= 14 && sizes.every((w) => w >= 128), `그림 아이콘 128px 이상(${sizes.join(',')}) · 코덱스 그림 ${codexN}장`);
   // 에이전트 탭
   const tabs = await p.locator('#tl-agents [data-agent]').evaluateAll((bs) => bs.map((b) => b.textContent.trim()).join(' | '));
   ok(/전체 \d+/.test(tabs) && /Claude 전용 \d+/.test(tabs), `에이전트 탭 숫자(${tabs})`);

@@ -32,7 +32,7 @@ const spawnTree = (depth) => { const c = spawn(process.execPath, [FAKE, String(d
 async function treeOf(pid, want) { for (let i = 0; i < 40; i++) { const d = descendants(await readTable(), pid).filter(p => /^node/i.test(p.name)); if (d.length >= want) return d; await sleep(250); } return []; }
 // 창 핸들 찾기·메시지 보내기(ASCII 전용 PowerShell — 이 검사가 띄운 PID 의 보이는 창만)
 const PS1 = path.join(tmp, 'win.ps1');
-fs.writeFileSync(PS1, `param([int]$ProcId, [string]$Act)
+fs.writeFileSync(PS1, `param([int]$ProcId, [string]$Act, [string]$Out)
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
 public static class W {
@@ -45,8 +45,20 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
 }
 "@
-$found = [IntPtr]::Zero
-[W]::EnumWindows({ param($h, $l) $p = 0; [void][W]::GetWindowThreadProcessId($h, [ref]$p); if ($p -eq $ProcId -and [W]::IsWindowVisible($h) -and [W]::GetWindowTextLength($h) -gt 0) { $script:found = $h; return $false }; return $true }, [IntPtr]::Zero) | Out-Null
+function Find-Win { $script:found = [IntPtr]::Zero
+[W]::EnumWindows({ param($h, $l) $p = 0; [void][W]::GetWindowThreadProcessId($h, [ref]$p); if ($p -eq $ProcId -and [W]::IsWindowVisible($h) -and [W]::GetWindowTextLength($h) -gt 0) { $script:found = $h; return $false }; return $true }, [IntPtr]::Zero) | Out-Null }
+# watch: 50ms 마다 창 상태를 시각과 함께 적는다(첫 줄 = 준비됨). 창이 한 번 보인 뒤 1초 넘게 없으면 끝(최대 40초).
+if ($Act -eq 'watch') {
+  [IO.File]::AppendAllText($Out, "ready" + [char]10); $seen = $false; $miss = 0
+  for ($i = 0; $i -lt 800; $i++) {
+    Find-Win; $t = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ($found -eq [IntPtr]::Zero) { [IO.File]::AppendAllText($Out, "$t none" + [char]10); if ($seen) { $miss++; if ($miss -gt 20) { break } } }
+    else { $seen = $true; $miss = 0; [IO.File]::AppendAllText($Out, "$t iconic=" + [W]::IsIconic($found) + [char]10) }
+    Start-Sleep -Milliseconds 50
+  }
+  exit 0
+}
+Find-Win
 if ($found -eq [IntPtr]::Zero) { 'none'; exit 0 }
 switch ($Act) {
   'min'      { [void][W]::PostMessage($found, 0x0112, [IntPtr]0xF020, [IntPtr]::Zero) }
@@ -77,11 +89,21 @@ async function round(label, closeAct, times, withMinimize) {
     const m = win(e.pid, 'min'); await sleep(3000);
     ok(/iconic=True/.test(win(e.pid, 'find')) && pidAlive(e.pid) && !!(await health(BASE)) && tree.every(p => pidAlive(p.pid)), `${label}: 최소화 → 창 내려감, 데몬·가짜 세션·가짜 MCP 유지 (${m})`);
   }
-  for (let i = 0; i < times; i++) { win(e.pid, closeAct); await sleep(120); }
-  // 정리(프로세스 표 읽기·종료·확인)에 1초 넘게 걸리는 동안 창이 먼저 사라지면 "닫혔다"고 오해한다 — 창이 보이는 채로 남아 있어야 한다
-  const during = win(e.pid, 'find');
-  ok(/hwnd=/.test(during) && /iconic=False/.test(during), `${label}: 정리하는 동안 창이 보이는 채로 남음(${during})`);
+  // 정리(프로세스 표 읽기·종료·확인)하는 동안 창이 먼저 사라지면 "닫혔다"고 오해한다 — 창이 보이는(최소화 아님) 채로 남아 있어야 한다.
+  // v2.103(2026-11-11): 닫은 뒤 PowerShell 을 새로 띄워 한 번 보던 방식은 띄우는 데만 약 0.9초라, 정리가 그보다 빨리 끝나는 PC 에서
+  // 정상 종료를 실패로 읽었다(고치기 전 판에서도 같은 실패 — 시험의 시간 의존). 닫기 전에 감시를 띄워 50ms 간격으로 기록한다.
+  const watchFile = path.join(tmp, `watch-${label.length}-${Date.now()}.txt`);
+  const watcher = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS1, '-ProcId', String(e.pid), '-Act', 'watch', '-Out', watchFile], { stdio: 'ignore', windowsHide: true }); mine.add(watcher.pid);
+  for (let i = 0; i < 100 && !(fs.existsSync(watchFile) && /\d+ iconic=/.test(fs.readFileSync(watchFile, 'utf8'))); i++) await sleep(100);
+  // 기준 시각 = 첫 닫기 메시지를 보낸 "뒤"(win() 이 PowerShell 을 띄워 보내기까지 약 0.9초 — 그 사이의 '보임'은 닫기 전 모습이라 세지 않는다)
+  let t0 = 0;
+  for (let i = 0; i < times; i++) { win(e.pid, closeAct); if (!t0) t0 = Date.now(); await sleep(120); }
   let eGone = false; for (let i = 0; i < 160 && !eGone; i++) { await sleep(250); eGone = !pidAlive(e.pid); }
+  for (let i = 0; i < 40 && pidAlive(watcher.pid); i++) await sleep(100);
+  const samples = (fs.existsSync(watchFile) ? fs.readFileSync(watchFile, 'utf8') : '').split(/\r?\n/).map((l) => /^(\d+) (.+)$/.exec(l)).filter(Boolean).map((m) => ({ t: Number(m[1]), s: m[2] }));
+  const after = samples.filter((x) => x.t >= t0);
+  const shownAfter = after.filter((x) => x.s === 'iconic=False');
+  ok(shownAfter.length > 0, `${label}: 정리하는 동안 창이 보이는 채로 남음(닫은 뒤 보임 ${shownAfter.length}회 · 기록 ${after.length}개 · 마지막 ${after.at(-1)?.s || '없음'})`);
   ok(eGone, `${label}: 창·트레이(Electron) 종료`);
   ok(!pidAlive(d.pid), `${label}: 데몬 종료`);
   ok(tree.every(p => !pidAlive(p.pid)), `${label}: 세션 가계도(가짜 세션→MCP→MCP 자식 ${tree.length}개) 종료`);

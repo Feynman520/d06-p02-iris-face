@@ -36,7 +36,11 @@ window.ToolsView = (() => {
   }
   const catItems = (k) => (data?.catalog?.items || []).filter(i => i.kind === k.cat);
   const catById = (id) => (data?.catalog?.items || []).find(i => i.id === id) || null;
-  const iconOf = (it, k) => it?.icon ? `<img class="tl-ic" src="/app/tool-icons/${esc(it.icon)}" alt="" draggable="false">` : `<span class="tl-ic tl-ic-k">${Icons.svg(k.icon, 22)}</span>`;
+  // 아이콘 파일 이름은 이 꼴만(주소 조작 방지) — 아니면 종류 기본 선 아이콘
+  const ICON_FILE = /^[a-z0-9][a-z0-9-]*\.(webp|png|svg)$/;
+  const iconOf = (it, k) => ICON_FILE.test(it?.icon || '') ? `<img class="tl-ic" src="/app/tool-icons/${esc(it.icon)}" alt="" draggable="false">` : `<span class="tl-ic tl-ic-k">${Icons.svg(k.icon, 22)}</span>`;
+  // 기본 도구(origin base, 설치 패키지가 깐 MCP)의 아이콘 = 카탈로그 base.icons(v2.103, 2026-11-11 사용자 요청)
+  const baseIconOf = (r) => (r.origin === 'base' && data?.catalog?.baseIcons?.[String(r.name || '').toLowerCase()]) || null;
   const line = (row, k) => {
     if (k.key === 'mcp') return [row.kind === 'http' ? '인터넷 주소로 연결' : '이 컴퓨터에서 실행', row.program].filter(Boolean).join(' · ');
     if (k.key === 'plugins') return [row.market && `출처 ${row.market}`, row.version && `판 ${row.version}`, row.description].filter(Boolean).join(' · ');
@@ -89,7 +93,7 @@ window.ToolsView = (() => {
       } else right = badge('IRIS 설치', 'iris');
       const name = c ? c.name : r.name;
       const sub = c ? `${esc(c.desc)}${c.account ? ` · <b>${esc(c.account)}</b>` : ''}${c.state?.removeRequested ? ' · 열린 세션이 모두 끝나면 지웁니다' : ''}` : esc(line(r, k));
-      return rowHtml({ id: c?.id, icon: iconOf(c, k), name, sub, agents: r.agents, off: r.off, right, err: c?.state?.error });
+      return rowHtml({ id: c?.id, icon: iconOf(c || baseIconOf(r), k), name, sub, agents: r.agents, off: r.off, right, err: c?.state?.error });
     }).join('');
 
     const availHtml = byAgent(avail.map(c => ({ ...c }))).filter(c => match(`${c.name} ${c.id} ${c.desc}`)).map(c => {
