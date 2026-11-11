@@ -192,6 +192,9 @@
           "0.167.0"
         ],
         "steps": "install→verify→remove→verify"
+      },
+      "agentNote": {
+        "codex": "같은 기능(skill-creator)이 기본으로 들어 있습니다"
       }
     },
     {
@@ -332,6 +335,9 @@
           "0.167.0"
         ],
         "steps": "install→verify→remove→verify"
+      },
+      "agentNote": {
+        "claude": "공식 플러그인은 GitHub 개인 토큰을 직접 넣어야 해서 아직 넣지 않았습니다"
       }
     },
     {
@@ -349,8 +355,8 @@
       "effects": [
         "일정을 만들거나 지울 수 있습니다"
       ],
-      "icon": "google-calendar.png",
-      "iconSource": "official: Google 제품 아이콘(gstatic.com/images/branding/product calendar_2020q4), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "icon": "google-calendar.svg",
+      "iconSource": "official: Google Workspace 공식 사이트(workspace.google.com)의 2026 제품 아이콘 SVG calendar_2026-192px, 변형 없음 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
       "iconChecked": "2026-11-11",
       "install": {
         "codex": {
@@ -380,6 +386,9 @@
           "0.167.0"
         ],
         "steps": "install→verify→remove→verify"
+      },
+      "agentNote": {
+        "claude": "공식 플러그인이 없습니다 — Google Workspace MCP 로 연결 준비 중"
       }
     },
     {
@@ -397,8 +406,8 @@
       "effects": [
         "메일을 보낼 수 있습니다"
       ],
-      "icon": "gmail.png",
-      "iconSource": "official: Google 제품 아이콘(gstatic.com/images/branding/product gmail_2020q4), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "icon": "gmail.svg",
+      "iconSource": "official: Google Workspace 공식 사이트(workspace.google.com)의 2026 제품 아이콘 SVG gmail_2026-192px, 변형 없음 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
       "iconChecked": "2026-11-11",
       "install": {
         "codex": {
@@ -428,6 +437,9 @@
           "0.167.0"
         ],
         "steps": "install→verify→remove→verify"
+      },
+      "agentNote": {
+        "claude": "공식 플러그인이 없습니다 — Google Workspace MCP 로 연결 준비 중"
       }
     },
     {
@@ -445,9 +457,9 @@
       "effects": [
         "파일을 고치거나 공유 범위를 바꿀 수 있습니다"
       ],
-      "icon": "google-drive.png",
-      "iconSource": "official: Google Drive branding page logo (developers.google.com/workspace/drive/api/guides/branding) — 사전 승인 불필요·크기 외 변형 금지",
-      "iconChecked": "2026-11-10",
+      "icon": "google-drive.svg",
+      "iconSource": "official: Google Workspace 공식 사이트(workspace.google.com)의 2026 제품 아이콘 SVG drive_2026-192px, 변형 없음 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
       "install": {
         "codex": {
           "repo": "openai/plugins",
@@ -476,7 +488,431 @@
           "0.167.0"
         ],
         "steps": "install→verify→remove→verify"
+      },
+      "agentNote": {
+        "claude": "공식 플러그인이 없습니다 — Google Workspace MCP 로 연결 준비 중"
+      }
+    },
+    {
+      "id": "exa",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Exa (웹 검색)",
+      "desc": "질문에 맞는 웹 페이지·논문·기관 자료를 찾아 답에 반영합니다",
+      "vendor": "Exa Labs",
+      "license": "서비스 약관",
+      "home": "https://github.com/exa-labs/exa-mcp-server",
+      "account": null,
+      "effects": [
+        "검색어가 Exa 서버로 전송됩니다",
+        "로그인 없이 쓰는 양에는 하루 한도가 있습니다"
+      ],
+      "icon": "exa.png",
+      "iconSource": "official: exa-labs 공식 GitHub 조직(github.com/exa-labs) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.exa.ai/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "firecrawl",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Firecrawl (웹페이지 정리)",
+      "desc": "웹페이지 본문을 읽기 좋은 글로 뽑아 자료로 씁니다",
+      "vendor": "Firecrawl",
+      "license": "서비스 약관",
+      "home": "https://github.com/firecrawl/firecrawl-mcp-server",
+      "account": null,
+      "effects": [
+        "읽을 웹 주소가 Firecrawl 서버로 전송됩니다",
+        "로그인 없이 쓰는 기능은 일부입니다"
+      ],
+      "icon": "firecrawl.png",
+      "iconSource": "official: firecrawl 공식 GitHub 조직(github.com/firecrawl) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.firecrawl.dev/v2/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "figma",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Figma (디자인)",
+      "desc": "피그마 디자인 파일을 읽어 화면·수업 자료 제작에 반영합니다",
+      "vendor": "Figma",
+      "license": "서비스 약관",
+      "home": "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/",
+      "account": "Figma 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Figma 계정으로 접근을 허락합니다"
+      ],
+      "icon": "figma.png",
+      "iconSource": "official: figma 공식 GitHub 조직(github.com/figma) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.figma.com/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "linear",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Linear (업무 관리)",
+      "desc": "Linear 이슈·프로젝트를 찾고 만들고 고칩니다",
+      "vendor": "Linear",
+      "license": "서비스 약관",
+      "home": "https://linear.app/docs/mcp",
+      "account": "Linear 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Linear 계정으로 접근을 허락합니다",
+        "이슈를 만들고 고칠 수 있습니다"
+      ],
+      "icon": "linear.png",
+      "iconSource": "official: linear 공식 GitHub 조직(github.com/linear) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.linear.app/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "mapbox",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Mapbox (지도)",
+      "desc": "장소 검색·길찾기·지도 정보를 다룹니다(현장학습 동선 등)",
+      "vendor": "Mapbox",
+      "license": "서비스 약관",
+      "home": "https://github.com/mapbox/mcp-server",
+      "account": "Mapbox 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Mapbox 계정으로 접근을 허락합니다",
+        "검색한 장소·좌표가 Mapbox 서버로 전송됩니다"
+      ],
+      "icon": "mapbox.png",
+      "iconSource": "official: mapbox 공식 GitHub 조직(github.com/mapbox) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.mapbox.com/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "vercel",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Vercel (웹사이트 배포)",
+      "desc": "Vercel 프로젝트·배포·로그를 살피고 관리합니다",
+      "vendor": "Vercel",
+      "license": "서비스 약관",
+      "home": "https://vercel.com/docs/agent-resources/vercel-mcp",
+      "account": "Vercel 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Vercel 계정으로 접근을 허락합니다",
+        "계정의 프로젝트를 배포·변경할 수 있습니다"
+      ],
+      "icon": "vercel.png",
+      "iconSource": "official: vercel 공식 GitHub 조직(github.com/vercel) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.vercel.com"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "supabase",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Supabase (데이터베이스)",
+      "desc": "Supabase 프로젝트의 데이터베이스·설정을 살피고 다룹니다",
+      "vendor": "Supabase",
+      "license": "서비스 약관",
+      "home": "https://supabase.com/docs/guides/ai-tools/mcp",
+      "account": "Supabase 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Supabase 계정으로 접근을 허락합니다",
+        "데이터베이스를 바꿀 수 있으니 확인하며 쓰세요"
+      ],
+      "icon": "supabase.png",
+      "iconSource": "official: supabase 공식 GitHub 조직(github.com/supabase) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.supabase.com/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "cloudflare",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Cloudflare (웹 운영)",
+      "desc": "Cloudflare 계정의 사이트·워커·설정을 살피고 다룹니다",
+      "vendor": "Cloudflare",
+      "license": "서비스 약관",
+      "home": "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/",
+      "account": "Cloudflare 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Cloudflare 계정으로 접근을 허락합니다",
+        "계정 설정을 바꿀 수 있습니다"
+      ],
+      "icon": "cloudflare.png",
+      "iconSource": "official: cloudflare 공식 GitHub 조직(github.com/cloudflare) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.cloudflare.com/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "sentry",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Sentry (오류 추적)",
+      "desc": "만든 앱에서 난 오류와 원인을 찾아봅니다",
+      "vendor": "Sentry",
+      "license": "서비스 약관",
+      "home": "https://mcp.sentry.dev",
+      "account": "Sentry 계정 로그인",
+      "effects": [
+        "처음 쓸 때 Sentry 계정으로 접근을 허락합니다"
+      ],
+      "icon": "sentry.png",
+      "iconSource": "official: getsentry 공식 GitHub 조직(github.com/getsentry) 대표 그림, 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "https://mcp.sentry.dev/mcp"
+      },
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
+      }
+    },
+    {
+      "id": "unreal-engine",
+      "kind": "mcp",
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "name": "Unreal Engine (게임·3D)",
+      "desc": "켜 둔 언리얼 에디터의 레벨·액터·블루프린트를 다룹니다 — 에픽 공식, 실험 기능",
+      "vendor": "Epic Games",
+      "license": "Unreal Engine 이용 약관",
+      "home": "https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor",
+      "account": null,
+      "effects": [
+        "에디터가 꺼져 있으면 연결되지 않습니다",
+        "이 PC 밖으로는 연결을 받지 않습니다(로그인 없음)",
+        "에픽의 실험 기능이라 바뀔 수 있습니다"
+      ],
+      "icon": "unreal-engine.png",
+      "iconSource": "official: EpicGames 공식 GitHub 조직(github.com/EpicGames) 대표 그림, 크기만 줄임 — 언리얼 엔진 전용 로고는 공식 사이트가 자동 접속을 막아 회사 로고를 씀 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11",
+      "install": {
+        "via": "http",
+        "url": "http://127.0.0.1:8000/mcp"
+      },
+      "requires": "언리얼 에디터(5.9 이상)를 켜 두어야 합니다",
+      "requiresDetail": "Unreal Engine 5.9 이상 에디터를 켜고, Edit → Plugins 에서 Unreal MCP(기본 켜짐)와 All Toolsets 를 켠 뒤 에디터를 다시 시작합니다. 에디터가 이 PC 안 주소 127.0.0.1:8000 에서 연결을 받습니다.",
+      "source": "코덱스 조사 2026-11-11(docs\\조사결과-도구후보-코덱스-2026-11-11.md) + 클로드 대조(주소 응답·로그인 방식 실측)",
+      "tested": {
+        "at": "2026-11-11",
+        "claude": [
+          "2.1.311",
+          "2.1.322"
+        ],
+        "codex": [
+          "0.167.0",
+          "0.167.1"
+        ],
+        "steps": "install→verify→remove(deferred)→processPending→verify"
       }
     }
-  ]
+  ],
+  "known": {
+    "google-workspace": {
+      "aliases": [
+        "google_workspace",
+        "workspace-mcp",
+        "google-workspace-mcp",
+        "gws"
+      ],
+      "icon": "google-workspace.png",
+      "iconSource": "official: Google G 로고(gstatic.com/images/branding/googleg_gradient 96dp, workspace.google.com 아이콘), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11"
+    },
+    "notebooklm": {
+      "aliases": [
+        "notebooklm-mcp",
+        "notebook-lm"
+      ],
+      "icon": "notebooklm.svg",
+      "iconSource": "official: NotebookLM 공식 사이트(notebooklm.google) 아이콘 SVG, 변형 없음 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11"
+    },
+    "colab-mcp": {
+      "aliases": [
+        "colab",
+        "google-colab"
+      ],
+      "icon": "colab.png",
+      "iconSource": "official: Google Colab 아이콘(colab.research.google.com/img/colab_favicon_256px.png), 크기만 줄임 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11"
+    },
+    "canva": {
+      "aliases": [
+        "canva-mcp",
+        "canva-connect"
+      ],
+      "icon": "canva.png",
+      "iconSource": "official: Canva 공식 GitHub 조직(github.com/canva) 대표 그림, 크기만 줄임 — canva.com 은 자동 접속 차단 — 2026-11-11 사용자 결정(회사 아이콘 그대로 사용, 사용자 책임)",
+      "iconChecked": "2026-11-11"
+    }
+  }
 }

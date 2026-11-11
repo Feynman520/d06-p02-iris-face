@@ -15,7 +15,7 @@ import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { loadToolCatalog, TOOL_CATALOG_FILE, extractSubtree, treeHash, treeHashDir, writeTreeAtomic } from './toolcatalog.mjs';
+import { loadToolCatalog, TOOL_CATALOG_FILE, extractSubtree, treeHash, treeHashDir, writeTreeAtomic, allowedMcpUrl } from './toolcatalog.mjs';
 import { parse as parseToml } from './vendor/smol-toml/parse.js';
 
 export const MARKET = 'iris-catalog';
@@ -290,7 +290,13 @@ export class ToolManager {
     // baseIcons(v2.103): 기본 도구(설치 패키지가 깐 MCP)의 아이콘 — 카탈로그 base.icons, 화면 표시용 이름·파일만
     const baseIcons = {};
     for (const [n, v] of Object.entries(cat.base?.icons || {})) if (v && typeof v.icon === 'string') baseIcons[n] = { icon: v.icon };
-    return { busy: this.busy, errors: cat.errors, items: cat.items.map((it) => ({ ...it, state: this.quickState(it) })), baseIcons };
+    // knownIcons(v2.104): 직접 설치한 것 가운데 널리 쓰는 도구 — 이름과 별칭(aliases) 모두 소문자 열쇠로 펼친다
+    const knownIcons = {};
+    for (const [n, v] of Object.entries(cat.known || {})) {
+      if (!v || typeof v.icon !== 'string') continue;
+      for (const key of [n, ...(Array.isArray(v.aliases) ? v.aliases : [])]) if (typeof key === 'string') knownIcons[key.toLowerCase()] = { icon: v.icon };
+    }
+    return { busy: this.busy, errors: cat.errors, items: cat.items.map((it) => ({ ...it, state: this.quickState(it) })), baseIcons, knownIcons };
   }
 
   // ── 설치 ──
@@ -355,7 +361,7 @@ export class ToolManager {
     if (it.kind === 'mcp') {
       const url = it.install.url;
       this.setStep(it.id, 'install', `${a} MCP 등록`);
-      if (!/^https:\/\//.test(url || '')) throw new Error('원격 주소(https)만 받습니다');
+      if (!allowedMcpUrl(it)) throw new Error('원격 주소(https) 또는 이 PC 안 프로그램 주소(127.0.0.1, 필요한 것 적힘)만 받습니다');
       if (this.mcpUrl(a, it.id) !== null || this.mcpDef(a, it.id) !== null) throw new Error(`${a} 에 같은 이름의 MCP 가 이미 있습니다`);
       let touched = false, wrote = null, addedDef = null;
       // 되돌리기는 실행 "전에" 등록하되, 내가 건드렸고 지금 정의가 "내가 막 넣은 정의(없으면 IRIS 표준 정의)"와 똑같을 때만 뺀다

@@ -433,8 +433,10 @@ else {
     ok(/demo-skill/.test(tt) && /시험용 스킬 설명/.test(tt) && /codex-home-skill/.test(tt) && !/demo-mcp/.test(tt), '7 도구 = Skill 탭 먼저(사용자 폴더 .agents\\skills 의 Codex 스킬 포함, MCP 는 MCP 탭에)');
     const kinds = await p.locator('#tl-kinds [data-kind]').evaluateAll(bs => bs.map(b => b.textContent.replace(/\s*\d+$/, '').trim()).join(','));
     ok(kinds === 'Skill,MCP,Plugin', `7 탭 이름 영어(${kinds})`);
-    ok((await p.locator('#st-tools .tl-card').count()) === 2 && (await p.locator('#st-tools [data-sec="available"] [data-act="install"]').count()) >= 1, '7 두 묶음(설치됨·설치할 수 있음) · 엄선 목록에 「설치」 단추');
-    ok(/직접 설치함/.test(await p.locator('#st-tools [data-sec="installed"]').textContent()), '7 손으로 깐 스킬 = 「직접 설치함」(버튼 없음)');
+    // v2.104: 설치된 것은 세 묶음(기본 도구 · IRIS 로 설치함 · 직접 설치함, 빈 묶음은 숨김) + 「설치할 수 있음」
+    const secs = await p.locator('#st-tools section[data-sec]').evaluateAll((ss) => ss.map((x) => x.dataset.sec));
+    ok(secs.at(-1) === 'available' && secs.slice(0, -1).every((x) => ['base', 'iris', 'manual'].includes(x)) && (await p.locator('#st-tools [data-sec="available"] [data-act="install"]').count()) >= 1, `7 묶음(${secs.join(',')}) · 엄선 목록에 「설치」 단추`);
+    ok(/직접 설치함/.test(await p.locator('#st-tools [data-sec="manual"]').textContent()), '7 손으로 깐 스킬 = 「직접 설치함」 묶음(버튼 없음)');
     await p.locator('#tl-kinds [data-kind="mcp"]').click(); await sleep(150);
     const tm = await p.locator('#st-tools').textContent();
     ok(/demo-mcp/.test(tm) && /demo\.exe/.test(tm) && !/demo-skill/.test(tm), '7 MCP 탭 = MCP 행(실행 파일 이름만)');

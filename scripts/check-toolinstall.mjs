@@ -77,6 +77,11 @@ function makeWorld(name) {
   ok(validateItem({ ...CATALOG.items[0], tested: null }).some((e) => /not tested/.test(e)), '카탈로그: 시험 기록 없으면 거절');
   ok(validateItem({ ...CATALOG.items[3], key: { env: 'X' } }).some((e) => /key/.test(e)), '카탈로그: 키 필요 도구 거절(첫 판)');
   ok(validateItem({ ...CATALOG.items[3], install: { via: 'http', url: 'http://plain.example/mcp' } }).length > 0, '카탈로그: https 아닌 MCP 주소 거절');
+  // v2.104: 이 PC 안 프로그램 주소(127.0.0.1 — 언리얼 에디터 내장 MCP)는 「필요한 것(requires)」이 적혀 있을 때만
+  ok(validateItem({ ...CATALOG.items[3], install: { via: 'http', url: 'http://127.0.0.1:8000/mcp' } }).length > 0, '카탈로그: 127.0.0.1 주소도 requires 없으면 거절');
+  ok(validateItem({ ...CATALOG.items[3], requires: '에디터를 켜 두어야 합니다', install: { via: 'http', url: 'http://127.0.0.1:8000/mcp' } }).length === 0, '카탈로그: 127.0.0.1 + requires = 통과');
+  ok(validateItem({ ...CATALOG.items[3], requires: '에디터를 켜 두어야 합니다', install: { via: 'http', url: 'http://localhost.evil.example:8000/mcp' } }).length > 0
+    && validateItem({ ...CATALOG.items[3], requires: '에디터를 켜 두어야 합니다', install: { via: 'http', url: 'http://10.0.0.5:8000/mcp' } }).length > 0, '카탈로그: 127.0.0.1 밖의 http 주소는 requires 가 있어도 거절');
   const unp = JSON.parse(JSON.stringify(CATALOG.items[4])); unp.install.codex.unpinned = true;
   ok(validateItem(unp).some((e) => /unpinned/.test(e)), '카탈로그: 실행 때 판 고정 안 된 코드를 받는 플러그인 거절');
   const real = loadToolCatalog();

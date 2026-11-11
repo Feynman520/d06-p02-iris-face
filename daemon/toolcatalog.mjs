@@ -84,6 +84,14 @@ export function writeTreeAtomic(entries, dest) {
   } catch (err) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} throw err; }
 }
 
+/** MCP 주소 규칙(v2.104): 원격 = https 주소만. 예외 하나 = 이 PC 안의 프로그램이 스스로 여는 주소(http://127.0.0.1:포트/…,
+ *  예: 언리얼 에디터 내장 MCP) — 내려받아 실행하는 것이 없고 이 PC 밖으로 나가지 않는다. 이때는 무엇을 켜야 하는지(requires)를 반드시 적는다. */
+export function allowedMcpUrl(it) {
+  const url = it?.install?.url || '';
+  if (/^https:\/\/[A-Za-z0-9.-]+(\/[A-Za-z0-9._~\/-]*)?$/.test(url)) return true;
+  return /^http:\/\/127\.0\.0\.1:\d{2,5}(\/[A-Za-z0-9._~\/-]*)?$/.test(url) && typeof it.requires === 'string' && it.requires.trim().length >= 4;
+}
+
 /** 카탈로그 한 항목 검사. 돌려주는 값 = 오류 문자열 목록(비면 OK). */
 export function validateItem(it) {
   const e = [];
@@ -104,7 +112,7 @@ export function validateItem(it) {
     }
   } else if (it.kind === 'mcp') {
     // 첫 판 = 원격 주소(https) MCP 만 — 이 PC 에 내려받아 실행하는 것이 없다(설계 6-2절 12)
-    if (ins.via !== 'http' || !/^https:\/\/[A-Za-z0-9.-]+(\/[A-Za-z0-9._~\/-]*)?$/.test(ins.url || '')) e.push(`${it.id}: mcp install fields (https url only)`);
+    if (ins.via !== 'http' || !allowedMcpUrl(it)) e.push(`${it.id}: mcp install fields (https url, or 127.0.0.1 with requires)`);
   }
   if (!it.tested || !it.tested.at) e.push(`${it.id}: not tested`);
   return e;
@@ -120,5 +128,5 @@ export function loadToolCatalog(file = TOOL_CATALOG_FILE) {
     if (errs.length) { errors.push(...errs); continue; }
     ids.add(it.id); items.push(it);
   }
-  return { base: j.base || {}, items, errors };
+  return { base: j.base || {}, known: j.known && typeof j.known === 'object' ? j.known : {}, items, errors };
 }

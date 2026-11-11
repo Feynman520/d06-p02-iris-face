@@ -917,6 +917,9 @@ button.tl-pill[aria-pressed="true"] { border-color: var(--iris); background: var
 .tl-row { gap: 10px; }
 .tl-ic { flex: none; width: 36px; height: 36px; border-radius: 8px; object-fit: contain; } /* v2.102: 24 → 36px(사용자 요청), 그림 128px·88% */
 .tl-ic-k { display: inline-grid; place-items: center; background: var(--raised); color: var(--iris); }
+/* v2.104: 그림이 없는 설치 도구 = 머리글자 색 타일(색은 이름에서 정해져 늘 같음 — tools.js monogram) */
+.tl-ic-m { display: inline-grid; place-items: center; color: #fff; font-weight: 700; font-size: 14px; letter-spacing: .02em; text-shadow: 0 1px 1px rgba(0,0,0,.25); user-select: none; }
+.tl-note { color: var(--ink-3); }
 .tl-badge { flex: none; font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .tl-badge.base { color: var(--iris); background: var(--iris-soft); }
 .tl-badge.manual { color: var(--ink-3); border: 1px solid var(--line-2); }

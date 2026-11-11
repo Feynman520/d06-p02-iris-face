@@ -22,6 +22,11 @@ window.ToolsView = (() => {
   const whose = (agents) => agents.length > 1 ? 'both' : agents[0] === 'codex' ? 'codex' : 'claude';
   const byAgent = (rows) => agent === 'all' ? rows : rows.filter(r => whose(r.agents) === agent);
   const K = () => KINDS.find(k => k.key === kind);
+  const INST_GROUPS = [
+    ['base', '기본 도구', '설치 패키지에 함께 들어 있음'],
+    ['iris', 'IRIS 로 설치함', '아래 목록에서 설치한 것 — 여기서 지울 수 있음'],
+    ['manual', '직접 설치함', 'IRIS 밖에서 설치한 것 — 여기서는 보기만'],
+  ];
 
   /** 설치된 줄: 같은 이름·같은 출처끼리 묶어 에이전트를 모은다. */
   function installedRows(k) {
@@ -41,6 +46,20 @@ window.ToolsView = (() => {
   const iconOf = (it, k) => ICON_FILE.test(it?.icon || '') ? `<img class="tl-ic" src="/app/tool-icons/${esc(it.icon)}" alt="" draggable="false">` : `<span class="tl-ic tl-ic-k">${Icons.svg(k.icon, 22)}</span>`;
   // 기본 도구(origin base, 설치 패키지가 깐 MCP)의 아이콘 = 카탈로그 base.icons(v2.103, 2026-11-11 사용자 요청)
   const baseIconOf = (r) => (r.origin === 'base' && data?.catalog?.baseIcons?.[String(r.name || '').toLowerCase()]) || null;
+  // 직접 설치한 것 가운데 널리 쓰는 도구 = 카탈로그 known(이름·별칭 → 회사 아이콘, v2.104)
+  const knownIconOf = (r) => { const n = String(r.dir || r.name || '').toLowerCase(); return data?.catalog?.knownIcons?.[n] || null; };
+  // 그 밖의 것 = 이름 머리글자 색 타일(v2.104, 사용자 "설치된 도구들도 아이콘으로") — 같은 이름은 언제나 같은 색
+  function monogram(name) {
+    const s = String(name || '?').replace(/@.*$/, '');
+    const words = s.split(/[-_\s.:/]+/).filter(Boolean);
+    const txt = (words.length > 1 ? words[0][0] + words[1][0] : s.slice(0, 2)).toUpperCase().replace(/[^0-9A-Z가-힣]/g, '') || '?';
+    let h = 0; for (const ch of s.toLowerCase()) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return `<span class="tl-ic tl-ic-m" style="background:hsl(${h % 360} 52% 42%)" aria-hidden="true">${esc(txt.slice(0, 2))}</span>`;
+  }
+  /** 줄 아이콘: 카탈로그 그림 → 기본 도구 그림 → 알려진 도구 그림 → 머리글자 타일 */
+  const rowIcon = (r, c, k) => { const pic = c || baseIconOf(r) || knownIconOf(r); return ICON_FILE.test(pic?.icon || '') ? iconOf(pic, k) : monogram(r.dir || r.name); };
+  // 한쪽 에이전트만 되는 카탈로그 항목: 다른 쪽이 왜 없는지(카탈로그 agentNote — 배지는 설치할 수 있는 에이전트만, v2.104)
+  const noteOf = (c) => Object.entries(c?.agentNote || {}).filter(([a]) => !c.agents.includes(a)).map(([a, t]) => ` · <span class="tl-note">${a === 'codex' ? 'Codex' : 'Claude'}: ${esc(t)}</span>`).join('');
   const line = (row, k) => {
     if (k.key === 'mcp') return [row.kind === 'http' ? '인터넷 주소로 연결' : '이 컴퓨터에서 실행', row.program].filter(Boolean).join(' · ');
     if (k.key === 'plugins') return [row.market && `출처 ${row.market}`, row.version && `판 ${row.version}`, row.description].filter(Boolean).join(' · ');
@@ -80,7 +99,8 @@ window.ToolsView = (() => {
     const words = q.trim().toLowerCase();
     const match = (s) => !words || s.toLowerCase().includes(words);
 
-    const instHtml = byAgent(inst).filter(r => match(`${r.name} ${r.dir || ''} ${line(r, k)} ${catById(r.catalogId)?.name || ''}`)).map(r => {
+    const instShown = byAgent(inst).filter(r => match(`${r.name} ${r.dir || ''} ${line(r, k)} ${catById(r.catalogId)?.name || ''}`));
+    const instHtml = (grp) => instShown.filter(r => (r.origin || 'manual') === grp).map(r => {
       const c = r.origin === 'iris' ? catById(r.catalogId) : null;
       let right = '';
       if (r.origin === 'base') right = badge('기본', 'base');
@@ -92,8 +112,8 @@ window.ToolsView = (() => {
         right = (missing.length ? btn('install', c.id, `${missing.map(a => a === 'codex' ? 'Codex' : 'Claude').join('·')}에도 설치`) : '') + btn('remove', c.id, '제거', { danger: true });
       } else right = badge('IRIS 설치', 'iris');
       const name = c ? c.name : r.name;
-      const sub = c ? `${esc(c.desc)}${c.account ? ` · <b>${esc(c.account)}</b>` : ''}${c.state?.removeRequested ? ' · 열린 세션이 모두 끝나면 지웁니다' : ''}` : esc(line(r, k));
-      return rowHtml({ id: c?.id, icon: iconOf(c || baseIconOf(r), k), name, sub, agents: r.agents, off: r.off, right, err: c?.state?.error });
+      const sub = c ? `${esc(c.desc)}${c.account ? ` · <b>${esc(c.account)}</b>` : ''}${c.requires ? ` · <b>${esc(c.requires)}</b>` : ''}${noteOf(c)}${c.state?.removeRequested ? ' · 열린 세션이 모두 끝나면 지웁니다' : ''}` : esc(line(r, k));
+      return rowHtml({ id: c?.id, icon: rowIcon(r, c, k), name, sub, agents: r.agents, off: r.off, right, err: c?.state?.error });
     }).join('');
 
     const availHtml = byAgent(avail.map(c => ({ ...c }))).filter(c => match(`${c.name} ${c.id} ${c.desc}`)).map(c => {
@@ -102,13 +122,15 @@ window.ToolsView = (() => {
       if (busy?.id === c.id || acting === c.id) right = spinner(busy?.step || '진행 중…');
       else if (conflict.length === c.agents.length) right = badge('같은 이름이 이미 있음', 'manual');
       else right = btn('install', c.id, c.state?.error ? '다시 시도' : '설치');
-      const sub = `${esc(c.desc)}${c.account ? ` · <b>${esc(c.account)}</b>` : ''}${conflict.length && conflict.length < c.agents.length ? ` · ${conflict.map(a => a === 'codex' ? 'Codex' : 'Claude').join('·')}에는 같은 이름이 따로 있어 건너뜀` : ''}`;
+      const sub = `${esc(c.desc)}${c.account ? ` · <b>${esc(c.account)}</b>` : ''}${c.requires ? ` · <b>${esc(c.requires)}</b>` : ''}${noteOf(c)}${conflict.length && conflict.length < c.agents.length ? ` · ${conflict.map(a => a === 'codex' ? 'Codex' : 'Claude').join('·')}에는 같은 이름이 따로 있어 건너뜀` : ''}`;
       return rowHtml({ id: c.id, icon: iconOf(c, k), name: c.name, sub, agents: c.agents, right, err: c.state?.error });
     }).join('');
 
     const empty = (t) => `<div class="upd-line st-sub auth-empty">${t}</div>`;
     body.innerHTML = `<p class="tl-kdesc">${Icons.svg(k.icon, 14)}<span>${esc(k.desc)}</span></p>`
-      + `<section class="st-grp tl-card" data-sec="installed"><h3 class="tl-h"><span class="tl-t">설치됨</span><span class="auth-n">${byAgent(inst).length}개</span></h3>${instHtml || empty(words ? '찾는 이름이 없습니다' : `설치된 ${k.title} 없음`)}</section>`
+      // 설치된 것 = 세 묶음(v2.104, 사용자 "설치 패키지에 들어 있는 기본 도구는 표시"): 기본 · IRIS 로 설치함 · 직접 설치함. 비어 있는 묶음은 숨긴다.
+      + INST_GROUPS.map(([grp, title, note]) => { const n = instShown.filter(r => (r.origin || 'manual') === grp).length; return n ? `<section class="st-grp tl-card" data-sec="${grp}"><h3 class="tl-h"><span class="tl-t">${title}</span><small>${note}</small><span class="auth-n">${n}개</span></h3>${instHtml(grp)}</section>` : ''; }).join('')
+      + (instShown.length ? '' : `<section class="st-grp tl-card" data-sec="none">${empty(words ? '찾는 이름이 없습니다' : `설치된 ${k.title} 없음`)}</section>`)
       + `<section class="st-grp tl-card" data-sec="available"><h3 class="tl-h"><span class="tl-t">설치할 수 있음</span><small>IRIS 가 골라 시험한 목록 · 설치·제거는 새로 여는 세션부터 적용</small><span class="auth-n">${byAgent(avail).length}개</span></h3>${availHtml || empty(words ? '찾는 이름이 없습니다' : '지금은 더 설치할 것이 없습니다')}</section>`;
   }
 
@@ -132,7 +154,7 @@ window.ToolsView = (() => {
     }
     return `<p><b>${esc(c.name)}</b> — ${esc(c.desc)}</p>`
       + `<table class="tl-facts"><tr><th>쓰는 곳</th><td>${ag}</td></tr><tr><th>만든 곳</th><td>${esc(c.vendor)} · ${esc(c.license)}</td></tr>`
-      + `<tr><th>필요한 것</th><td>${c.account ? esc(c.account) + ' (처음 쓸 때 연결)' : '없음'}</td></tr>`
+      + `<tr><th>필요한 것</th><td>${[c.account && esc(c.account) + ' (처음 쓸 때 연결)', c.requires && esc(c.requiresDetail || c.requires)].filter(Boolean).join('<br>') || '없음'}</td></tr>`
       + (c.effects?.length ? `<tr><th>주의</th><td>${c.effects.map(esc).join('<br>')}</td></tr>` : '')
       + `<tr><th>출처</th><td>${esc(c.home)}</td></tr></table>`
       + '<p>새로 여는 세션부터 쓸 수 있습니다. 이미 열린 세션은 그대로입니다.</p>';
