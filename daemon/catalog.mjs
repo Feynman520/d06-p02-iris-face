@@ -26,10 +26,27 @@ const MAX_HOPS = 5;
 export function loadCatalog(file = CATALOG_FILE) {
   let parsed; try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return []; }
   const list = Array.isArray(parsed?.modules) ? parsed.modules : [];
-  return list.filter(c => c && NAME_RE.test(String(c.name || '')) && hostOk(String(c.release?.api || ''))).map(c => ({
-    name: String(c.name), label: String(c.label || c.name), icon: String(c.icon || 'plug'), desc: String(c.desc || ''), repo: String(c.repo || ''),
-    release: { api: String(c.release.api), asset: String(c.release.asset || '\\.zip$') },
-  }));
+  return list.filter(c => c && NAME_RE.test(String(c.name || '')) && hostOk(String(c.release?.api || ''))).map(c => {
+    const asset = String(c.release.asset || '\\.zip$');
+    return {
+      name: String(c.name), label: String(c.label || c.name), icon: String(c.icon || 'plug'), desc: String(c.desc || ''), repo: String(c.repo || ''),
+      recommended: c.recommended === true,
+      release: { api: String(c.release.api), asset },
+      fallback: cleanFallback(c.fallback, asset),
+    };
+  });
+}
+
+// v2.106(2026-11-13): 메신저가 설치 패키지에서 빠져 "설정에서 설치"가 유일한 입구가 됐다. GitHub 에 최신 판을 묻는 길(api.github.com)이
+// 막힌 망에서도 설치되도록, 그 물음이 실패했을 때만 쓰는 마지막 확인 판을 카탈로그에 적어 둔다 — 미러(<MIRROR_BASE>/<asset>)에서 받고,
+// 서명 검사는 어느 길로 받았든 같은 설치 길(modinstall.installZip)이 한다. 모양이 조금이라도 어긋나면 없는 것으로 본다(null).
+const FALLBACK_ASSET_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.zip$/;
+function cleanFallback(fb, assetPattern) {
+  if (!fb || typeof fb !== 'object') return null;
+  const version = String(fb.version || ''); const asset = String(fb.asset || '');
+  if (!/^\d+\.\d+\.\d+$/.test(version) || !FALLBACK_ASSET_RE.test(asset)) return null;
+  let re; try { re = new RegExp(assetPattern); } catch { return null; }
+  return re.test(asset) ? { version, asset } : null;
 }
 
 /** 카탈로그 + 설치된 모듈(ModuleHost.list()) → 화면용 목록. 카탈로그 순서 뒤에 카탈로그에 없는 설치 모듈. 설치된 것은 module.json 의 label·icon 이 우선.
@@ -39,7 +56,7 @@ export function mergeCatalog(catalog, installed) {
   const live = (m) => ({ version: m.version, status: m.status, reason: m.reason, official: m.official, panel: m.panel ?? null, badge: m.badge || 0, pid: m.pid ?? null });
   const rows = catalog.map(c => {
     const m = byName.get(c.name);
-    const row = { name: c.name, label: m ? m.label : c.label, icon: m ? m.icon : c.icon, desc: c.desc, repo: c.repo, catalog: true, installed: !!m };
+    const row = { name: c.name, label: m ? m.label : c.label, icon: m ? m.icon : c.icon, desc: c.desc, repo: c.repo, catalog: true, recommended: c.recommended === true, installed: !!m };
     if (m) Object.assign(row, live(m));
     return row;
   });
@@ -73,9 +90,19 @@ export async function fetchReleaseZip(entry, { fetchImpl = globalThis.fetch, max
   if (!entry?.release?.api) throw new Error('catalog entry has no release');
   const headers = { accept: 'application/vnd.github+json', 'user-agent': 'IRIS-Face' };
   assertHost(entry.release.api);
-  const r = await fetchImpl(entry.release.api, { redirect: 'manual', headers });
-  if (!r.ok) throw new Error(`release lookup failed: HTTP ${r.status}`);
-  const rel = await r.json();
+  let rel = null; let apiErr = null;
+  try {
+    const r = await fetchImpl(entry.release.api, { redirect: 'manual', headers });
+    if (!r.ok) throw new Error(`release lookup failed: HTTP ${r.status}`);
+    rel = await r.json();
+  } catch (e) { apiErr = e; }
+  if (!rel) {
+    // 최신 판을 묻지 못했다(망이 api.github.com 을 막음 · 횟수 제한 등). 카탈로그의 마지막 확인 판이 있으면 미러에서 그 판을 받는다.
+    const fb = entry.fallback;
+    if (!fb?.asset) throw apiErr;
+    const fbBuf = await download(mirrorUrl(fb.asset), { fetchImpl, maxBytes, headers: { 'user-agent': 'IRIS-Face' } }).catch(() => { throw apiErr; }); // 미러도 안 되면 원래 오류
+    return { version: String(fb.version), asset: String(fb.asset), url: mirrorUrl(fb.asset), buf: fbBuf, viaFallback: true };
+  }
   let re; try { re = new RegExp(entry.release.asset); } catch { re = /\.zip$/; }
   const asset = (Array.isArray(rel?.assets) ? rel.assets : []).find(a => re.test(String(a?.name || '')) && typeof a?.browser_download_url === 'string');
   if (!asset) throw new Error('release has no matching zip');

@@ -175,7 +175,8 @@ window.Settings = (() => {
         actions = `<button class="text-btn outline" data-act="restart" title="모듈 프로세스를 다시 띄웁니다">재시작</button><button class="text-btn outline danger" data-act="remove" title="모듈 폴더를 지웁니다(그 모듈의 데이터 포함)">제거</button>`;
       } else {
         const busy = installing.has(m.name);
-        meta = `<span class="mod-tag">미설치</span>${esc(m.desc)}`;
+        // v2.106: 선택 모듈은 처음에 깔리지 않는다 — 카탈로그가 추천으로 표시한 것은 미설치 줄에 '추천' 꼬리표(깔지는 않되 눈에 띄게).
+        meta = `<span class="mod-tag">미설치</span>${m.recommended ? '<span class="mod-tag rec">추천</span>' : ''}${esc(m.desc)}`;
         actions = `<button class="text-btn accent" data-act="install" ${busy ? 'disabled' : ''} title="최신 릴리스를 내려받아 서명을 확인한 뒤 설치합니다">${busy ? '설치 중…' : '설치'}</button>`;
       }
       return `<div class="mod-row" data-mod="${esc(m.name)}"><span class="mod-ic">${Icons.svg(m.icon, 18)}</span><span class="mod-text"><b>${esc(m.label)}</b><small>${meta}</small></span><span class="dash-actions">${actions}</span></div>`;

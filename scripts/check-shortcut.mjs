@@ -88,6 +88,9 @@ if (res && !res.error) {
   ok(!res.l5before?.icon && res.s5.written && same(res.l5?.icon, ICON) && res.l5?.args?.endsWith('--launch'), '⑤ 아이콘 없이 다시 쓰인 IRIS.lnk 를 아이콘·인자째 되돌림');
   ok((res.l5?.toastActivatorClsid || '').toUpperCase() === String(res.keep5).toUpperCase(), '⑤ 되돌릴 때 CLSID 유지');
 }
-fs.rmSync(tmp, { recursive: true, force: true });
+// 뒷정리는 판정이 아니다(2026-11-13): 방금 만든 .lnk 를 탐색기·백신이 잠깐 쥐고 있으면 rmSync 가 EPERM 으로 던져,
+// 판정 16개가 전부 통과하고도 검사가 "실패"로 끝났다(6번 중 4번). 잠시 기다리며 다시 지워 보고, 그래도 남으면 알리기만 한다.
+try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 }); }
+catch (e) { console.log(`(뒷정리: 임시 폴더를 지우지 못했습니다 — ${e.code || e.message}. 판정과는 무관하며 %TEMP% 의 ${path.basename(tmp)} 가 남았습니다)`); }
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

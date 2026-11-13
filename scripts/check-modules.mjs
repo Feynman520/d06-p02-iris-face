@@ -313,6 +313,45 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(await rejects({ release: { api: 'https://api.github.com/repos/a/none/releases/latest', asset: '\\.zip$' } }, /no matching zip/), 'catalog fetch: 맞는 zip 없음 → 거부');
   ok(await rejects({ release: { api: 'https://api.github.com/repos/a/gone/releases/latest', asset: '\\.zip$' } }, /HTTP 404/), 'catalog fetch: 릴리스 조회 실패 → HTTP 상태 포함 오류');
   ok(await rejects({ release: { api: 'http://api.github.com/repos/a/b/releases/latest', asset: '\\.zip$' } }, /address not allowed/), 'catalog fetch: http 주소 → 거부');
+
+  // v2.106(2026-11-13): 메신저가 설치 패키지에서 빠져 "설정에서 설치"가 유일한 입구 — 추천 표시 + 최신 판을 못 물을 때의 미러 길.
+  const { mirrorUrl } = await import('../daemon/catalog.mjs');
+  const msg = real.find(c => c.name === 'messenger');
+  ok(msg?.recommended === true, 'catalog 추천: 메신저 항목은 recommended');
+  ok(!!msg?.fallback && new RegExp(msg.release.asset).test(msg.fallback.asset) && msg.fallback.asset === `iris-messenger-v${msg.fallback.version}.zip`, 'catalog fallback: 메신저의 마지막 확인 판 = 릴리스 첨부 이름 규칙 그대로');
+  ok(mergeCatalog(real, []).find(r => r.name === 'messenger')?.recommended === true && mergeCatalog(filtered, [])[0].recommended === false, 'catalog 추천: 화면용 목록에 recommended 가 실린다(표시 없는 항목은 false)');
+  const fbFile = path.join(tmp, 'fb-catalog.json');
+  const fbBase = { release: { api: 'https://api.github.com/repos/a/b/releases/latest', asset: '^okmod-v.*\\.zip$' } };
+  fs.writeFileSync(fbFile, JSON.stringify({ version: 1, modules: [
+    { name: 'good', ...fbBase, fallback: { version: '1.3.0', asset: 'okmod-v1.3.0.zip' } },
+    { name: 'badver', ...fbBase, fallback: { version: 'latest', asset: 'okmod-v1.3.0.zip' } },
+    { name: 'badname', ...fbBase, fallback: { version: '1.3.0', asset: '../okmod-v1.3.0.zip' } },
+    { name: 'mismatch', ...fbBase, fallback: { version: '1.3.0', asset: 'other-v1.3.0.zip' } },
+    { name: 'nofb', ...fbBase },
+  ] }), 'utf8');
+  const fbs = Object.fromEntries(loadCatalog(fbFile).map(c => [c.name, c.fallback]));
+  ok(fbs.good?.asset === 'okmod-v1.3.0.zip' && fbs.good.version === '1.3.0' && fbs.badver === null && fbs.badname === null && fbs.mismatch === null && fbs.nofb === null, 'catalog fallback: 판·이름 모양이 어긋나거나 첨부 규칙과 안 맞으면 없는 것으로(null)');
+  const fbZip = Buffer.from('PK-fallback-zip');
+  const fbCalls = [];
+  const blocked = (apiMode, mirrorOk) => async (url, opts) => {
+    fbCalls.push({ url, redirect: opts?.redirect });
+    if (url.startsWith('https://api.github.com/')) { if (apiMode === 'throw') throw new TypeError('fetch failed'); return mk(apiMode, '{}'); }
+    if (url === mirrorUrl('okmod-v1.3.0.zip') && mirrorOk) return mk(200, fbZip, { 'content-length': String(fbZip.length) });
+    return mk(404, 'nope');
+  };
+  const fbEntry = { ...fbBase, fallback: { version: '1.3.0', asset: 'okmod-v1.3.0.zip' } };
+  const viaMirror = await fetchReleaseZip(fbEntry, { fetchImpl: blocked(403, true) });
+  ok(viaMirror.viaFallback === true && viaMirror.version === '1.3.0' && viaMirror.asset === 'okmod-v1.3.0.zip' && viaMirror.buf.equals(fbZip), 'catalog fallback: 릴리스 조회 403 → 미러에서 마지막 확인 판');
+  const viaMirror2 = await fetchReleaseZip(fbEntry, { fetchImpl: blocked('throw', true) });
+  ok(viaMirror2.viaFallback === true && viaMirror2.buf.equals(fbZip), 'catalog fallback: 릴리스 조회가 아예 연결되지 않아도(fetch 예외) 미러 길');
+  ok(fbCalls.every(c => c.redirect === 'manual') && fbCalls.every(c => ALLOWED_HOSTS.includes(new URL(c.url).hostname)), 'catalog fallback: 미러 길도 redirect:manual + 허용 호스트만');
+  const failsWith = async (e, f, re) => { try { await fetchReleaseZip(e, { fetchImpl: f }); return false; } catch (err) { return re.test(err.message); } };
+  ok(await failsWith(fbEntry, blocked(403, false), /release lookup failed: HTTP 403/), 'catalog fallback: 미러도 안 되면 원래 오류(릴리스 조회 실패)를 그대로 알린다');
+  ok(await failsWith({ ...fbBase }, blocked(403, true), /release lookup failed: HTTP 403/), 'catalog fallback: 마지막 확인 판이 없는 항목은 전과 같이 실패');
+  ok(got.viaFallback === undefined, 'catalog fetch: 릴리스 조회가 되면 미러 길을 쓰지 않는다');
+  const settingsSrc = fs.readFileSync(new URL('../app/settings.js', import.meta.url), 'utf8');
+  const styleSrc = fs.readFileSync(new URL('../app/style.css', import.meta.url), 'utf8');
+  ok(/m\.recommended \? '<span class="mod-tag rec">추천<\/span>'/.test(settingsSrc) && /\.mod-tag\.rec\s*\{/.test(styleSrc), '설정 → 확장 모듈: 미설치 줄에 추천 꼬리표(스타일 포함)');
 }
 
 // ---- 끝 ----

@@ -344,7 +344,7 @@ const server = http.createServer(async (req, res) => {
       const entry = loadCatalog().find(c => c.name === cm[1]);
       if (!entry) return json(res, 404, { error: `not in catalog: ${cm[1]}` });
       let z;
-      try { z = await fetchReleaseZip(entry); log(`catalog fetch ${entry.name} ${z.asset} v${z.version} ${z.buf.length}B`); }
+      try { z = await fetchReleaseZip(entry); log(`catalog fetch ${entry.name} ${z.asset} v${z.version} ${z.buf.length}B${z.viaFallback ? ' (release lookup failed → mirror, catalog fallback version)' : ''}`); }
       catch (e) { log(`502 catalog fetch ${entry.name}: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: `download failed: ${e.message}` }); }
       const r = await installFromBuffer(z.buf, { allow: false, via: `catalog ${z.asset}` });
       return json(res, r.status, r.body);
