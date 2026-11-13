@@ -103,7 +103,7 @@ if (!h) {
 }
 // --first-session <spec.json> (installer Task 16): 설치기가 첫 세션을 대신 만들어 주는 자리.
 // spec = { cwd, agent:'claude'|'codex', model, effort, promptFile }. 같은 cwd에 살아 있는 세션이 있으면 새로 만들지 않는다(중복 방지).
-// v2 영혼(`_agent\setup\handoff.json` 있음)에서는 이 자리를 잠재운다(P03 Task 21): 첫 인사는 데몬이 인수 문서의
+// v2 영혼(`_agent\setup\handoff.json` 있음)에서는 이 자리를 잠재운다(P02 Task 21): 첫 인사는 데몬이 인수 문서의
 // firstMessage 로 하고, 세팅이 덜 끝났으면 안내 카드를 띄운다. 1.x 영혼에서는 지금까지와 똑같이 동작한다.
 const firstSessionSpec = handoffExists(soulRoot()) ? null : argVal('--first-session');
 if (!firstSessionSpec && argVal('--first-session')) say('[iris-face] --first-session: 건너뜀 (v2 영혼 — 창이 인수 문서로 첫 인사를 합니다)');

@@ -54,7 +54,7 @@ export class Finalizer {
   touch() { this.lastStatusAt = this.now(); }
   start() {
     if (!ENABLED) { this.log('finalize: off (IRIS_FACE_AUTO_FINALIZE=0)'); return false; }
-    // v2 영혼(인수 문서 있음)이면 잠든다 — 세팅은 설치기가 끝까지 하고 창은 인수 문서만 읽는다(P03 Task 21).
+    // v2 영혼(인수 문서 있음)이면 잠든다 — 세팅은 설치기가 끝까지 하고 창은 인수 문서만 읽는다(P02 Task 21).
     if (handoffExists(this.root)) { this.log('finalize: off (v2 영혼 — handoff.json 있음)'); return false; }
     this.timer = setInterval(() => { this.tick().catch((e) => this.log(`finalize tick error: ${e?.message || e}`)); }, POLL_MS);
     this.timer.unref?.();

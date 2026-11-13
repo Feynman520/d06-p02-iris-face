@@ -1,5 +1,5 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-/* 인수 안내 카드(설치 패키지 v2, P03 Task 21) — 데몬 daemon/handoff.mjs 가 정한 카드를 그대로 그린다.
+/* 인수 안내 카드(설치 패키지 v2, P02 Task 21) — 데몬 daemon/handoff.mjs 가 정한 카드를 그대로 그린다.
    - 카드는 두 가지뿐이다:
        setup-status     세팅이 덜 끝났거나 로그인이 남음 → 「설치 이어하기」 + 「나중에」
        messenger-prompt 메신저 로그인 안내(딱 한 번, 데몬이 handoff.json 의 messenger.prompted 로 기억) → 「나중에」

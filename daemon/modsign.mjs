@@ -1,6 +1,6 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
 // 모듈 zip의 매니페스트(파일별 SHA-256)와 Ed25519 서명. 공식 모듈 = 아래 공개 열쇠로 검증되는 서명(모듈 이름과 무관, 모든 공식 모듈 공용).
-// 개인 열쇠는 운영자 secrets(`_agent\claude\secrets\iris-module-signing-<id>.key`)에만 있다. 열쇠 교체 절차 = P04 설계.md 조각 9 ⑧.
+// 개인 열쇠는 운영자 secrets(`_agent\claude\secrets\iris-module-signing-<id>.key`)에만 있다. 열쇠 교체 절차 = P03 설계.md 조각 9 ⑧.
 import crypto from 'node:crypto';
 
 /** 공식 모듈 서명 공개 열쇠(여러 개 = 교체 이력). id 는 secrets 파일 이름의 날짜와 같다. */

@@ -12,7 +12,7 @@
 //
 // shim 템플릿 출처(provenance): 아래 AGENT_SHIMS·crlf()·agentShimText() 는
 // installer/lib/shims.mjs 의 AGENT_SHIMS·crlf()·agentShim() 을 바이트 그대로 옮긴 것이다(그 파일을
-// import 하지 않는다 — P02·P03 은 별개 배포 단위). installer 의 정적 검사 ⑥이 두 원본을 바이트 비교하니,
+// import 하지 않는다 — P01·P02 은 별개 배포 단위). installer 의 정적 검사 ⑥이 두 원본을 바이트 비교하니,
 // shims.mjs 가 바뀌면 이 사본도 같은 턴에 맞춰야 한다.
 //
 // 계정 분류 규칙 출처: installer/lib/login.mjs 의 accountMatchesProvider() —
@@ -34,7 +34,7 @@ function crlf(lines) {
 }
 // v2.96(설치 패키지 2.0.49, 2026-10-27): 코덱스 심에서 가로채기 3줄(HTTPS_PROXY·NO_PROXY·SSL_CERT_FILE)을 뺐다 —
 // 코덱스는 config.toml provider `iris`(중계기 주소 직접 지정·웹소켓 끔)로 중계기를 거친다. 가로채기 길은 새 세션마다
-// "Reconnecting 1/5~5/5" 를 내고 코덱스 0.163+ 에서는 끝내 실패했다(사연 = P03 installer/lib/shims.mjs).
+// "Reconnecting 1/5~5/5" 를 내고 코덱스 0.163+ 에서는 끝내 실패했다(사연 = P02 installer/lib/shims.mjs).
 export function agentShimText(agent) {
   const { envName, envDir, tool } = AGENT_SHIMS[agent];
   return crlf([

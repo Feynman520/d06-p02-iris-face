@@ -80,7 +80,7 @@ const tools = new ToolManager({
 var finalizer = new Finalizer({ root: WS_ROOT, sm, stateDir: STATE, log, broadcast });
 // 세팅 진행 막대(v2.65): 가이드가 기록하는 _agent\setup\setup-progress.json 을 읽어 화면 위에 그린다(progress.mjs).
 const setupProgress = new SetupProgress({ root: WS_ROOT, broadcast, log });
-// 인수 문서(설치 패키지 v2, P03 Task 21): `_agent\setup\handoff.json` 이 있으면 첫 실행을 여기서 가른다 —
+// 인수 문서(설치 패키지 v2, P02 Task 21): `_agent\setup\handoff.json` 이 있으면 첫 실행을 여기서 가른다 —
 // ready 면 주도 에이전트에 firstMessage 를 그대로 보내고, 아니면 안내 카드 + 「설치 이어하기」. 없으면(1.x) 아무 일도 하지 않는다.
 // v2.90: ready 면 첫 세션을 자동으로 열지 않고 튜토리얼(화면)을 띄운다. relayReady 는 튜토리얼 「첫 대화 해 보기」·새 세션 전 확인에 쓴다(GET /api/relay/ready).
 const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broadcast });

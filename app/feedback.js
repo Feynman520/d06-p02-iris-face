@@ -1,5 +1,5 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-// 설정 → 의견 보내기(v2.105, 2026-11-13). 설계 = P05 docs/설계-의견함-2026-11-12.md ⑥ · 시안 = 같은 폴더 시안-의견-2026-11-12/site/app-rail.html.
+// 설정 → 의견 보내기(v2.105, 2026-11-13). 설계 = P07 docs/설계-의견함-2026-11-12.md ⑥ · 시안 = 같은 폴더 시안-의견-2026-11-12/site/app-rail.html.
 // 화면은 데몬에만 말한다: GET /api/feedback(판 정보 한 줄, 바깥 연결 없음) · POST /api/feedback(누를 때만 바깥 연결).
 // 실패하면 홈페이지 /feedback?info=… 로 이어 보낼 길을 보여 준다(쓴 글은 그대로 둔다).
 window.FeedbackView = (() => {

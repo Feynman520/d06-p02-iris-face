@@ -74,7 +74,7 @@ const packZip = (files, { sign = true, key = KP.privatePem } = {}) => {
   return zipWrite(all);
 };
 const FACE_ZIP = packZip(faceFiles);
-// 설치 패키지 zip 의 실제 모양: IRIS-설치.cmd 는 루트, 매니페스트는 payload\manifest.json (P03 build.mjs, 2026-09-14 확인)
+// 설치 패키지 zip 의 실제 모양: IRIS-설치.cmd 는 루트, 매니페스트는 payload\manifest.json (P02 build.mjs, 2026-09-14 확인)
 const pkgFiles = [
   { name: 'IRIS-설치.cmd', data: Buffer.from('@echo off\n') },
   { name: 'installer/server.mjs', data: Buffer.from('// installer\n') },
@@ -437,7 +437,7 @@ let planFile = null;
   ok(!/rmSync\(\s*ROOT/.test(fs.readFileSync('daemon/update.mjs', 'utf8')), '데몬: 자기 폴더를 지우거나 바꾸는 코드가 없다(교체는 적용기 몫)');
 }
 
-// ---- 16) 1.x → 2.0 은 자동 적용하지 않는다(P03 Task 21) ----
+// ---- 16) 1.x → 2.0 은 자동 적용하지 않는다(P02 Task 21) ----
 // 구조판 최신 판이 2.x 인데 이 영혼의 영수증이 1.x(schema<2 또는 영수증 없음)면 구조판은 받지 않고 안내 글 + 홈페이지 링크만.
 // IRIS 창·메신저는 그대로 업데이트된다.
 {

@@ -26,7 +26,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-handoff-'));
 const soul = (name) => { const r = path.join(tmp, name); fs.mkdirSync(path.join(r, '_agent', 'setup'), { recursive: true }); return r; };
 const writeJson = (file, o) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(o, null, 2), 'utf8'); };
 
-// 계약(P03 docs\인수문서-handoff-v2.md)의 예시 그대로
+// 계약(P02 docs\인수문서-handoff-v2.md)의 예시 그대로
 const handoffDoc = (over = {}) => ({
   schema: HANDOFF_SCHEMA, packageVersion: '2.0.0', writtenAt: '2026-09-15T12:00:00+09:00', state: 'ready',
   subscriptions: ['claude'], leadAgent: 'claude', login: { claude: 'done', chatgpt: 'not-needed' },

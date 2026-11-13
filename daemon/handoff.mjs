@@ -1,7 +1,7 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-// handoff.mjs — 설치 패키지 v2 의 인수 문서(`<root>\_agent\setup\handoff.json`)를 읽고 첫 실행을 가른다(P03 Task 21, 설계-v2 8절).
+// handoff.mjs — 설치 패키지 v2 의 인수 문서(`<root>\_agent\setup\handoff.json`)를 읽고 첫 실행을 가른다(P02 Task 21, 설계-v2 8절).
 //
-// 계약(정본 = P03 `docs\인수문서-handoff-v2.md`): 설치기가 쓰고 창이 읽는다. **창은 세팅을 절대 하지 않는다** —
+// 계약(정본 = P02 `docs\인수문서-handoff-v2.md`): 설치기가 쓰고 창이 읽는다. **창은 세팅을 절대 하지 않는다** —
 //   이 파일과 영수증(`package-receipt.json`)만 읽고, `messenger.prompted` 한 필드만 되돌려 쓴다.
 //
 // 상태 4가지(resolveState):
@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 
 export const HANDOFF_SCHEMA = 1;
 export const RECEIPT_SCHEMA_V2 = 2;
-/** 세팅 엔진 v2 의 9단계(P03 `docs\세팅엔진-계약-v2.md`). 영수증 `setup.<id>.status` 가 전부 'done' 이어야 세팅이 끝난 것이다. */
+/** 세팅 엔진 v2 의 9단계(P02 `docs\세팅엔진-계약-v2.md`). 영수증 `setup.<id>.status` 가 전부 'done' 이어야 세팅이 끝난 것이다. */
 export const SETUP_STAGES = Object.freeze(['unpack', 'env', 'skeleton', 'structure', 'venv', 'adapters', 'relay', 'ontology', 'checks']);
 /** 로그인이 "더 할 일 없음" 인 값들. 그 밖(waiting·cli-done·failed·모르는 값)은 전부 남은 것으로 본다. */
 export const LOGIN_DONE = Object.freeze(new Set(['done', 'not-needed', 'skipped']));
@@ -111,7 +111,7 @@ export function markMessengerPrompted(root) {
 
 // ---- 「설치 이어하기」 ----
 const ARG_RE = /^--[a-z][a-z0-9-]{0,20}$/;
-/** 계약(P03 `docs\인수문서-handoff-v2.md`)이 정한 **단 하나의** 설치기 사본 자리. 다른 값은 받지 않는다. */
+/** 계약(P02 `docs\인수문서-handoff-v2.md`)이 정한 **단 하나의** 설치기 사본 자리. 다른 값은 받지 않는다. */
 export const CONTRACT_INSTALLER_PATH = '_agent/setup/installer/IRIS-설치.cmd';
 /**
  * cmd.exe 가 명령줄을 **다시 읽으면서** 뜻을 갖는 글자들. `&`·`|` 는 명령을 하나 더 붙일 수 있고 `%` 는 따옴표 안에서도 환경변수로 바뀐다.

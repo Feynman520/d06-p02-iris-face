@@ -1,5 +1,5 @@
 // 튜토리얼 ⑦ 사용법 그림: 시험 데몬(3459, 임시 영혼) + 웹소켓·기록 흉내(가짜 세션 3개, 실제 CLI·세션 접촉 0) → 번호 표 얹어 캡처
-// 사용: node cap-usage.mjs <P02 폴더> <출력 png>
+// 사용: node cap-usage.mjs <P01 폴더> <출력 png>
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { spawn } from 'node:child_process'; import { createRequire } from 'node:module'; import { pathToFileURL } from 'node:url';
 const [ROOT, OUT] = process.argv.slice(2);

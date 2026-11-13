@@ -44,7 +44,7 @@ const RECHECK_MS = 5 * 60 * 1000;         // 적용 직전 확인 결과가 이�
 const SWEEP_MS = 7 * 24 * 60 * 60 * 1000; // 다 쓴 내려받기 폴더는 7일 뒤 치운다
 export const DEV_REASON = '개발 폴더에서 실행 중 — git pull로 갱신';
 
-// ---- 1.x → 2.0 은 자동 적용하지 않는다(P03 Task 21, 구현계획-v2 D2-24) ----
+// ---- 1.x → 2.0 은 자동 적용하지 않는다(P02 Task 21, 구현계획-v2 D2-24) ----
 // 2.0 부터 설치 방식(구조·영수증 schema)이 통째로 바뀌어 부품만 갈아 끼울 수 없다. 그래서 구조판이 2.x 인데
 // 이 영혼의 영수증이 1.x(schema<2 또는 영수증 없음)이면 **구조판 내려받기를 아예 하지 않고** 글과 홈페이지 링크만 보인다.
 // IRIS 창·메신저 부품은 그대로 업데이트된다(그 둘은 판이 바뀌어도 자리가 같다).
@@ -105,7 +105,7 @@ export function verifyFaceZip(buf, { keys = OFFICIAL_PUBLIC_KEYS, limits = PART_
   return { ok: true, files, keyId: m.keyId };
 }
 
-/** 설치 패키지 매니페스트의 자리 — P03 build.mjs 는 payload\manifest.json 에 쓴다(2026-09-14 실물 확인).
+/** 설치 패키지 매니페스트의 자리 — P02 build.mjs 는 payload\manifest.json 에 쓴다(2026-09-14 실물 확인).
  *  옛 꾸러미를 위해 zip 루트도 뒤로 본다. 먼저 찾은 하나의 텍스트에 대해 서명을 검증한다. */
 /** 설치 패키지 zip 은 항목 이름을 `./payload/…` 처럼 `./` 로 시작해 적는다(v1.3.0 실물 확인).
  *  `./x` 와 `x` 는 같은 자리라 경로 탈출이 아니므로 맨 앞 `./` 하나만 떼고 검사·해제한다.
@@ -237,7 +237,7 @@ export class Updater {
     let rel, ghErr = null;
     try { rel = await this.json(src.api); }
     catch (e) { rel = null; ghErr = e; this.log?.(`update: ${name || src.api} github api failed (${String(e.message).slice(0, 80)}) → mirror latest.json`); }
-    // 안정판만(2026-11-09 두 갈래 배포, P03 docs\설계-배포채널-2026-11-09.md): 최신판(사전 공개)은 홈페이지에서만 받는다.
+    // 안정판만(2026-11-09 두 갈래 배포, P02 docs\설계-배포채널-2026-11-09.md): 최신판(사전 공개)은 홈페이지에서만 받는다.
     // releases/latest 는 사전 공개·초안을 주지 않지만, 주소가 바뀌거나 응답이 이상해도 사전 공개 판은 받지 않는다(이중 안전장치) → 안정판 전용 latest.json 으로.
     if (rel && (rel.prerelease === true || rel.draft === true)) { this.log?.(`update: ${name || src.api} ignored ${rel.prerelease ? 'prerelease' : 'draft'} ${rel.tag_name || ''} → mirror latest.json`); ghErr = new Error('prerelease ignored'); rel = null; }
     let assets = Array.isArray(rel?.assets) ? rel.assets : [];
@@ -473,7 +473,7 @@ export class Updater {
     try { const p = readJson(plan.file); if (p) writeJsonAtomic(plan.file, { ...p, daemonPid: process.pid, daemonPort: this.daemonPort }); }
     catch (e) { return { ok: false, reason: `적용 계획을 고치지 못했습니다: ${e.message}` }; }
     let child;
-    // 적용기는 `--plan <경로>` 한 가지만 받는다(P03 parseArgs) — 자리 인자로 주면 계획을 못 읽는다.
+    // 적용기는 `--plan <경로>` 한 가지만 받는다(P02 parseArgs) — 자리 인자로 주면 계획을 못 읽는다.
     try { child = this.spawnImpl(this.nodeExe(), [apply, '--plan', plan.file], { detached: true, stdio: 'ignore', windowsHide: true, cwd: path.dirname(apply) }); }
     catch (e) { return { ok: false, reason: `적용기를 실행하지 못했습니다: ${e.message}` }; }
     child?.unref?.();
