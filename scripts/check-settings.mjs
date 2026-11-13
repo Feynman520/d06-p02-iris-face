@@ -17,7 +17,7 @@ let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) { pass++; console.log(`PASS ${n}`); } else { fail++; console.log(`FAIL ${n}`); } };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const src = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
-const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about']; // v2.90: 온톨로지·도구 묶음 추가
+const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음 추가 · v2.105: 의견 보내기
 
 // ---------- 1) 정적 ----------
 const html = src('app/index.html'), js = src('app/settings.js'), icons = src('app/icons.js'), main = src('app/main.js');

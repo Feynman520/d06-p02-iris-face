@@ -938,3 +938,33 @@ button.tl-pill[aria-pressed="true"] { border-color: var(--iris); background: var
 .tl-facts th { width: 6em; text-align: left; font-weight: 500; color: var(--ink-3); padding: 3px 8px 3px 0; vertical-align: top; }
 .tl-facts td { padding: 3px 0; color: var(--ink-2); word-break: break-all; }
 .tl-warn { color: var(--warn); }
+
+/* ---- 설정 → 의견 보내기(v2.105, 2026-11-13): 분류 레일의 휴대폰판 = 위쪽 탭 + 청보라 밑줄. 동작 = app/feedback.js ---- */
+.fb-tabs { position: relative; display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0 0 14px; padding: 0 2px; border-bottom: 1px solid var(--line); }
+.fb-tabs button { padding: 6px 0 10px; font-size: 13.5px; color: var(--ink-3); }
+.fb-tabs button:hover { color: var(--ink-2); }
+.fb-tabs button[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+.fb-ink { position: absolute; bottom: -1px; left: 0; height: 2px; width: 0; border-radius: 2px; background: var(--iris); transition: transform .26s cubic-bezier(.2,.7,.2,1), width .26s cubic-bezier(.2,.7,.2,1); pointer-events: none; }
+.fb-ed { border: 1px solid var(--line); border-radius: 12px; background: var(--base); transition: border-color .2s; }
+.fb-ed:focus-within { border-color: rgba(143,168,255,.4); }
+.fb-bar { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.fb-lab { font-size: 12.5px; color: var(--ink-3); padding-left: 4px; }
+.fb-tip { margin: 0; padding: 8px 14px; font-size: 12.5px; color: var(--ink-2); border-bottom: 1px solid var(--line); background: linear-gradient(90deg, rgba(242,200,121,.07), transparent 70%); }
+.fb-tip b { color: var(--warn); font-weight: 600; }
+.fb-text { display: block; width: 100%; box-sizing: border-box; min-height: 168px; border: 0; resize: none; overflow: hidden; outline: none; background: none; color: var(--ink); font: 14px/1.7 var(--sans); padding: 14px 16px; }
+.fb-text::placeholder, .fb-mail::placeholder { color: var(--ink-3); }
+.fb-info { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); min-width: 0; }
+.fb-info b { font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-detail { margin: 0; padding: 0 16px 10px; font-size: 12px; line-height: 1.7; color: var(--ink-3); }
+.fb-foot { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; border-top: 1px solid var(--line); }
+.fb-mail { flex: 1; min-width: 0; border: 0; background: none; outline: none; color: var(--ink); font: 13px var(--sans); padding: 6px 0; }
+.fb-send { height: 32px; padding: 0 16px; border-radius: 8px; background: var(--iris); color: #0b0f1e; font-weight: 600; font-size: 13px; flex: none; }
+.fb-send:hover { background: var(--iris-2); }
+.fb-send:disabled { background: var(--raised); color: var(--ink-3); cursor: default; }
+.fb-err { margin: 10px 2px 0; font-size: 12.5px; color: var(--bad); line-height: 1.6; }
+.fb-err a { color: var(--iris); }
+.fb-done { padding: 16px 18px 18px; }
+.fb-done > h3 { margin: 0 0 12px; padding: 0; font-size: 15px; font-weight: 650; color: var(--ink); letter-spacing: 0; }
+.fb-rc { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; color: var(--ink-3); margin-bottom: 6px; }
+.fb-rc code { font: 14px var(--mono); color: var(--ink); background: none; border: 0; padding: 0; }
+@media (prefers-reduced-motion: reduce) { .fb-ink { transition: none; } }

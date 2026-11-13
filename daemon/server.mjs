@@ -25,6 +25,7 @@ import { ModuleHost, NAME_RE } from './modules.mjs';
 import { inspectZip, installZip, removeModule } from './modinstall.mjs';
 import { loadCatalog, mergeCatalog, fetchReleaseZip } from './catalog.mjs';
 import { Updater } from './update.mjs';
+import { appInfo as feedbackInfo, sendFeedback, FALLBACK_URL as FEEDBACK_FALLBACK } from './feedback.mjs';
 import { Finalizer } from './finalize.mjs';
 import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
@@ -400,6 +401,15 @@ const server = http.createServer(async (req, res) => {
       if (!sameOrigin(req)) { log(`403 auth ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       if (p === '/api/auth/refresh') { await auth.refresh(); return json(res, 200, auth.public()); }
       if (p === '/api/auth/renew') { const b = await readBody(req); const r = await auth.renew(String(b.id || '')); return json(res, r.ok ? 200 : 400, { ...r, auth: auth.public() }); }
+    }
+    // ---- 의견 보내기(v2.105): 정보 줄 읽기는 바깥 연결 없음. 보내기는 같은 출처만 + 누를 때만 바깥(IRIS 공용 DB) 연결. ----
+    if (req.method === 'GET' && p === '/api/feedback') return json(res, 200, { info: feedbackInfo(updater.installed()), fallback: FEEDBACK_FALLBACK });
+    if (req.method === 'POST' && p === '/api/feedback') {
+      if (!sameOrigin(req)) { log(`403 feedback: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+      let b; try { b = await readBody(req); } catch { return json(res, 400, { ok: false, error: 'bad' }); }
+      const r = await sendFeedback(b, { info: feedbackInfo(updater.installed()) });
+      log(`feedback: ${r.ok ? `sent ${r.receipt}` : `failed ${r.error}`}`); // 내용·이메일은 로그에 싣지 않는다
+      return json(res, r.ok ? 200 : 400, r);
     }
     // ---- 업데이트(v2.58): 확인·설정·내려받기·적용. 전부 같은 출처만(화면에서만 부른다). ----
     if (req.method === 'GET' && p === '/api/update') return json(res, 200, updater.info());

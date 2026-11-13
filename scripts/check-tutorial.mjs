@@ -320,7 +320,7 @@ else {
     ok(!(await p.locator('#tutorial').isVisible()), '6 다시 열어도 튜토리얼은 다시 뜨지 않는다');
     // ---------- 7) 설정: 묶음 8개 · 열쇠 카드 세 장 · 온톨로지 그래프 · 도구 · 튜토리얼 다시 보기 ----------
     const navOrder = await p.evaluate(() => [...document.querySelectorAll('#st-nav .st-nav-i')].map(b => b.dataset.pane).join(','));
-    ok(navOrder === 'design,session,ontology,tools,notify,mods,account,about', `7 목차 8묶음 순서 (${navOrder})`);
+    ok(navOrder === 'design,session,ontology,tools,notify,mods,account,about,feedback', `7 목차 9묶음 순서 (${navOrder})`); // v2.105: 의견 보내기
     await p.evaluate(() => Settings.setAuth({ available: true, info: { checkedAt: new Date().toISOString(), items: [
       { id: 'iris', group: 'iris', label: 'IRIS 창', name: 'iris', provider: 'claude', level: 'ok', daysLeft: 300, longKey: true },
       { id: 'c1', group: 'relay', label: 'claude-a', name: 'a', provider: 'claude', level: 'soon', daysLeft: 2 },

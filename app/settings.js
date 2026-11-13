@@ -110,7 +110,7 @@ window.Settings = (() => {
     renderNav();
   }
   // ---- 묶음과 오른쪽 목차(v2.87, 사용자 선택 = 시안 A′): 한 번에 한 묶음만. 마지막으로 본 묶음을 기억한다. ----
-  const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음)
+  const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js)
   let pane = (() => { try { const p = localStorage.getItem('iris.settings.pane'); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
   let modsSum = '';
   // 미리보기 캔버스는 「디자인」 묶음이 보일 때만 돌린다(다른 묶음에서 숨은 캔버스 11개가 GPU 를 쓰지 않게)
@@ -128,6 +128,7 @@ window.Settings = (() => {
     if (p === 'design') startPreviews(); else destroyPreviews();
     if (open && p === 'ontology') window.OntologyView?.show();
     if (open && p === 'tools') window.ToolsView?.show();
+    if (open && p === 'feedback') window.FeedbackView?.show();
   }
   const optText = (id) => $(id)?.selectedOptions?.[0]?.textContent || '';
   /** 목차 아래 작은 글씨 = 지금 값 한 줄, 노란·빨간 숫자 = 갱신이 필요한 로그인 열쇠, 청보라 = 새 판. */
@@ -138,6 +139,7 @@ window.Settings = (() => {
     set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}`);
     set('#st-sum-ontology', '역할 캐릭터 · 폴더 나무');
     set('#st-sum-tools', 'Skill · MCP · Plugin');
+    set('#st-sum-feedback', '개발자에게 바로');
     set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
     set('#st-sum-mods', modsSum);
     const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);

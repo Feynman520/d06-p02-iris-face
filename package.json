@@ -58,7 +58,8 @@
     "verify:shutdown": "node scripts/check-shutdown.mjs",
     "verify:close-window": "node scripts/check-close-window.mjs",
     "verify:send": "node scripts/check-send.mjs",
-    "verify:shortcut": "node scripts/check-shortcut.mjs"
+    "verify:shortcut": "node scripts/check-shortcut.mjs",
+    "verify:feedback": "node scripts/check-feedback.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
