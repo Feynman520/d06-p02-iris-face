@@ -2,7 +2,7 @@
 // 의견 보내기(v2.105, 2026-11-13) — 설정 → 의견 보내기. 설계 정본 = P07 홈페이지 docs/설계-의견함-2026-11-12.md 조각 ⑥.
 // 사용자가 「보내기」를 누를 때만 바깥에 연결한다(모듈 없는 창의 무접촉 약속은 "누르기 전 연결 0" 으로 지킨다 —
 // 이 파일은 불러올 때 아무 연결도 만들지 않는다. 시험 = scripts/check-feedback.mjs · check-nomodule.mjs).
-// 받는 곳 = IRIS 공용 DB(P03 메신저 허브 Supabase)의 넣기 전용 함수 submit_feedback(P03 hub/server/migrations/0005_feedback.sql).
+// 받는 곳 = IRIS 공용 DB(IRIS 허브 Supabase)의 넣기 전용 함수 submit_feedback(P08 허브 server/migrations/0005_feedback.sql — 2026-11-13 메신저 저장소에서 옮김).
 // 아래 anon 키는 공개해도 안전하다(표는 직접 읽기·쓰기 전부 막혀 있고, 함수 안에서 길이·횟수·크기 상한을 건다).
 // 함께 보내는 정보 = 창·설치 패키지·윈도 판 한 줄뿐. 대화·폴더 이름·계정·경로는 보내지 않는다.
 import os from 'node:os';
