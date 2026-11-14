@@ -117,3 +117,7 @@ node launch.mjs            # 데몬이 없으면 띄우고 Electron 창을 엽�
 ## 허가서
 
 MIT — © 2026 함세준(Sejun Ham). "해결은 에이전트가, 정의는 우리가."
+
+## 기여
+
+의견과 PR 안내는 [CONTRIBUTING.md](CONTRIBUTING.md)를, 보안 문제 신고는 [SECURITY.md](SECURITY.md)를 봐 주세요.

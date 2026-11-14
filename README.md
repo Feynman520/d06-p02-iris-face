@@ -117,3 +117,7 @@ Quit with ⏻, then delete the folder. Nothing is written elsewhere.
 ## License
 
 MIT — © 2026 Sejun Ham. "해결은 에이전트가, 정의는 우리가." (Agents solve; we define.)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute and [SECURITY.md](SECURITY.md) for reporting security issues.
