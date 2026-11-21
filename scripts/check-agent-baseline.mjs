@@ -462,8 +462,8 @@ async function child(mode, tmp) {
   odd.push(op3('switchTo codex (호환이 예외를 던짐)', () => sm3.switchTo(lx.id, {})));
   align3 = () => ({ action: 'blocked', reason: '연결이 중계기가 아님' });
   odd.push(op3('switchTo codex (호환 = blocked → 곧 종료)', () => sm3.switchTo(lx.id, {})));
-  la.sessionId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
-  odd.push(op3("switchTo 목록 ['codex'] 카드", () => sm3.switchTo(la.id, {})));
+  if (la) la.sessionId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  odd.push(op3("switchTo 목록 ['codex'] 카드", () => sm3.switchTo(la?.id, {})));
   // 세션 띄우기 함수를 바깥에서 직접 부름(buildCommand 가 만들지 않은 명령 · 인자 넷): 명령 글자로 에이전트를 가려 그 에이전트의 폴더 신뢰 · 열쇠를 한다
   const work3 = path.join(tmp, 'Work Three'); fs.mkdirSync(work3, { recursive: true });
   for (const [label, cmd] of [['codex 로 시작', { file: 'cmd.exe', args: ['/c', 'codex', '--x'] }], ['CODEX-cli 대문자', { file: 'cmd.exe', args: ['/c', 'CODEX', '-m'] }], ['claude 로 시작', { file: 'cmd.exe', args: ['/c', 'claude', '--y'] }], ['다른 실행 파일', { file: 'cmd.exe', args: ['/c', 'antigravity', '--z'] }], ['인수 없음', { file: 'x.exe' }], ['codexx(낱말 경계 아님)', { file: 'cmd.exe', args: ['/c', 'codexx'] }]]) {
@@ -481,24 +481,25 @@ async function child(mode, tmp) {
   const ASK = '\r\n Do you want to proceed?\r\n \u276f 1. Yes\r\n   2. Yes, and don\u2019t ask again\r\n   3. No\r\n\r\n Esc to cancel\r\n';
   const UPDATE = '\r\n Update available! 0.170.0 -> 0.171.0\r\n\r\n \u203a 1. Update now\r\n   2. Skip\r\n   3. Skip until next version\r\n\r\n enter continue \u00b7 esc skip\r\n';
   const p3 = (r) => sm3.live.get(r.id)?.pty;
-  for (const r of [lc, lx, la]) p3(r).dataCb(ASK);
+  const cards3 = () => [lc, lx, la].filter(Boolean); // 만들기가 거절된 카드는 빠진다
+  for (const r of cards3()) p3(r).dataCb(ASK);
   newCase('op3 업데이트 물음을 볼 카드');
   const updCard = sm3.create({ cwd: work, agent: 'claude', model: 'sonnet', prompt: '' }); p3(updCard).dataCb(UPDATE);
   await new Promise((r) => setTimeout(r, 1300));
   const liveView = (r) => deep({ agent: r.agent, status: r.status, prompt: r.prompt ? { kind: r.prompt.kind, question: r.prompt.question, options: (r.prompt.options || []).map((o) => ({ label: o.label, key: o.key })) } : null, writes: [...(p3(r)?.writes || [])] });
-  const live = { ask: [lc, lx, la].map(liveView), update: liveView(updCard) };
+  const live = { ask: cards3().map(liveView), update: liveView(updCard) };
   // 종료: 곧바로 끝난 CLI 는 화면 마지막 줄에서 원인을 골라 카드에 남긴다(코덱스 호환이 남긴 이유와 합쳐서)
   logs.length = 0;
   p3(lx).dataCb('\r\nError: thread was created with a different model provider\r\n'); p3(lc).dataCb('\r\nclaude: command not found\r\n');
   await new Promise((r) => setTimeout(r, 300));
-  p3(lx).exitCb({ exitCode: 1 }); p3(lc).exitCb({ exitCode: 0 }); p3(la).exitCb({ exitCode: 3 });
+  p3(lx).exitCb({ exitCode: 1 }); p3(lc).exitCb({ exitCode: 0 }); if (la) p3(la).exitCb({ exitCode: 3 });
   // 호환 처리가 오류(error)로 끝난 재개가 곧 종료: 그 이유가 카드에 남는다
   newCase('op3 호환 오류 뒤 곧 종료');
   const le = sm3.create({ cwd: work, agent: 'codex', prompt: '' }); le.sessionId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   align3 = () => ({ action: 'error', reason: '기록을 읽지 못함' }); sm3.switchTo(le.id, {}); align3 = () => ({ action: 'none' });
   p3(le).exitCb({ exitCode: 2 });
   live.exitAfterCompatError = deep({ status: le.status, exitCode: le.exitCode, exitReason: le.exitReason, compat: le.compat });
-  live.exit = [lc, lx, la].map((r) => deep({ agent: r.agent, status: r.status, exitCode: r.exitCode, exitReason: r.exitReason, live: sm3.live.has(r.id) }));
+  live.exit = cards3().map((r) => deep({ agent: r.agent, status: r.status, exitCode: r.exitCode, exitReason: r.exitReason, live: sm3.live.has(r.id) }));
   live.exitLogs = [...logs];
   live.saved = (() => { try { return JSON.parse(fs.readFileSync(path.join(state3, 'sessions.json'), 'utf8')).map((r) => card(r)); } catch (e) { return String(e?.message); } })();
   out.sessionsLive = { ops: odd, live };
