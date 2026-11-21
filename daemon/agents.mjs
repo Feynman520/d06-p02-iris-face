@@ -82,5 +82,12 @@ export function permLabel(s) {
 /** @returns {{ file:string, args:string[], sessionId?:string, recordPath?:string, resumeCmd:string, cmdline:string }} */
 export function buildCommand(sel, cwd, { resumeId } = {}) {
   const s = normalize(sel);
-  return legacyElseCodex(s.agent).buildCommand(s, cwd, { resumeId });
+  const ad = legacyElseCodex(s.agent);
+  const cmd = ad.buildCommand(s, cwd, { resumeId });
+  BUILT_BY.set(cmd, ad);
+  return cmd;
 }
+// 명령 객체 → 그것을 만든 어댑터. 세션을 띄울 때 "그 명령의 에이전트"가 할 일(폴더 신뢰 · 열쇠)을 다시 고르지 않고 이 짝으로 찾는다.
+const BUILT_BY = new WeakMap();
+/** buildCommand 가 만든 명령이면 그것을 만든 어댑터, 아니면 null */
+export const adapterOfCommand = (cmd) => ((cmd && typeof cmd === 'object') ? BUILT_BY.get(cmd) || null : null);

@@ -4,15 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR, assertExpected, modelForResume, keepResumeModel } from './agents.mjs';
-import { legacyElseClaude } from './agents/index.mjs';
-import { preTrust } from './trust.mjs';
+import { buildCommand, adapterOfCommand, normalize, CODEX_HOME, assertExpected, modelForResume, keepResumeModel } from './agents.mjs';
+import { strictAdapter, legacyElseClaude } from './agents/index.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
 import { generateTitle } from './titler.mjs';
 import { parseApproval } from './approval.mjs';
 import { readReceipt, soulRoot, toolPath } from './paths.mjs';
-import { applyLongKey } from './auth.mjs';
 import { alignThreadProvider, exitReasonFrom } from './codexcompat.mjs';
 import { readTable, readTableSync, descendants, isOwnProcess, stillRunning, taskkillTree, waitGone } from './proctree.mjs';
 
@@ -83,13 +81,8 @@ export function splitArrowEnter(data) {
   return m ? [m[1], m[2]] : null;
 }
 
-/** 코덱스 대화상자(번호·글자 선택지)는 숫자만 눌러서는 확정되지 않고 Enter 가 따라야 한다("Update available" 자동 응답과 같은 규칙,
- *  2026-09-19 데스크탑 실측: 훅 신뢰 물음의 「2」 클릭 무반응). 코덱스 세션의 한 글자 키에 Enter 를 붙인다(write 가 160ms 뒤에 나눠 보냄). */
-export function codexKeys(prompt) {
-  if (!prompt || !Array.isArray(prompt.options)) return prompt;
-  const fix = (k) => (/^[0-9a-z]$/i.test(String(k ?? '')) ? `${k}\r` : k);
-  return { ...prompt, options: prompt.options.map((o) => ({ ...o, key: fix(o.key) })), actions: Array.isArray(prompt.actions) ? prompt.actions : prompt.actions };
-}
+// 확인 카드의 키 고치기(코덱스: 한 글자 키 뒤에 Enter)는 코덱스 어댑터의 promptKeys 로 옮겼다 — 여기서 가져다 쓰던 이름은 그대로 내보낸다
+export { promptKeys as codexKeys } from './agents/codex.mjs';
 
 export function applyReceiptEnv(env, receipt = readReceipt()) {
   const r = receipt?.env;
@@ -185,12 +178,14 @@ export class SessionManager {
   }
   spawn(cmd, cwd, cols, rows) {
     const env = childEnv();
+    // 띄우기 직전에 그 에이전트의 일(폴더 신뢰 선답 · 열쇠)을 한다 — 이 명령을 만든 어댑터로(agents.mjs buildCommand 가 짝지어 둔다).
+    // buildCommand 가 만들지 않은 명령(바깥에서 직접 꾸민 것)만 옛 방식대로 명령 글자로 가린다.
+    const ad = adapterOfCommand(cmd) || strictAdapter(/^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude');
     // 폴더 신뢰 물음 선답(daemon/trust.mjs, 2026-09-19): CLI 가 이 폴더를 처음 볼 때 묻는 "Do you trust…" 를 미리 "예"로 적어 둔다.
-    const agent = /^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude';
-    const t = preTrust({ agent, cwd, env, fallback: { claudeConfigDir: CLAUDE_CONFIG_DIR, codexHome: CODEX_HOME } });
-    if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${agent} ${cwd} → ${t.result}`);
+    const t = ad.preTrust(cwd, env);
+    if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${ad.id} ${cwd} → ${t.result}`);
     // 1년 열쇠(v2.84, 2026-10-15 "Login expired" 사고): 살아 있으면 클로드 세션은 30일 /login 열쇠 대신 그것을 쓴다(daemon/auth.mjs).
-    if (agent === 'claude') { const k = applyLongKey(env, { configDir: CLAUDE_CONFIG_DIR }); if (k.applied) this.hooks.onLog?.('[auth] long key → session'); }
+    if (ad.sessionKey) { const k = ad.sessionKey(env); if (k.applied) this.hooks.onLog?.('[auth] long key → session'); }
     return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
   }
 
@@ -209,13 +204,8 @@ export class SessionManager {
     // 코덱스 재개 전: 이 대화를 만든 연결 이름이 지금 설정과 다르면(설치 패키지 2.0.49 의 openai → iris 등) 맞춘다.
     // 지금 연결이 이 PC 중계기일 때만 맞추고(원본 백업 + history.jsonl), 아니면 이유만 남겨 곧 끝날 때 화면에 보인다.
     let preReason = null;
-    if (sel.agent === 'codex') {
-      try {
-        const a = this.alignCodex({ codexHome: this.codexHome, threadId: rec.sessionId, faceVersion: FACE_VERSION, log: (m) => this.hooks.onLog?.(`${id} ${m}`) });
-        if (a && a.action !== 'none') rec.compat = { action: a.action, from: a.from, to: a.to, at: new Date().toISOString(), ...(a.backup ? { backup: a.backup } : {}) };
-        if (a && (a.action === 'blocked' || a.action === 'error')) preReason = a.reason || null;
-      } catch (e) { this.hooks.onLog?.(`${id} codex-compat skipped: ${e?.message || e}`); }
-    }
+    const adResume = strictAdapter(sel.agent);
+    if (adResume?.beforeResume) preReason = adResume.beforeResume(this, id, rec, FACE_VERSION); // 재개 전 호환 처리(코덱스 — agents/codex.mjs)
     const cmd = buildCommand(sel, rec.cwd, { resumeId: rec.sessionId });
     const proc = this.spawn(cmd, rec.cwd, cols, rows);
     Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), resumeCmd: cmd.resumeCmd || rec.resumeCmd });
@@ -343,7 +333,7 @@ export class SessionManager {
       return;
     }
     // 확인 카드(v2.43): 노란불이면 화면 글자에서 질문·선택지를 뽑아 rec.prompt 에 두고 방송한다(같은 내용이면 조용). 꺼지면 setStatus 가 비운다.
-    if (status === 'attention') { const p = parseApproval(this.screenText(id, 40)); this.setPrompt(id, rec.agent === 'codex' ? codexKeys(p) : p); } // v2.50: 대화상자가 14줄보다 길 수 있어(계획 승인·질문 5개+설명) 40줄을 읽힌다
+    if (status === 'attention') { const p = parseApproval(this.screenText(id, 40)); const adKeys = strictAdapter(rec.agent); this.setPrompt(id, adKeys?.promptKeys ? adKeys.promptKeys(p) : p); } // v2.50: 대화상자가 14줄보다 길 수 있어(계획 승인·질문 5개+설명) 40줄을 읽힌다
     // 진행 문구: 스피너 줄의 동사("Propagating…")를 우선 쓰고, 없으면 옛 형식(스피너와 안내가 한 줄)에서 뽑는다
     const actLine = status === 'busy' ? (lines.find(l => WORKING_RE.test(l)) || '') : '';
     // 스피너 문구만 남긴다: 상태줄(⏵⏵ bypass permissions…, ← for agents, shift+tab to cycle)과 스피너 글리프 제거

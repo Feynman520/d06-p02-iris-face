@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { soulRoot } from '../paths.mjs';
 import { normCwd, readFirstLine } from '../recordutil.mjs';
+import { preTrust as trustBeforeSpawn } from '../trust.mjs';
 
 export const id = 'codex';
 export const CODEX_HOME = process.env.CODEX_HOME || path.join(soulRoot(), '_agent', 'codex');
@@ -66,6 +67,72 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
   const args = resumeId ? [...base, 'resume', resumeId] : base;
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
 }
+
+// ───────────────────────── 세션을 띄우기 직전 · 재개 전 · 확인 카드 ─────────────────────────
+/** 폴더 신뢰 물음 선답: config.toml 에 이 폴더의 신뢰 표를 덧붙인다(env = 자식에게 줄 환경 — 설정 폴더는 거기 것이 먼저). 절대 던지지 않는다. */
+export const preTrust = (cwd, env) => trustBeforeSpawn({ agent: id, cwd, env, fallback: { codexHome: CODEX_HOME } });
+/**
+ * 코덱스 재개 전: 이 대화를 만든 연결 이름이 지금 설정과 다르면(설치 패키지 2.0.49 의 openai → iris 등) 맞춘다.
+ * 지금 연결이 이 PC 중계기일 때만 맞추고(원본 백업 + history.jsonl), 아니면 이유만 남겨 곧 끝날 때 화면에 보인다.
+ * (sm = SessionManager — alignCodex · codexHome 은 시험이 가짜로 바꿔 끼울 수 있게 거기 달려 있다) @returns 곧 끝났을 때 카드에 보일 이유(없으면 null)
+ */
+export function beforeResume(sm, sid, rec, faceVersion) {
+  let preReason = null;
+  try {
+    const a = sm.alignCodex({ codexHome: sm.codexHome, threadId: rec.sessionId, faceVersion, log: (m) => sm.hooks.onLog?.(`${sid} ${m}`) });
+    if (a && a.action !== 'none') rec.compat = { action: a.action, from: a.from, to: a.to, at: new Date().toISOString(), ...(a.backup ? { backup: a.backup } : {}) };
+    if (a && (a.action === 'blocked' || a.action === 'error')) preReason = a.reason || null;
+  } catch (e) { sm.hooks.onLog?.(`${sid} codex-compat skipped: ${e?.message || e}`); }
+  return preReason;
+}
+/** 코덱스 대화상자(번호·글자 선택지)는 숫자만 눌러서는 확정되지 않고 Enter 가 따라야 한다("Update available" 자동 응답과 같은 규칙,
+ *  2026-09-19 데스크탑 실측: 훅 신뢰 물음의 「2」 클릭 무반응). 코덱스 세션의 한 글자 키에 Enter 를 붙인다(write 가 160ms 뒤에 나눠 보냄). */
+export function promptKeys(prompt) {
+  if (!prompt || !Array.isArray(prompt.options)) return prompt;
+  const fix = (k) => (/^[0-9a-z]$/i.test(String(k ?? '')) ? `${k}\r` : k);
+  return { ...prompt, options: prompt.options.map((o) => ({ ...o, key: fix(o.key) })), actions: Array.isArray(prompt.actions) ? prompt.actions : prompt.actions };
+}
+
+// ───────────────────────── 보조 작업(서브에이전트) ─────────────────────────
+//   같은 sessions\YYYY\MM\DD\ 의 rollout-*.jsonl 중 session_meta.payload.parent_thread_id == 부모 세션 id.
+//   이름 = agent_nickname(+agent_path 끝 마디). 완료 = 그 rollout의 마지막 task_started 뒤 task_complete(2026-08-31 실측 7:7).
+//   (w = SubagentWatcher — 부모 세션의 기록 경로·세션 id 와 보조 목록 subs 를 지닌다)
+const dayDir = (d) => path.join(CODEX_HOME, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+/** 살펴볼 폴더들 */
+export function subagentDirs(w) {
+  const out = new Set([path.dirname(w.recordPath), dayDir(new Date()), dayDir(new Date(Date.now() - 86400000))]);
+  return [...out];
+}
+export const subagentFilePrefix = 'rollout-';
+/** 보조 기록 파일 하나를 목록에 올린다 — 첫 줄의 부모 id 가 이 세션일 때만(makeTail = 그 파일을 읽을 꼬리 읽기를 만드는 함수) */
+export function addSubagent(w, file, makeTail) {
+  let meta; try { meta = JSON.parse(readFirstLine(file) || 'null'); } catch { meta = null; }
+  const p = meta?.payload; if (!p || meta.type !== 'session_meta' || !p.parent_thread_id || p.parent_thread_id !== w.sessionId) return false;
+  const sp = p.source?.subagent?.thread_spawn || {};
+  const nick = sp.agent_nickname || ''; const role = sp.agent_path ? String(sp.agent_path).split('/').filter(Boolean).pop() : '';
+  const key = p.id || path.basename(file, '.jsonl');
+  w.subs.set(key, {
+    key, file, agentType: role, name: [nick, role].filter(Boolean).join(' · ') || key, detail: '',
+    model: '', toolUseId: null, background: false,
+    status: 'running', startedAt: p.timestamp || meta.timestamp || null, endedAt: null, lastAt: p.timestamp || null, tools: 0, items: 0,
+    tail: makeTail(file),
+  });
+  return true;
+}
+/** 설명이 비어 있으면 그 보조가 받은 첫 요청의 첫 줄로 채운다 */
+export const subagentDetail = (s) => s.tail.firstUser.split('\n')[0].slice(0, 120);
+/** 끝났는가: 그 보조 rollout 의 차례가 닫혔으면(task_complete·turn_aborted) */
+export const subagentDone = (w, s) => s.tail.turnOpen === false;
+export const subagentEndedAt = (w, s) => s.tail.turnDoneAt || null;
+
+// ───────────────────────── 제목 생성(헤드리스) ─────────────────────────
+/** 제목 한 줄을 짓게 할 실행 사양. codex.cmd(심)는 PATH 로 찾는다 — cmd.exe /c 를 거치므로 요청문은 인수가 아니라 표준 입력으로 넘긴다(따옴표·한글 안전). */
+export function titleCommand({ system, request, model, codexTitleModel }) {
+  // --dangerously-bypass-hook-trust: 코덱스 0.156.0 부터 설정 키 bypass_hook_trust 는 무시("unrecognized configuration setting")되고 이 깃발만 통한다(2026-09-23 실측; TUI 세션과 같은 깃발).
+  return { file: 'cmd.exe', args: ['/c', 'codex', 'exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-m', model || codexTitleModel, '-c', 'model_reasoning_effort=low', '-'], stdinText: `${system}\n\n${request}\n` };
+}
+/** 헤드리스 출력에서 제목 재료: 마지막 답 줄(앞에 "tokens used" 같은 진행 줄이 섞인다 — lastAnswer 는 titler.mjs 의 것) */
+export const titleFromOutput = (out, { lastAnswer }) => lastAnswer(out);
 
 // ───────────────────────── 기록 파일 찾기 ─────────────────────────
 /** 코덱스 롤아웃 파일은 첫 메시지 뒤에 생기므로 세션이 살아 있는 동안 3초마다 cwd로 짝을 맞춘다

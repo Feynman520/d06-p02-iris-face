@@ -8,18 +8,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { TranscriptTail } from './transcript.mjs';
-import { CODEX_HOME } from './agents.mjs';
+import { strictAdapter, legacyElseCodex } from './agents/index.mjs';
 
 const QUIET_MS = 60_000;
 const SCAN_BUSY_MS = 1500, SCAN_IDLE_MS = 10_000;
-const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-function readFirstLine(file) {
-  const fd = fs.openSync(file, 'r');
-  try { const buf = Buffer.alloc(64 * 1024); const n = fs.readSync(fd, buf, 0, buf.length, 0); const s = buf.subarray(0, n).toString('utf8'); const i = s.indexOf('\n'); return i >= 0 ? s.slice(0, i) : (n < buf.length ? s : ''); }
-  finally { fs.closeSync(fd); }
-}
 const shortModel = (id) => { const m = String(id || '').match(/(opus|sonnet|haiku)/i); return m ? m[1].toLowerCase() : String(id || ''); };
-const dayDir = (d) => path.join(CODEX_HOME, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+// 어느 폴더의 어떤 파일이 보조 기록인지·언제 끝났다고 보는지는 에이전트마다 다르다 — agents/<id>.mjs 의 subagent* 함수가 한다.
 
 export class SubagentWatcher {
   /** @param {{agent:'claude'|'codex', recordPath:string, sessionId:string}} rec 부모 세션(레코드의 세 필드만 쓴다) */
@@ -31,9 +25,7 @@ export class SubagentWatcher {
   }
   /** 살펴볼 폴더들 */
   dirs() {
-    if (this.agent === 'claude') return this.sessionId ? [path.join(path.dirname(this.recordPath), this.sessionId, 'subagents')] : [];
-    const out = new Set([path.dirname(this.recordPath), dayDir(new Date()), dayDir(new Date(Date.now() - 86400000))]);
-    return [...out];
+    return legacyElseCodex(this.agent).subagentDirs(this);
   }
   /** 새 기록파일이 생겼는지 본다(파일 목록만). busy면 1.5초, 아니면 10초 간격. force=true 면 즉시. */
   scan(busy, force = false) {
@@ -46,38 +38,13 @@ export class SubagentWatcher {
       for (const f of names) {
         if (!f.endsWith('.jsonl')) continue;
         const full = path.join(dir, f); if (this.seen.has(full)) continue;
-        if (this.agent === 'claude') { if (!f.startsWith('agent-')) continue; this.seen.add(full); if (this.addClaude(full)) added = true; }
-        else { if (!f.startsWith('rollout-')) continue; this.seen.add(full); if (this.addCodex(full)) added = true; }
+        const ad = legacyElseCodex(this.agent);
+        if (!f.startsWith(ad.subagentFilePrefix)) continue; this.seen.add(full);
+        if (ad.addSubagent(this, full, (file) => new TranscriptTail(file, ad.id, { sub: true }))) added = true;
       }
     }
     if (added) this.version++;
     return added;
-  }
-  addClaude(file) {
-    const key = path.basename(file, '.jsonl').replace(/^agent-/, '');
-    const meta = readJson(file.replace(/\.jsonl$/, '.meta.json')) || {};
-    let born = null; try { born = fs.statSync(file).birthtime?.toISOString?.() || null; } catch {}
-    this.subs.set(key, {
-      key, file, agentType: meta.agentType || '', name: meta.description || meta.agentType || key, detail: meta.agentType ? `${meta.agentType}${meta.requestShape === 'background' ? ' · 배경 실행' : ''}` : '',
-      model: meta.model || '', toolUseId: meta.toolUseId || null, background: meta.requestShape === 'background',
-      status: 'running', startedAt: born, endedAt: null, lastAt: born, tools: 0, items: 0,
-      tail: new TranscriptTail(file, 'claude', { sub: true }),
-    });
-    return true;
-  }
-  addCodex(file) {
-    let meta; try { meta = JSON.parse(readFirstLine(file) || 'null'); } catch { meta = null; }
-    const p = meta?.payload; if (!p || meta.type !== 'session_meta' || !p.parent_thread_id || p.parent_thread_id !== this.sessionId) return false;
-    const sp = p.source?.subagent?.thread_spawn || {};
-    const nick = sp.agent_nickname || ''; const role = sp.agent_path ? String(sp.agent_path).split('/').filter(Boolean).pop() : '';
-    const key = p.id || path.basename(file, '.jsonl');
-    this.subs.set(key, {
-      key, file, agentType: role, name: [nick, role].filter(Boolean).join(' · ') || key, detail: '',
-      model: '', toolUseId: null, background: false,
-      status: 'running', startedAt: p.timestamp || meta.timestamp || null, endedAt: null, lastAt: p.timestamp || null, tools: 0, items: 0,
-      tail: new TranscriptTail(file, 'codex', { sub: true }),
-    });
-    return true;
   }
   /**
    * 작업 중인 보조의 기록을 읽고 상태를 다시 판정한다.
@@ -97,7 +64,8 @@ export class SubagentWatcher {
       let items = []; try { items = s.tail.poll(); } catch (e) { this.log(`sub ${s.key} poll: ${e.message}`); }
       if (items.length) { updates.push({ key: s.key, items }); s.items = s.tail.items.length; s.tools = s.tail.tools; s.lastAt = s.tail.lastT || s.lastAt; if (!s.startedAt || (s.tail.firstT && s.tail.firstT < s.startedAt)) s.startedAt = s.tail.firstT || s.startedAt; changed = true; }
       if (!s.model && s.tail.model) { s.model = shortModel(s.tail.model); changed = true; } // 클로드 meta.json에 model이 없는 보조(Explore 등)는 기록의 모델 id에서(2026-09-11 실측)
-      if (this.agent === 'codex' && !s.detail && s.tail.firstUser) { s.detail = s.tail.firstUser.split('\n')[0].slice(0, 120); changed = true; }
+      const adDetail = strictAdapter(this.agent);
+      if (adDetail?.subagentDetail && !s.detail && s.tail.firstUser) { s.detail = adDetail.subagentDetail(s); changed = true; }
       const next = this.judge(s, parentTail, parentBusy, now);
       if (next !== s.status) { s.status = next; if (next === 'done' && !s.endedAt) s.endedAt = this.endedAt(s, parentTail) || s.lastAt || new Date().toISOString(); if (next === 'running') s.endedAt = null; changed = true; }
       if (s.status === 'done' && !items.length && !s.drained) { s.drained = true; try { s.doneSize = fs.statSync(s.file).size; } catch { s.doneSize = null; } } // 완료 판정 뒤 한 번 더 읽어 비었으면 그만 읽는다(크기는 재개 감지용)
@@ -112,14 +80,8 @@ export class SubagentWatcher {
     this.log(`sub ${s.key}: resumed (#${s.resumes})`);
   }
   judge(s, parentTail, parentBusy, now) {
-    if (this.agent === 'claude') {
-      // 완료 신호 = 부모 기록의 tool_result/<task-notification>(같은 id면 최신 시각으로 갱신됨). 재개된 보조는 재개 시각보다 나중 신호만 완료로 본다.
-      // 신호는 두 갈래 중 늦은 것: Agent 호출 id(finished) · 알림의 task-id = 보조 key(finishedByTask, SendMessage 재개 뒤의 알림은 이쪽에만 잡힌다 — v2.47.1).
-      const fin = this.finishedAt(s, parentTail);
-      if (fin && (!s.resumedAt || Date.parse(fin) > Date.parse(s.resumedAt))) return 'done';
-    } else {
-      if (s.tail.turnOpen === false) return 'done';
-    }
+    // 완료 신호는 에이전트마다 다르다(클로드 = 부모 기록의 tool_result/알림 · 코덱스 = 그 보조 rollout 의 task_complete)
+    if (legacyElseCodex(this.agent).subagentDone(this, s, parentTail)) return 'done';
     // 완료 신호가 없다: 부모가 작업 중이면 running. 부모가 대기·종료인데 기록이 60초 넘게 조용하면 quiet(완료로 단정하지 않는다)
     const last = s.lastAt ? Date.parse(s.lastAt) : 0;
     if (!parentBusy && now - last > QUIET_MS) return 'quiet';
@@ -133,8 +95,7 @@ export class SubagentWatcher {
     return a || b || null;
   }
   endedAt(s, parentTail) {
-    if (this.agent === 'claude') return this.finishedAt(s, parentTail);
-    return s.tail.turnDoneAt || null;
+    return legacyElseCodex(this.agent).subagentEndedAt(this, s, parentTail);
   }
   /** 화면에 보내는 목록(기록 본문 제외) */
   list() {

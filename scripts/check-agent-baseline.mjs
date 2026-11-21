@@ -464,6 +464,19 @@ async function child(mode, tmp) {
   odd.push(op3('switchTo codex (호환 = blocked → 곧 종료)', () => sm3.switchTo(lx.id, {})));
   la.sessionId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
   odd.push(op3("switchTo 목록 ['codex'] 카드", () => sm3.switchTo(la.id, {})));
+  // 세션 띄우기 함수를 바깥에서 직접 부름(buildCommand 가 만들지 않은 명령 · 인자 넷): 명령 글자로 에이전트를 가려 그 에이전트의 폴더 신뢰 · 열쇠를 한다
+  const work3 = path.join(tmp, 'Work Three'); fs.mkdirSync(work3, { recursive: true });
+  for (const [label, cmd] of [['codex 로 시작', { file: 'cmd.exe', args: ['/c', 'codex', '--x'] }], ['CODEX-cli 대문자', { file: 'cmd.exe', args: ['/c', 'CODEX', '-m'] }], ['claude 로 시작', { file: 'cmd.exe', args: ['/c', 'claude', '--y'] }], ['다른 실행 파일', { file: 'cmd.exe', args: ['/c', 'antigravity', '--z'] }], ['인수 없음', { file: 'x.exe' }], ['codexx(낱말 경계 아님)', { file: 'cmd.exe', args: ['/c', 'codexx'] }]]) {
+    odd.push(op3(`spawn 직접 — ${label}`, () => { const proc = sm3.spawn(cmd, path.join(work3, label.replace(/[^a-z]/gi, '_')), 80, 24); return { id: `direct-${label}`, pidKind: typeof proc.pid }; }));
+  }
+  odd.push(op3('spawn 직접 — buildCommand 가 만든 명령을 그대로', () => { const cmd = buildCommand({ agent: 'codex' }, work3); sm3.spawn(cmd, path.join(work3, 'built'), 80, 24); return { id: 'direct-built' }; }));
+  odd.push(op3('spawn 직접 — 만든 명령의 사본(펼쳐 복사)', () => { const cmd = { ...buildCommand({ agent: 'claude', model: 'sonnet' }, work3) }; sm3.spawn(cmd, path.join(work3, 'copy'), 80, 24); return { id: 'direct-copy' }; }));
+  // 설정 폴더가 환경 변수에 없을 때(영수증도 없으면) 폴더 신뢰는 모듈이 처음 정한 폴더(대체 폴더)에 적는다 — 처음 보는 작업 폴더로
+  const work2 = path.join(tmp, 'Work Two'); fs.mkdirSync(work2, { recursive: true });
+  const noHomeEnv = (fn) => { const keep = { c: process.env.CLAUDE_CONFIG_DIR, x: process.env.CODEX_HOME }; delete process.env.CLAUDE_CONFIG_DIR; delete process.env.CODEX_HOME; try { return fn(); } finally { if (keep.c !== undefined) process.env.CLAUDE_CONFIG_DIR = keep.c; if (keep.x !== undefined) process.env.CODEX_HOME = keep.x; } };
+  odd.push(op3('create claude — 환경 변수에 설정 폴더 없음', () => noHomeEnv(() => sm3.create({ cwd: work2, agent: 'claude', model: 'sonnet', prompt: '' }))));
+  odd.push(op3('create codex — 환경 변수에 설정 폴더 없음', () => noHomeEnv(() => sm3.create({ cwd: work2, agent: 'codex', prompt: '' }))));
+  odd.push({ name: '위 두 사례 뒤 대체 폴더의 설정', claude: (() => { try { return tok(fs.readFileSync(path.join(A.CLAUDE_CONFIG_DIR, '.claude.json'), 'utf8')).includes('Work Two'); } catch { return null; } })(), codex: (() => { try { return tok(fs.readFileSync(path.join(A.CODEX_HOME, 'config.toml'), 'utf8')).includes('work two'); } catch { return null; } })() });
   // 화면에 확인 물음이 뜸 → 0.7초 뒤 상태 판정 → 확인 카드(누를 키). 코덱스 업데이트 물음은 자동 응답(2 → Enter).
   const ASK = '\r\n Do you want to proceed?\r\n \u276f 1. Yes\r\n   2. Yes, and don\u2019t ask again\r\n   3. No\r\n\r\n Esc to cancel\r\n';
   const UPDATE = '\r\n Update available! 0.170.0 -> 0.171.0\r\n\r\n \u203a 1. Update now\r\n   2. Skip\r\n   3. Skip until next version\r\n\r\n enter continue \u00b7 esc skip\r\n';
@@ -479,6 +492,12 @@ async function child(mode, tmp) {
   p3(lx).dataCb('\r\nError: thread was created with a different model provider\r\n'); p3(lc).dataCb('\r\nclaude: command not found\r\n');
   await new Promise((r) => setTimeout(r, 300));
   p3(lx).exitCb({ exitCode: 1 }); p3(lc).exitCb({ exitCode: 0 }); p3(la).exitCb({ exitCode: 3 });
+  // 호환 처리가 오류(error)로 끝난 재개가 곧 종료: 그 이유가 카드에 남는다
+  newCase('op3 호환 오류 뒤 곧 종료');
+  const le = sm3.create({ cwd: work, agent: 'codex', prompt: '' }); le.sessionId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  align3 = () => ({ action: 'error', reason: '기록을 읽지 못함' }); sm3.switchTo(le.id, {}); align3 = () => ({ action: 'none' });
+  p3(le).exitCb({ exitCode: 2 });
+  live.exitAfterCompatError = deep({ status: le.status, exitCode: le.exitCode, exitReason: le.exitReason, compat: le.compat });
   live.exit = [lc, lx, la].map((r) => deep({ agent: r.agent, status: r.status, exitCode: r.exitCode, exitReason: r.exitReason, live: sm3.live.has(r.id) }));
   live.exitLogs = [...logs];
   live.saved = (() => { try { return JSON.parse(fs.readFileSync(path.join(state3, 'sessions.json'), 'utf8')).map((r) => card(r)); } catch (e) { return String(e?.message); } })();
@@ -525,8 +544,90 @@ async function child(mode, tmp) {
   out.oldCards = ['s1', 's2', 's3', 's4'].map((id) => {
     events = []; spawns = []; logs.length = 0; newCase(`old ${id}`);
     let rec = null, error = null; try { rec = sm2.resume(id, { prompt: 'RESUME' }); } catch (e) { error = { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; }
-    return { id, error, events, spawns, card: rec ? card(rec) : null };
+    return { id, error, events: [...events], spawns: [...spawns], card: rec ? card(rec) : null }; // 사본 — 뒤 구역에서 일어나는 일이 섞여 들지 않게
   });
+
+  // ③-4 보조 작업(서브에이전트) 감시: 부모 세션의 에이전트에 따라 어느 폴더에서 어떤 파일을 보조 기록으로 보고, 언제 끝났다고 보는가
+  {
+    const { SubagentWatcher } = await import(pathToFileURL(path.join(ROOT, 'daemon', 'subagents.mjs')).href);
+    const { TranscriptTail } = await import(pathToFileURL(path.join(ROOT, 'daemon', 'transcript.mjs')).href);
+    const sdir = path.join(tmp, 'sub'); const J = (o) => JSON.stringify(o) + '\n'; const T0 = '2026-01-01T00:20:';
+    const SID = '99999999-0000-4000-8000-000000000001';
+    // 클로드 꼴: <기록 폴더>\<세션 id>\subagents\agent-*.jsonl (+ .meta.json)
+    const cdir = path.join(sdir, 'c'), csub = path.join(cdir, SID, 'subagents'); fs.mkdirSync(csub, { recursive: true });
+    const cParent = path.join(cdir, `${SID}.jsonl`);
+    fs.writeFileSync(cParent, J({ type: 'assistant', timestamp: `${T0}01.000Z`, message: { content: [{ type: 'tool_use', id: 'ag1', name: 'Agent', input: { description: '동기 보조' } }, { type: 'tool_use', id: 'ag2', name: 'Agent', input: { description: '배경 보조' } }] } })
+      + J({ type: 'user', timestamp: `${T0}09.000Z`, message: { content: [{ type: 'tool_result', tool_use_id: 'ag1', content: '끝' }] } })
+      + J({ type: 'user', timestamp: `${T0}12.000Z`, message: { content: '<task-notification><task-id>b2</task-id><tool-use-id>zz</tool-use-id><status>completed</status><summary>Agent "배경 보조" completed</summary></task-notification>' } }));
+    fs.writeFileSync(path.join(csub, 'agent-a1.jsonl'), J({ type: 'user', isSidechain: true, timestamp: `${T0}02.000Z`, message: { content: '보조에게 준 일\n둘째 줄' } }) + J({ type: 'assistant', isSidechain: true, timestamp: `${T0}03.000Z`, message: { model: 'claude-sonnet-5-5', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'x' } }] } }));
+    fs.writeFileSync(path.join(csub, 'agent-a1.meta.json'), JSON.stringify({ description: '코드 찾기', agentType: 'Explore', toolUseId: 'ag1' }));
+    fs.writeFileSync(path.join(csub, 'agent-b2.jsonl'), J({ type: 'user', isSidechain: true, timestamp: `${T0}04.000Z`, message: { content: '배경 일' } }));
+    fs.writeFileSync(path.join(csub, 'agent-b2.meta.json'), JSON.stringify({ agentType: 'general-purpose', requestShape: 'background', model: 'haiku', toolUseId: 'ag2' }));
+    fs.writeFileSync(path.join(csub, 'agent-c3.jsonl'), J({ type: 'user', isSidechain: true, timestamp: `${T0}05.000Z`, message: { content: '끝 신호가 없는 보조' } }));
+    fs.writeFileSync(path.join(csub, 'other.jsonl'), J({ type: 'user', message: { content: '이름이 agent- 가 아님' } })); fs.writeFileSync(path.join(csub, 'agent-d4.txt'), 'x');
+    fs.writeFileSync(path.join(csub, 'agenda-e5.jsonl'), J({ type: 'user', isSidechain: true, timestamp: `${T0}06.000Z`, message: { content: '이름 머리가 agent- 가 아님(age… 로 시작)' } }));
+    fs.writeFileSync(path.join(csub, 'rollout-in-claude-dir.jsonl'), J({ type: 'session_meta', payload: { id: 'kz', parent_thread_id: SID } }));
+    // 코덱스 꼴: 부모 rollout 과 같은 폴더(와 오늘·어제 폴더)의 rollout-*.jsonl 가운데 parent_thread_id 가 부모인 것
+    const xdir = path.join(sdir, 'x'); fs.mkdirSync(xdir, { recursive: true });
+    const xParent = path.join(xdir, 'rollout-parent.jsonl');
+    fs.writeFileSync(xParent, J({ type: 'session_meta', timestamp: `${T0}01.000Z`, payload: { id: SID, originator: 'codex-tui' } }) + J({ type: 'response_item', timestamp: `${T0}02.000Z`, payload: { type: 'function_call', name: 'spawn_agent', call_id: 'sp1', arguments: '{}' } }));
+    const kid = (name, id, parent, extra, lines) => fs.writeFileSync(path.join(xdir, name), J({ type: 'session_meta', timestamp: `${T0}03.000Z`, payload: { id, parent_thread_id: parent, timestamp: `${T0}03.500Z`, ...extra } }) + lines.map(J).join(''));
+    kid('rollout-k1.jsonl', 'k1', SID, { source: { subagent: { thread_spawn: { agent_nickname: '탐색', agent_path: 'team/explorer' } } } }, [{ type: 'event_msg', timestamp: `${T0}04.000Z`, payload: { type: 'task_started' } }, { type: 'response_item', timestamp: `${T0}05.000Z`, payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '찾아 줘\n자세히' }] } }, { type: 'response_item', timestamp: `${T0}06.000Z`, payload: { type: 'function_call', name: 'shell', call_id: 'c', arguments: '{"command":["ls"]}' } }, { type: 'event_msg', timestamp: `${T0}07.000Z`, payload: { type: 'task_complete' } }]);
+    kid('rollout-k2.jsonl', 'k2', 'someone-else', {}, [{ type: 'event_msg', timestamp: `${T0}04.000Z`, payload: { type: 'task_started' } }]);
+    kid('rollout-k3.jsonl', 'k3', SID, {}, [{ type: 'event_msg', timestamp: `${T0}04.000Z`, payload: { type: 'task_started' } }, { type: 'response_item', timestamp: `${T0}05.000Z`, payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '아직 도는 보조' }] } }]);
+    kid('notes-k9.jsonl', 'k9', SID, {}, [{ type: 'event_msg', timestamp: `${T0}04.000Z`, payload: { type: 'task_started' } }]); // 속은 맞지만 이름이 rollout- 이 아님
+    kid('rollout-k5.jsonl', 'k5', SID, {}, [{ type: 'response_item', timestamp: `${T0}05.000Z`, payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '차례 신호가 없는 보조' }] } }]);
+    fs.writeFileSync(path.join(xdir, 'rollout-k4.jsonl'), '{ 깨진 첫 줄\n'); fs.writeFileSync(path.join(xdir, 'agent-in-codex-dir.jsonl'), J({ type: 'user', isSidechain: true, message: { content: 'x' } }));
+    const strip = (l) => deep(l.map((s) => ({ ...s, file: path.relative(sdir, s.file) })));
+    const watch = (agent, recordPath, parentAgent = agent) => {
+      const lg = []; let out2;
+      try {
+        const w = new SubagentWatcher({ agent, recordPath, sessionId: SID }, (m) => lg.push(tok(m)));
+        const parent = new TranscriptTail(recordPath, parentAgent); parent.poll();
+        const dirs = w.dirs().map((d) => (inTmp(d) ? path.relative(sdir, d) : '<날짜 폴더>'));
+        const r = { dirs, scan1: w.scan(true, true), version1: w.version, afterScan: strip(w.list()) };
+        const p1 = w.poll(parent, true); r.poll1 = { changed: p1.changed, updates: p1.updates.map((u) => `${u.key}:${u.items.map((i) => i.kind).join(',')}`), list: strip(w.list()), running: w.running() };
+        const p2 = w.poll(parent, false); r.poll2 = { changed: p2.changed, updates: p2.updates.length, list: strip(w.list()), running: w.running() };
+        r.scan2 = w.scan(false, true); r.scanThrottled = w.scan(true); r.version = w.version;
+        r.transcripts = Object.fromEntries([...w.subs.keys()].map((k) => { const t = w.transcript(k); return [k, deep({ kinds: t.items.map((i) => i.kind).join(','), meta: t.meta })]; }));
+        r.missing = w.transcript('없는 키'); r.get = w.get('없는 키');
+        out2 = r;
+      } catch (e) { out2 = { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; }
+      return { agent: JSON.stringify(agent) ?? '<undefined>', parentReadAs: JSON.stringify(parentAgent) ?? '<undefined>', result: out2, logs: lg };
+    };
+    out.subagents = [watch('claude', cParent), watch('codex', xParent), watch('gemini', cParent), watch('gemini', xParent), watch(['claude'], cParent), watch(['codex'], xParent), watch(undefined, cParent), watch('claude', xParent), watch('codex', cParent),
+      (() => { try { return deep(new SubagentWatcher({ agent: 'claude', recordPath: cParent, sessionId: null }).dirs()); } catch (e) { return { throws: e?.message }; } })()];
+  }
+
+  // ③-5 제목 생성: 세션의 에이전트에 따라 어떤 헤드리스 명령을 어떤 입력·환경으로 부르고, 그 출력에서 제목을 어떻게 뽑는가(진짜 프로세스는 띄우지 않는다 — 가짜 spawn)
+  {
+    const Tt = await import(pathToFileURL(path.join(ROOT, 'daemon', 'titler.mjs')).href);
+    const blocked = cp.spawn; const calls = [];
+    const fakeProc = (plan) => { const h = { stdout: {}, stderr: {}, exit: null, error: null }; const proc = { stdin: { end(t) { plan.stdin = t; } }, stdout: { on(_, cb) { h.stdout = cb; } }, stderr: { on(_, cb) { h.stderr = cb; } }, on(evn, cb) { h[evn] = cb; }, kill() { plan.killed = true; } }; setTimeout(() => { if (plan.out) h.stdout(plan.out); if (plan.err) h.stderr(plan.err); if (plan.error) h.error(new Error(plan.error)); else h.exit(plan.code ?? 0); }, 5); return proc; };
+    const title = async (name, prompt, opt, plan = {}) => {
+      const lg = []; let call = null;
+      cp.spawn = (file, args, o) => { if (plan.throwOnSpawn) throw new Error('spawn 실패'); call = { file, args, cwdIsTmp: o.cwd === os.tmpdir(), windowsHide: o.windowsHide, stdio: o.stdio, env: Object.fromEntries(Object.keys(o.env).filter((k) => /^(CLAUDE|CODEX|ANTHROPIC|OPENAI|MAX_THINKING)/i.test(k)).sort().map((k) => [k, o.env[k]])) }; return fakeProc(plan); };
+      syncBuiltinESMExports();
+      let result; try { result = await Tt.generateTitle(prompt, { ...opt, log: (m) => lg.push(tok(m).replace(/\d+\.\ds/g, '<초>')) }); } catch (e) { result = { throws: e?.message }; }
+      cp.spawn = blocked; syncBuiltinESMExports();
+      return deep({ name, agent: JSON.stringify(opt.agent) ?? '<undefined>', result, call, stdin: plan.stdin ?? null, logs: lg });
+    };
+    const EXE = 'X:\\bin\\claude.exe'; const REQ = withNote('수행평가 채점 기준을 고쳐 줘');
+    function withNote(p) { return `${p}\n\n[첨부 파일]\n- C:\\x\\a.png`; }
+    out.titler = [];
+    for (const agent of ['claude', 'codex', 'gemini', undefined, ['codex'], ['claude']]) {
+      out.titler.push(await title('보통', REQ, { agent, exe: EXE, model: null }, { out: '채점 기준 수정\n', code: 0 }));
+      out.titler.push(await title('모델 지정', REQ, { agent, exe: EXE, model: 'gpt-x-mini' }, { out: 'tokens used\n1,234\n"채점 기준 고치기."\n', code: 0 }));
+    }
+    out.titler.push(await title('클로드: 실행 파일 없음(null)', REQ, { agent: 'claude', exe: null }, {}));
+    out.titler.push(await title('코덱스: 실행 파일 인자는 쓰지 않음', REQ, { agent: 'codex', exe: null }, { out: '진행 줄\n제목 줄\n', code: 0 }));
+    out.titler.push(await title('문장으로 답함 → 버림', REQ, { agent: 'claude', exe: EXE }, { out: '채점 기준을 수정합니다\n', code: 0 }));
+    out.titler.push(await title('종료 코드 1', REQ, { agent: 'codex' }, { out: '제목\n', err: '오류 글', code: 1 }));
+    out.titler.push(await title('프로세스 오류', REQ, { agent: 'claude', exe: EXE }, { error: 'ENOENT' }));
+    out.titler.push(await title('spawn 이 던짐', REQ, { agent: 'codex' }, { throwOnSpawn: true }));
+    out.titler.push(await title('빈 요청', '   ', { agent: 'codex' }, {}));
+    out.titlerHelpers = deep({ lastAnswer: ['a\nb\n', 'x\ntokens used\n12,345\n', '', null, '한 줄'].map((s) => Tt.lastAnswer(s)), constants: { TITLE_MODEL: Tt.TITLE_MODEL, CODEX_TITLE_MODEL: Tt.CODEX_TITLE_MODEL }, exports: Object.keys(Tt).sort() });
+  }
 
   // 설정 파일에 남은 것(폴더 신뢰·시작 안내·fast 설정)
   const read = (f) => { try { return tok(fs.readFileSync(f, 'utf8')); } catch { return null; } };

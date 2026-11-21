@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { soulRoot } from '../paths.mjs';
 import { normCwd } from '../recordutil.mjs';
+import { preTrust as trustBeforeSpawn } from '../trust.mjs';
+import { applyLongKey } from '../auth.mjs';
 
 export const id = 'claude';
 const FACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -79,6 +81,51 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
   const recordPath = path.join(CLAUDE_CONFIG_DIR, 'projects', claudeProjectSlug(cwd), `${sessionId}.jsonl`);
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId, recordPath, resumeCmd: `claude --resume ${sessionId}`, cmdline: args.join(' ') };
 }
+
+// ───────────────────────── 세션을 띄우기 직전 ─────────────────────────
+/** 폴더 신뢰 물음 선답: 이 폴더의 "Do you trust…" 를 미리 "예"로 적어 둔다(env = 자식에게 줄 환경 — 설정 폴더는 거기 것이 먼저). 절대 던지지 않는다. */
+export const preTrust = (cwd, env) => trustBeforeSpawn({ agent: id, cwd, env, fallback: { claudeConfigDir: CLAUDE_CONFIG_DIR } });
+/** 1년 열쇠가 살아 있으면 자식 환경에 넣는다(돌려주는 값에 열쇠는 없다) */
+export const sessionKey = (env) => applyLongKey(env, { configDir: CLAUDE_CONFIG_DIR });
+
+// ───────────────────────── 보조 작업(서브에이전트) ─────────────────────────
+//   <기록파일 폴더>\<세션id>\subagents\agent-<id>.jsonl + agent-<id>.meta.json(description·model·agentType·toolUseId)
+//   부모 연결 = meta.toolUseId ↔ 부모의 Agent 도구호출 id. 완료 = 부모 기록에 그 id의 tool_result(동기형) 또는 <task-notification>(배경형).
+//   (w = SubagentWatcher — 부모 세션의 기록 경로·세션 id 와 보조 목록 subs 를 지닌다)
+const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+/** 살펴볼 폴더들 */
+export const subagentDirs = (w) => (w.sessionId ? [path.join(path.dirname(w.recordPath), w.sessionId, 'subagents')] : []);
+export const subagentFilePrefix = 'agent-';
+/** 보조 기록 파일 하나를 목록에 올린다(makeTail = 그 파일을 읽을 꼬리 읽기를 만드는 함수) */
+export function addSubagent(w, file, makeTail) {
+  const key = path.basename(file, '.jsonl').replace(/^agent-/, '');
+  const meta = readJson(file.replace(/\.jsonl$/, '.meta.json')) || {};
+  let born = null; try { born = fs.statSync(file).birthtime?.toISOString?.() || null; } catch {}
+  w.subs.set(key, {
+    key, file, agentType: meta.agentType || '', name: meta.description || meta.agentType || key, detail: meta.agentType ? `${meta.agentType}${meta.requestShape === 'background' ? ' · 배경 실행' : ''}` : '',
+    model: meta.model || '', toolUseId: meta.toolUseId || null, background: meta.requestShape === 'background',
+    status: 'running', startedAt: born, endedAt: null, lastAt: born, tools: 0, items: 0,
+    tail: makeTail(file),
+  });
+  return true;
+}
+/** 끝났는가: 완료 신호 = 부모 기록의 tool_result/<task-notification>(같은 id면 최신 시각으로 갱신됨). 재개된 보조는 재개 시각보다 나중 신호만 완료로 본다.
+ *  신호는 두 갈래 중 늦은 것: Agent 호출 id(finished) · 알림의 task-id = 보조 key(finishedByTask, SendMessage 재개 뒤의 알림은 이쪽에만 잡힌다 — v2.47.1). */
+export function subagentDone(w, s, parentTail) {
+  const fin = w.finishedAt(s, parentTail);
+  return !!(fin && (!s.resumedAt || Date.parse(fin) > Date.parse(s.resumedAt)));
+}
+export const subagentEndedAt = (w, s, parentTail) => w.finishedAt(s, parentTail);
+
+// ───────────────────────── 제목 생성(헤드리스) ─────────────────────────
+/** 제목 한 줄을 짓게 할 실행 사양. 실행 파일을 못 찾으면 { skip: 이유 }. (exe 를 안 주면 findExe 로 찾는다) */
+export function titleCommand({ system, request, exe, findExe, titleModel }) {
+  const file = exe === undefined ? findExe() : exe;
+  if (!file) return { skip: 'title gen skipped: claude.exe not found' };
+  return { file, stdinText: null, args: ['-p', '--model', titleModel, '--effort', 'low', '--system-prompt', system, '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--output-format', 'text', '--', request] };
+}
+/** 헤드리스 출력에서 제목 재료: 출력 그대로 */
+export const titleFromOutput = (out) => out;
 
 // ───────────────────────── 기록 파일 찾기 ─────────────────────────
 // 클로드는 세션 id 를 우리가 정해 넘기므로 기록 경로를 미리 안다(buildCommand 의 recordPath). 여기서는 그 기록이 "안 생겼을 때"만 본다.

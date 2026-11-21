@@ -3,6 +3,9 @@
 // 이 파일을 불러오는 것만으로는 아무 파일도 쓰지 않고 아무 프로세스도 띄우지 않는다.
 // 어댑터가 내놓는 것(걸음 1, 명령·선택값):
 //   id · table(목록 뼈대) · permissionFields(sel, table) · actualFallback(model) · actualPrefix · isFast(model, actual) · permLabel(s, tables) · buildCommand(s, cwd, { resumeId })
+// (걸음 3, 세션을 띄우기 직전 · 재개 전 · 확인 카드): preTrust(cwd, env) · sessionKey(env)(있는 에이전트만) · beforeResume(sm, id, rec, faceVersion)(있는 에이전트만) · promptKeys(prompt)(있는 에이전트만)
+//   보조 작업: subagentDirs(w) · subagentFilePrefix · addSubagent(w, file, makeTail) · subagentDone(w, s, parentTail) · subagentEndedAt(w, s, parentTail) · subagentDetail(s)(있는 에이전트만)
+//   제목 생성: titleCommand({ system, request, exe, findExe, model, titleModel, codexTitleModel }) · titleFromOutput(out, { lastAnswer })
 // (걸음 2, 기록 파일 찾기): watchRecord(sm, id, rec). 기록 해석(parseRecord · turnState · contextWindowGuess)은 <id>.records.mjs 와 records.mjs 명부에 따로 있다.
 import * as claude from './claude.mjs';
 import * as codex from './codex.mjs';

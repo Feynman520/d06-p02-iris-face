@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { stripFaceNote } from './facenote.mjs';
 import { applyLongKey } from './auth.mjs';
 import { CLAUDE_CONFIG_DIR } from './agents.mjs';
+import { legacyElseClaude } from './agents/index.mjs';
 
 export const TITLE_MODEL = 'haiku';
 const TIMEOUT_MS = 90_000;
@@ -73,22 +74,14 @@ export function generateTitle(prompt, { log = () => {}, exe = undefined, agent =
   if (!src) return Promise.resolve('');
   // 세션의 에이전트로 제목을 짓는다(2026-09-19, v2.68): 코덱스 세션인데 헤드리스 클로드(Haiku)를 부르면
   // 클로드 계정이 없는 PC(코덱스만 로그인)에서 세션마다 중계기 429 가 쌓였다(대시보드 "Claude — (none available) 429").
-  const useCodex = agent === 'codex';
-  let file, args, stdinText = null;
-  if (useCodex) {
-    // codex.cmd(심)는 PATH 로 찾는다 — cmd.exe /c 를 거치므로 요청문은 인수가 아니라 표준 입력으로 넘긴다(따옴표·한글 안전).
-    file = 'cmd.exe';
-    // --dangerously-bypass-hook-trust: 코덱스 0.156.0 부터 설정 키 bypass_hook_trust 는 무시("unrecognized configuration setting")되고 이 깃발만 통한다(2026-09-23 실측; TUI 세션과 같은 깃발).
-    args = ['/c', 'codex', 'exec', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-m', model || CODEX_TITLE_MODEL, '-c', 'model_reasoning_effort=low', '-'];
-    stdinText = `${SYSTEM}\n\n${wrap(src)}\n`;
-  } else {
-    file = exe === undefined ? findClaudeExe() : exe;
-    if (!file) { log('title gen skipped: claude.exe not found'); return Promise.resolve(''); }
-    args = ['-p', '--model', TITLE_MODEL, '--effort', 'low', '--system-prompt', SYSTEM, '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--output-format', 'text', '--', wrap(src)];
-  }
+  // 어떤 헤드리스 명령으로 짓는지는 에이전트마다 다르다(agents/<id>.mjs 의 titleCommand) — 코덱스가 아니면 클로드로 짓는 옛 고르기 그대로.
+  const ad = legacyElseClaude(agent);
+  const spec = ad.titleCommand({ system: SYSTEM, request: wrap(src), exe, findExe: findClaudeExe, model, titleModel: TITLE_MODEL, codexTitleModel: CODEX_TITLE_MODEL });
+  if (spec.skip) { log(spec.skip); return Promise.resolve(''); }
+  const { file, args, stdinText } = spec;
   return new Promise((resolve) => {
     const t0 = Date.now(); let out = '', err = '', done = false;
-    const finish = (v, why) => { if (done) return; done = true; clearTimeout(timer); log(`title gen(${useCodex ? 'codex' : 'claude'}) ${why} ${((Date.now() - t0) / 1000).toFixed(1)}s${v ? ` "${v}"` : ''}${err.trim() ? ` stderr=${err.trim().slice(0, 160)}` : ''}`); resolve(v); };
+    const finish = (v, why) => { if (done) return; done = true; clearTimeout(timer); log(`title gen(${ad.id}) ${why} ${((Date.now() - t0) / 1000).toFixed(1)}s${v ? ` "${v}"` : ''}${err.trim() ? ` stderr=${err.trim().slice(0, 160)}` : ''}`); resolve(v); };
     let proc;
     try { proc = spawn(file, args, { env: childEnv(), cwd: os.tmpdir(), windowsHide: true, stdio: [stdinText == null ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
     catch (e) { return finish('', `spawn failed: ${e.message}`); }
@@ -97,7 +90,7 @@ export function generateTitle(prompt, { log = () => {}, exe = undefined, agent =
     proc.stdout.on('data', (d) => { out += d; });
     proc.stderr.on('data', (d) => { err += d; });
     proc.on('error', (e) => finish('', `error: ${e.message}`));
-    proc.on('exit', (code) => { const t = cleanTitle(useCodex ? lastAnswer(out) : out); finish(t, code === 0 && t ? 'ok' : `exit=${code} out="${String(out).trim().slice(0, 80)}"`); });
+    proc.on('exit', (code) => { const t = cleanTitle(ad.titleFromOutput(out, { lastAnswer })); finish(t, code === 0 && t ? 'ok' : `exit=${code} out="${String(out).trim().slice(0, 80)}"`); });
   });
 }
 
