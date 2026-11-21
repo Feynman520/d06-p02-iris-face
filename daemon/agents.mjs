@@ -6,18 +6,13 @@
 // (2026-11-21 에이전트 장부 걸음 1 — 바깥에서 보는 함수 이름·돌려주는 모양·기본값·부르는 순서는 그대로).
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ADAPTERS } from './agents/index.mjs';
+import { ADAPTERS, strictAdapter, legacyElseCodex } from './agents/index.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export { CLAUDE_CONFIG_DIR, claudeProjectSlug } from './agents/claude.mjs';
 export { CODEX_HOME } from './agents/codex.mjs';
 
-// 어댑터 고르기 — 옮기기 전 코드의 `agent === 'claude'` · `agent === 'codex'` 와 똑같은 판정을 지킨다(걸음 1 = 동작을 바꾸지 않는 옮기기).
-//   strictAdapter   = 글자가 정확히 같을 때만 그 어댑터. 표 찾기(AGENTS[x])와 달리 목록 `['claude']` 같은 값은 어느 쪽도 아니다(null).
-//   legacyElseCodex = 옛 폴백(지금 동작 그대로): 클로드가 아니면 모두 코덱스 규칙. 옮기기 전에 `? 클로드 : 코덱스` 로 갈리던 자리에서만 쓴다.
-// 둘의 어긋남(모르는 이름·글자가 아닌 값의 지금 동작)은 그것을 거절하는 걸음(에이전트 장부 걸음 5)에서 없앤다. 새 코드에서 legacyElseCodex 를 쓰지 않는다.
-const strictAdapter = (agent) => { for (const id of Object.keys(ADAPTERS)) if (agent === id) return ADAPTERS[id]; return null; };
-const legacyElseCodex = (agent) => (agent === 'claude' ? ADAPTERS.claude : ADAPTERS.codex);
+// 어댑터 고르기(strictAdapter · legacyElseCodex)는 옮기기 전 코드의 글자 비교와 똑같은 판정이다 — 뜻과 없앨 때는 agents/index.mjs 머리말.
 // 재개가 지켜도 되는 "쓰던 정확한 모델 이름"의 모양(지금은 두 에이전트의 이름 모양을 한 식으로 본다 — 머리 글자는 어댑터의 actualPrefix)
 const ACTUAL_NAME_RE = /^(claude-[a-z0-9-]+|gpt-[a-z0-9.-]+)$/;
 const NO_PERMISSION_FIELDS = Object.freeze({ permission: '', approval: '', sandbox: '' });

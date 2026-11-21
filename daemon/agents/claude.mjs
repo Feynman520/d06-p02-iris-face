@@ -9,6 +9,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { soulRoot } from '../paths.mjs';
+import { normCwd } from '../recordutil.mjs';
 
 export const id = 'claude';
 const FACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -77,4 +78,63 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
   const args = resumeId ? [...base, '--resume', resumeId] : [...base, '--session-id', sessionId];
   const recordPath = path.join(CLAUDE_CONFIG_DIR, 'projects', claudeProjectSlug(cwd), `${sessionId}.jsonl`);
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId, recordPath, resumeCmd: `claude --resume ${sessionId}`, cmdline: args.join(' ') };
+}
+
+// ───────────────────────── 기록 파일 찾기 ─────────────────────────
+// 클로드는 세션 id 를 우리가 정해 넘기므로 기록 경로를 미리 안다(buildCommand 의 recordPath). 여기서는 그 기록이 "안 생겼을 때"만 본다.
+const RELAUNCH_WATCH_MS = 15 * 60_000;
+const UUID_JSONL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+
+/**
+ * 클로드가 새 대화 번호로 스스로 재시작했는지 지켜본다(v2.99, 2026-11-09 학교 컴퓨터실 "대화창에 아무것도 안 나옴").
+ * 클로드코드 2.1.27x 는 대화가 없을 때 시작 권유(전체화면 렌더러 등)를 수락하면 `--session-id` 로 준 번호를 버리고 새 번호로 다시 뜬다
+ * → 우리가 예상한 기록 파일은 영영 안 생긴다. 예상 파일이 없으면 같은 프로젝트 폴더에서 이 세션 뒤에 생긴 새 기록 **하나**를 찾아 따라간다.
+ * (sm = SessionManager — 카드 표·살아 있는 세션 표·저장·방송을 빌려 쓴다)
+ */
+export function watchRecord(sm, id, rec) {
+  const since = Date.now(), expected = rec.recordPath;
+  if (!expected) return;
+  const tick = () => {
+    if (!sm.sessions.has(id) || !sm.live.has(id) || rec.recordPath !== expected) return;
+    if (fs.existsSync(expected) || Date.now() - since > RELAUNCH_WATCH_MS) return;
+    const known = new Set([...sm.sessions.values()].filter(r => r !== rec).flatMap(r => [r.recordPath, ...(r.previous || []).map(p => p.recordPath)]).filter(Boolean).map(p => p.toLowerCase()));
+    const found = findRelaunchedRecord({ dir: path.dirname(expected), cwd: rec.cwd, since, known });
+    if (found) {
+      rec.previous = [...(rec.previous || []), { agent: rec.agent, sessionId: rec.sessionId, recordPath: expected, until: new Date().toISOString(), reason: 'relaunched' }];
+      rec.sessionId = found.sessionId; rec.recordPath = found.file; rec.resumeCmd = `claude --resume ${found.sessionId}`;
+      sm.hooks.onLog?.(`${id} claude relaunched with a new session id → following ${found.sessionId} (expected ${path.basename(expected)} never appeared)`);
+      sm.save(); sm.hooks.onList?.(); return;
+    }
+    setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 3000);
+}
+/** 같은 프로젝트 폴더에서 since 뒤에 생긴, known 에 없는, cwd 가 같은 클로드 기록. 후보가 정확히 하나일 때만 돌려준다(둘 이상이면 고르지 않음).
+ *  @returns {{file:string, sessionId:string}|null} */
+export function findRelaunchedRecord({ dir, cwd, since, known = new Set() }) {
+  let names; try { names = fs.readdirSync(dir); } catch { return null; }
+  const hits = [];
+  for (const f of names) {
+    if (!UUID_JSONL.test(f)) continue;
+    const full = path.join(dir, f);
+    if (known.has(full.toLowerCase())) continue;
+    let st; try { st = fs.statSync(full); } catch { continue; }
+    if (!st.isFile() || Math.max(st.birthtimeMs || 0, st.mtimeMs) < since - 2000) continue;
+    if (st.birthtimeMs && st.birthtimeMs < since - 2000) continue; // 이 세션보다 먼저 있던 기록(다른 창이 이어 쓰는 중)은 아니다
+    const recCwd = readRecordCwd(full);
+    if (recCwd == null || normCwd(recCwd) !== normCwd(cwd)) continue;
+    hits.push({ file: full, sessionId: f.slice(0, -'.jsonl'.length) });
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+function readRecordCwd(file) {
+  let fd; try { fd = fs.openSync(file, 'r'); } catch { return null; }
+  try {
+    const buf = Buffer.alloc(256 * 1024); const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    for (const line of buf.subarray(0, n).toString('utf8').split('\n')) {
+      if (!line.includes('"cwd"')) continue;
+      try { const o = JSON.parse(line); if (typeof o.cwd === 'string') return o.cwd; } catch { /* 잘린 줄 */ }
+    }
+    return null;
+  } finally { fs.closeSync(fd); }
 }

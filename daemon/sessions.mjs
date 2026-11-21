@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { buildCommand, normalize, CODEX_HOME, CLAUDE_CONFIG_DIR, assertExpected, modelForResume, keepResumeModel } from './agents.mjs';
+import { legacyElseClaude } from './agents/index.mjs';
 import { preTrust } from './trust.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
@@ -63,7 +64,6 @@ export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시
 const EARLY_EXIT_MS = 20000; // 이보다 빨리 끝난 CLI 는 시작 실패로 보고 화면에서 원인 줄을 고른다(v2.98)
 const FACE_VERSION = (() => { try { return require('../package.json').version || ''; } catch { return ''; } })();
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-const normCwd = (p) => String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 
 // 데몬이 클로드코드 세션 안에서 시작됐을 때 물려받는 "자식 세션" 표식을 걷어낸다(남으면 새 세션이 기록파일을 저장하지 않음).
 export function childEnv() {
@@ -179,7 +179,7 @@ export class SessionManager {
     this.nameSession(id, prompt);
     // Face 안내문을 첫 요청 앞에 붙인다(새 세션에만; 이어가기는 맥락에 이미 있음)
     this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
-    if (sel.agent === 'codex') this.watchCodexRollout(id, rec); else this.watchClaudeRecord(id, rec);
+    legacyElseClaude(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
     this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -241,7 +241,7 @@ export class SessionManager {
     Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
     // 다른 에이전트로 새로 띄우는 것이므로 안내문을 이어받기 요청 앞에 붙인다
     this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
-    if (sel.agent === 'codex') this.watchCodexRollout(id, rec); else this.watchClaudeRecord(id, rec);
+    legacyElseClaude(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
     this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -509,95 +509,7 @@ export class SessionManager {
     return report;
   }
 
-  // 클로드가 스스로 새 대화 번호로 재시작했을 때 따라가기(v2.99, 2026-11-09 학교 컴퓨터실 실측):
-  // 2.1.27x 는 "새 전체화면 렌더러" 권유를 수락하면 재시작하는데, 대화가 아직 없으면 --session-id 를 버리고 새 번호로 연다
-  // (freshIfNoTranscript). 그러면 우리가 준 번호의 기록 파일은 영영 안 생기고 터미널에만 답이 나와 대화창이 빈다.
-  // 예상 파일이 생기면 바로 그만 두고, 안 생긴 채로 같은 폴더(같은 cwd)에 이 세션 뒤에 태어난 낯선 기록이 **딱 하나**면 그것으로 갈아탄다.
-  watchClaudeRecord(id, rec) {
-    const since = Date.now(), expected = rec.recordPath;
-    if (!expected) return;
-    const tick = () => {
-      if (!this.sessions.has(id) || !this.live.has(id) || rec.recordPath !== expected) return;
-      if (fs.existsSync(expected) || Date.now() - since > RELAUNCH_WATCH_MS) return;
-      const known = new Set([...this.sessions.values()].filter(r => r !== rec).flatMap(r => [r.recordPath, ...(r.previous || []).map(p => p.recordPath)]).filter(Boolean).map(p => p.toLowerCase()));
-      const found = findRelaunchedRecord({ dir: path.dirname(expected), cwd: rec.cwd, since, known });
-      if (found) {
-        rec.previous = [...(rec.previous || []), { agent: rec.agent, sessionId: rec.sessionId, recordPath: expected, until: new Date().toISOString(), reason: 'relaunched' }];
-        rec.sessionId = found.sessionId; rec.recordPath = found.file; rec.resumeCmd = `claude --resume ${found.sessionId}`;
-        this.hooks.onLog?.(`${id} claude relaunched with a new session id → following ${found.sessionId} (expected ${path.basename(expected)} never appeared)`);
-        this.save(); this.hooks.onList?.(); return;
-      }
-      setTimeout(tick, 3000);
-    };
-    setTimeout(tick, 3000);
-  }
-
-  // 코덱스 롤아웃 파일은 첫 메시지 뒤에 생기므로 세션이 살아 있는 동안 3초마다 cwd로 짝을 맞춘다
-  watchCodexRollout(id, rec) {
-    const started = Date.now();
-    const known = new Set([...this.sessions.values()].map(r => r.recordPath).filter(Boolean));
-    const tick = () => {
-      if (!this.sessions.has(id) || rec.recordPath || !this.live.has(id)) return;
-      try {
-        for (const dir of recentSessionDirs()) for (const f of fs.readdirSync(dir)) {
-          if (!f.startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
-          const full = path.join(dir, f); if (known.has(full)) continue;
-          if (fs.statSync(full).mtimeMs < started - 10_000) continue;
-          const first = readFirstLine(full); if (!first) continue;
-          let meta; try { meta = JSON.parse(first); } catch { continue; }
-          const p = meta?.payload || {};
-          if (meta.type !== 'session_meta' || p.originator !== 'codex-tui' || p.parent_thread_id) continue;
-          if (normCwd(p.cwd) !== normCwd(rec.cwd)) continue;
-          rec.sessionId = p.id; rec.recordPath = full; rec.resumeCmd = `codex resume ${p.id}`;
-          this.save(); this.hooks.onList?.(); return;
-        }
-      } catch { /* retry */ }
-      setTimeout(tick, 3000);
-    };
-    setTimeout(tick, 3000);
-  }
+  // 기록 파일 찾기(클로드 = 새 번호로 재시작했을 때 따라가기 · 코덱스 = rollout 파일 짝 맞추기)는 daemon/agents/<id>.mjs 의 watchRecord 가 한다.
 }
-const RELAUNCH_WATCH_MS = 15 * 60_000;
-const UUID_JSONL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
-/** 같은 프로젝트 폴더에서 since 뒤에 생긴, known 에 없는, cwd 가 같은 클로드 기록. 후보가 정확히 하나일 때만 돌려준다(둘 이상이면 고르지 않음).
- *  @returns {{file:string, sessionId:string}|null} */
-export function findRelaunchedRecord({ dir, cwd, since, known = new Set() }) {
-  let names; try { names = fs.readdirSync(dir); } catch { return null; }
-  const hits = [];
-  for (const f of names) {
-    if (!UUID_JSONL.test(f)) continue;
-    const full = path.join(dir, f);
-    if (known.has(full.toLowerCase())) continue;
-    let st; try { st = fs.statSync(full); } catch { continue; }
-    if (!st.isFile() || Math.max(st.birthtimeMs || 0, st.mtimeMs) < since - 2000) continue;
-    if (st.birthtimeMs && st.birthtimeMs < since - 2000) continue; // 이 세션보다 먼저 있던 기록(다른 창이 이어 쓰는 중)은 아니다
-    const recCwd = readRecordCwd(full);
-    if (recCwd == null || normCwd(recCwd) !== normCwd(cwd)) continue;
-    hits.push({ file: full, sessionId: f.slice(0, -'.jsonl'.length) });
-  }
-  return hits.length === 1 ? hits[0] : null;
-}
-function readRecordCwd(file) {
-  let fd; try { fd = fs.openSync(file, 'r'); } catch { return null; }
-  try {
-    const buf = Buffer.alloc(256 * 1024); const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    for (const line of buf.subarray(0, n).toString('utf8').split('\n')) {
-      if (!line.includes('"cwd"')) continue;
-      try { const o = JSON.parse(line); if (typeof o.cwd === 'string') return o.cwd; } catch { /* 잘린 줄 */ }
-    }
-    return null;
-  } finally { fs.closeSync(fd); }
-}
-function recentSessionDirs() {
-  const out = [];
-  for (const d of [new Date(), new Date(Date.now() - 86400000)]) {
-    const dir = path.join(CODEX_HOME, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
-    if (fs.existsSync(dir)) out.push(dir);
-  }
-  return out;
-}
-function readFirstLine(file) {
-  const fd = fs.openSync(file, 'r');
-  try { const buf = Buffer.alloc(64 * 1024); const n = fs.readSync(fd, buf, 0, buf.length, 0); const s = buf.subarray(0, n).toString('utf8'); const i = s.indexOf('\n'); return i >= 0 ? s.slice(0, i) : (n < buf.length ? s : ''); }
-  finally { fs.closeSync(fd); }
-}
+// 다른 곳(검사 포함)이 여기서 가져다 쓰던 이름 — 자리는 클로드 어댑터로 옮겼다
+export { findRelaunchedRecord } from './agents/claude.mjs';

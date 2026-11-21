@@ -3,8 +3,10 @@
 // 바깥은 daemon/agents.mjs 의 공개 함수(normalize·buildCommand …)로만 쓴다 — 여기 함수는 그 안에서 불린다.
 //   codex -m <model> -c model_reasoning_effort=<effort> -c service_tier=fast [--sandbox read-only]   (재개: codex resume <id>)
 //           service_tier=fast = 코덱스 /fast(빠른 응답) 항상 켬 — 사용자 결정 2026-09-09. 설정 파일이 아니라 시작 플래그로만 준다.
+import fs from 'node:fs';
 import path from 'node:path';
 import { soulRoot } from '../paths.mjs';
+import { normCwd, readFirstLine } from '../recordutil.mjs';
 
 export const id = 'codex';
 export const CODEX_HOME = process.env.CODEX_HOME || path.join(soulRoot(), '_agent', 'codex');
@@ -63,4 +65,39 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
   const base = ['codex', '-m', s.modelActual || s.model, ...(s.effort ? ['-c', `model_reasoning_effort=${s.effort}`] : []), '-c', 'service_tier=fast', '--dangerously-bypass-hook-trust', ...(s.approval ? ['-a', s.approval] : []), ...(s.sandbox ? ['--sandbox', s.sandbox] : [])];
   const args = resumeId ? [...base, 'resume', resumeId] : base;
   return { file: 'cmd.exe', args: ['/c', ...args], sessionId: resumeId, resumeCmd: resumeId ? `codex resume ${resumeId}` : '', cmdline: args.join(' ') };
+}
+
+// ───────────────────────── 기록 파일 찾기 ─────────────────────────
+/** 코덱스 롤아웃 파일은 첫 메시지 뒤에 생기므로 세션이 살아 있는 동안 3초마다 cwd로 짝을 맞춘다
+ *  (sm = SessionManager — 카드 표·살아 있는 세션 표·저장·방송을 빌려 쓴다) */
+export function watchRecord(sm, id, rec) {
+  const started = Date.now();
+  const known = new Set([...sm.sessions.values()].map(r => r.recordPath).filter(Boolean));
+  const tick = () => {
+    if (!sm.sessions.has(id) || rec.recordPath || !sm.live.has(id)) return;
+    try {
+      for (const dir of recentSessionDirs()) for (const f of fs.readdirSync(dir)) {
+        if (!f.startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
+        const full = path.join(dir, f); if (known.has(full)) continue;
+        if (fs.statSync(full).mtimeMs < started - 10_000) continue;
+        const first = readFirstLine(full); if (!first) continue;
+        let meta; try { meta = JSON.parse(first); } catch { continue; }
+        const p = meta?.payload || {};
+        if (meta.type !== 'session_meta' || p.originator !== 'codex-tui' || p.parent_thread_id) continue;
+        if (normCwd(p.cwd) !== normCwd(rec.cwd)) continue;
+        rec.sessionId = p.id; rec.recordPath = full; rec.resumeCmd = `codex resume ${p.id}`;
+        sm.save(); sm.hooks.onList?.(); return;
+      }
+    } catch { /* retry */ }
+    setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 3000);
+}
+function recentSessionDirs() {
+  const out = [];
+  for (const d of [new Date(), new Date(Date.now() - 86400000)]) {
+    const dir = path.join(CODEX_HOME, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+    if (fs.existsSync(dir)) out.push(dir);
+  }
+  return out;
 }

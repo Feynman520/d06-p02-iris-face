@@ -30,7 +30,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const SELF = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(SELF), '..');
 const GOLDEN = path.join(ROOT, 'scripts', 'fixtures', 'agent-baseline.json');
-const MODES = ['env', 'receipt'];
+const MODES = ['env', 'receipt', 'importorder'];
 const arg = (k) => { const a = process.argv.find((x) => x === `--${k}` || x.startsWith(`--${k}=`)); return a == null ? undefined : a.slice(k.length + 3); }; // 첫 '=' 뒤 전부(경로에 '=' 가 있어도)
 const TMP_PREFIX = 'iris-ab-';
 
@@ -38,7 +38,7 @@ if (arg('mode') !== undefined) {
   // 자식은 부모가 만든 임시 폴더에서만 돈다(아무 폴더나 시험 장소로 쓰지 않게)
   const tmp = path.resolve(arg('tmp') || '');
   if (!path.basename(tmp).startsWith(TMP_PREFIX) || path.dirname(tmp).toLowerCase() !== path.resolve(os.tmpdir()).toLowerCase() || !fs.existsSync(tmp) || fs.readdirSync(tmp).length) { console.log(`자식 실행 거절: 빈 임시 폴더(${TMP_PREFIX}…)가 아님 — ${tmp}`); process.exit(2); }
-  await child(arg('mode'), tmp);
+  if (arg('mode') === 'importorder') await importOrderChild(tmp); else await child(arg('mode'), tmp);
 } else { parent(); }
 
 // ───────────────────────── 부모: 환경마다 자식을 돌려 모으고 표본과 비교 ─────────────────────────
@@ -101,6 +101,37 @@ function parent() {
 }
 
 // ───────────────────────── 자식: 한 환경에서 표본을 만든다 ─────────────────────────
+// ───────────────────────── 자식(불러오기 순서): 기록 읽기 모듈을 먼저 불러온 뒤에 환경 변수를 정하고 에이전트 창구를 불러온다 ─────────────────────────
+//   기록 읽기(transcript.mjs)를 불러오는 것만으로 에이전트의 설정 폴더·상태 폴더 자리가 굳으면 안 된다(그 자리는 agents.mjs 를 처음 불러올 때 정해진다).
+async function importOrderChild(tmp) {
+  const soul = path.join(tmp, 'soul'), late = path.join(tmp, 'late');
+  fs.mkdirSync(path.join(soul, '_agent'), { recursive: true });
+  for (const k of Object.keys(process.env)) if (/^(CLAUDE|CODEX|ANTHROPIC|OPENAI|IRIS)/i.test(k)) delete process.env[k];
+  process.env.IRIS_ROOT = soul;
+  const tok = (v) => String(v).split(late).join('<LATE>').split(soul).join('<SOUL>').split(tmp).join('<TMP>');
+  // 울타리(이 자식에도): 임시 폴더 밖 쓰기·프로세스 실행은 그 자리에서 막는다 — 모듈을 불러오기 전에 단다
+  const violations = [];
+  const TMP_L = tmp.toLowerCase() + path.sep;
+  const inTmp = (f) => (typeof f === 'string' || f instanceof URL) && `${path.resolve(f instanceof URL ? fileURLToPath(f) : f)}${path.sep}`.toLowerCase().startsWith(TMP_L);
+  const block = (what) => { violations.push(tok(what)); const e = new Error(`기준선 검사 울타리: ${what}`); e.code = 'EBASELINE_FENCE'; throw e; };
+  for (const [fn, idx] of Object.entries({ writeFileSync: [0], appendFileSync: [0], renameSync: [0, 1], mkdirSync: [0], rmSync: [0], unlinkSync: [0], rmdirSync: [0], copyFileSync: [1], cpSync: [1], truncateSync: [0], symlinkSync: [1], linkSync: [1], createWriteStream: [0] })) {
+    const orig = fs[fn]; fs[fn] = function (...a) { for (const i of idx) if (!inTmp(a[i])) block(`임시 폴더 밖 쓰기 ${fn}(${String(a[i])})`); return orig.apply(this, a); };
+  }
+  for (const fn of ['writeFile', 'appendFile', 'rename', 'mkdir', 'rm', 'unlink', 'rmdir', 'copyFile', 'cp', 'truncate']) { fs[fn] = () => block(`비동기 파일 함수 fs.${fn}`); fs.promises[fn] = () => block(`비동기 파일 함수 fs.promises.${fn}`); }
+  for (const fn of ['spawn', 'spawnSync', 'exec', 'execFile', 'execSync', 'execFileSync', 'fork']) cp[fn] = (file) => block(`프로세스 실행 ${fn}(${file})`);
+  syncBuiltinESMExports();
+  const T = await import(pathToFileURL(path.join(ROOT, 'daemon', 'transcript.mjs')).href);
+  const tailFirst = { exports: Object.keys(T).sort() };
+  // 이제서야 환경 변수를 정한다
+  Object.assign(process.env, { CLAUDE_CONFIG_DIR: path.join(late, 'claude'), CODEX_HOME: path.join(late, 'codex'), IRIS_FACE_STATE: path.join(late, 'state') });
+  const A = await import(pathToFileURL(path.join(ROOT, 'daemon', 'agents.mjs')).href);
+  const cmd = A.buildCommand({ agent: 'claude', model: 'opus', effort: 'high' }, 'C:/ab-work', { resumeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  const out = { importOrder: { transcript: tailFirst, CLAUDE_CONFIG_DIR: tok(A.CLAUDE_CONFIG_DIR), CODEX_HOME: tok(A.CODEX_HOME), recordPath: tok(cmd.recordPath), fastSettings: tok(cmd.args[cmd.args.indexOf('--settings') + 1]), wroteUnderLate: fs.existsSync(path.join(late, 'state', 'fast-mode.json')) }, violations };
+  fs.writeFileSync(path.join(tmp, 'out.json'), JSON.stringify(out), 'utf8');
+  if (violations.length) { console.log(`울타리 위반 ${violations.length}건:`); for (const v of violations) console.log(`  ${v}`); process.exit(3); }
+  process.exit(0);
+}
+
 async function child(mode, tmp) {
   const soul = path.join(tmp, 'soul'), state = path.join(tmp, 'state'), work = path.join(tmp, 'Work Dir');
   const envClaude = path.join(tmp, 'e-claude'), envCodex = path.join(tmp, 'e-codex');   // env 환경의 설정 폴더
@@ -442,6 +473,16 @@ async function child(mode, tmp) {
   fs.writeFileSync(path.join(dayDir, 'rollout-b-exec.jsonl'), line({ type: 'session_meta', payload: { id: 'cccccccc-0000-4000-8000-000000000002', originator: 'codex-exec', cwd: work } }));
   fs.writeFileSync(path.join(dayDir, 'rollout-c-other.jsonl'), line({ type: 'session_meta', payload: { id: 'cccccccc-0000-4000-8000-000000000003', originator: 'codex-tui', cwd: path.join(tmp, 'elsewhere') } }));
   fs.writeFileSync(path.join(dayDir, 'rollout-d-match.jsonl'), line({ type: 'session_meta', payload: { id: 'cccccccc-0000-4000-8000-000000000004', originator: 'codex-tui', cwd: work.toUpperCase().replace(/\\/g, '/') } }));
+  // 고르면 안 되는 것들(이름순으로 맞는 기록보다 앞에 온다): 오래된 파일 · 첫 줄이 깨진 파일 · 빈 파일 · 이름이 rollout- 이 아닌 파일 · 어제 폴더의 맞는 기록(오늘 폴더가 먼저)
+  const match = (id) => line({ type: 'session_meta', payload: { id, originator: 'codex-tui', cwd: work } });
+  const old = path.join(dayDir, 'rollout-0-old.jsonl'); fs.writeFileSync(old, match('cccccccc-0000-4000-8000-00000000000a')); fs.utimesSync(old, new Date(Date.now() - 3600000), new Date(Date.now() - 3600000));
+  fs.writeFileSync(path.join(dayDir, 'rollout-1-bad.jsonl'), '{ 깨진 첫 줄\n');
+  fs.writeFileSync(path.join(dayDir, 'rollout-2-empty.jsonl'), '');
+  fs.writeFileSync(path.join(dayDir, 'notes-3.jsonl'), match('cccccccc-0000-4000-8000-00000000000b'));
+  fs.writeFileSync(path.join(dayDir, 'rollout-4.txt'), match('cccccccc-0000-4000-8000-00000000000c'));
+  const yest = new Date(Date.now() - 86400000);
+  const yDir = path.join(A.CODEX_HOME, 'sessions', String(yest.getFullYear()), String(yest.getMonth() + 1).padStart(2, '0'), String(yest.getDate()).padStart(2, '0'));
+  fs.mkdirSync(yDir, { recursive: true }); fs.writeFileSync(path.join(yDir, 'rollout-a-yesterday.jsonl'), match('cccccccc-0000-4000-8000-00000000000d'));
   // 클로드: 기다리는 기록이 없는 카드가 여럿이면 새 기록 하나를 누가 따라가는지
   const waiting = [...sm.sessions.values()].filter((r) => r.agent === 'claude' && r.recordPath && sm.live.has(r.id));
   if (waiting.length) { const dir = path.dirname(waiting[0].recordPath); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'dddddddd-0000-4000-8000-000000000001.jsonl'), line({ type: 'user', cwd: work, sessionId: 'dddddddd-0000-4000-8000-000000000001' })); }
@@ -493,6 +534,7 @@ async function recordBaseline(tmp, deep) {
     { type: 'attachment', timestamp: T(), attachment: {} },
     u(note('<task-id>bg2</task-id><status>completed</status><summary>Background command "오래 걸림" completed with exit code 0</summary>') + '\n' + note('<task-id>mon1</task-id><summary>Monitor event: "줄 하나"</summary>') + note('<task-id>w1</task-id><status>killed</status><summary>Dynamic workflow "묶음" was stopped</summary>') + note('<summary>모르는 요약</summary>')),
     u(note('<task-id>mon1</task-id><summary>[Monitor expired after 5m] Monitor "감시" ended</summary>')),
+    u(note('<task-id>bg7</task-id><status>failed</status><summary>Background command "실패한 명령" failed with exit code 1</summary>') + note('<task-id>ag9</task-id><status>completed</status><summary>Agent "보조" completed</summary>') + note('<task-id>mon9</task-id><status>killed</status><summary>Monitor "멈춘 감시" was stopped</summary>') + note('<task-id>long</task-id><status>completed</status><summary>' + '긴 요약 '.repeat(60) + '</summary>')),
     u('[Request interrupted by user]'), u([res('tu9', '[Request interrupted by user for tool use]')]), u('말 속의 [Request interrupted by user] 인용'),
     u('Stop hook feedback:\n[bg-leftover-guard] 배경 명령 1개가 남았습니다\n둘째 줄', { isMeta: true }), u('Stop hook feedback: 한 줄', { isMeta: true }),
     u('예약된 일\n둘째', { isMeta: true, turnOrigin: 'scheduled' }), u('<agent-message from="다른 세션">\n안녕\n</agent-message>', { isMeta: true, turnOrigin: 'peer' }),
@@ -562,7 +604,36 @@ async function recordBaseline(tmp, deep) {
     claudeFileAsGemini: run('c-gemini', claude, 'gemini'), codexFileAsGemini: run('x-gemini', codex, 'gemini'), codexFileNoAgent: run('x-none', codex, undefined), claudeFileAsCodex: run('c-codex', claude, 'codex'),
     // 줄 하나를 읽을 때마다의 속 상태(뒤 줄이 덮어써서 마지막 모습만으로는 안 보이는 변화를 잡는다)
     perLine: { claude: lineStates('claude-lines', claude, 'claude'), codex: lineStates('codex-lines', codex, 'codex') },
+    // 가장자리: 한글 한 글자의 바이트 한가운데서 끊긴 조각 · 줄끝이 CRLF 인 기록 · 보관 한도(5,000개)를 넘는 기록
+    edges: Object.fromEntries([['claude', [u('가나다라마바사 첫 요청'), a([{ type: 'text', text: '한글로 쓴 답' }]), u('둘째 요청')]], ['codex', [msg('user', '가나다라마바사 첫 요청'), msg('assistant', '한글로 쓴 답'), ev('task_started')]]].map(([agent, lines]) => {
+      const text = lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
+      const bytes = Buffer.from(text, 'utf8');
+      const at = bytes.indexOf(Buffer.from('나', 'utf8')) + 1; // '나'(3바이트)의 첫 바이트 뒤
+      const f1 = path.join(dir, `${agent}-bytesplit.jsonl`); const t1 = new TranscriptTail(f1, agent);
+      fs.writeFileSync(f1, bytes.subarray(0, at)); const p1 = deep(t1.poll());
+      fs.writeFileSync(f1, bytes); const p2 = deep(t1.poll());
+      const f2 = path.join(dir, `${agent}-crlf.jsonl`); fs.writeFileSync(f2, text.replace(/\n/g, '\r\n')); const t2 = new TranscriptTail(f2, agent);
+      const f3 = path.join(dir, `${agent}-big.jsonl`);
+      fs.writeFileSync(f3, Array.from({ length: 5005 }, (_, i) => JSON.stringify(agent === 'claude' ? { type: 'user', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: `n${i}` } } : { type: 'response_item', timestamp: '2026-01-01T00:00:00.000Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `n${i}` }] } })).join('\n') + '\n');
+      const t3 = new TranscriptTail(f3, agent); const got = t3.poll();
+      return [agent, { byteSplit: [p1, p2], crlf: deep(t2.poll()), big: deep({ returned: got.length, kept: t3.items.length, firstKept: t3.items[0]?.text, lastKept: t3.items.at(-1)?.text, firstI: t3.items[0]?.i, seq: t3.seq, firstUser: t3.firstUser }) }];
+    })),
     contextWindows: [null, '', 'claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-3-haiku', 'gpt-6.1-sol'].flatMap((model) => ['claude', 'codex', 'gemini', undefined].flatMap((agent) => [null, 123456].map((window) => deep({ model, agent, window, result: Object.assign(Object.create(TranscriptTail.prototype), { agent, model, window }).contextWindow() })))),
+    // 모양이 이상한 줄(값이 없거나 종류가 다른 칸): 무엇을 돌려주고 어디서 예외가 나는지, 예외 뒤 읽기 자리·누적 상태가 어떻게 남는지
+    weird: Object.fromEntries(['claude', 'codex', 'gemini'].map((agent) => [agent, [
+      null, 5, 'text', [], {}, { type: 'user' }, { type: 'user', message: null }, { type: 'user', message: { content: 5 } }, { type: 'user', message: { content: [null] } }, { type: 'user', message: { content: [{ type: 'tool_result', content: { x: 1 } }] } },
+      { type: 'assistant', message: { content: 'plain string' } }, { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'AskUserQuestion', input: { questions: 'not a list' } }] } }, { type: 'assistant', message: { content: [{ type: 'tool_use' }], usage: 'x' } },
+      { type: 'response_item' }, { type: 'response_item', payload: null }, { type: 'response_item', payload: { type: 'message', role: 'user', content: null, internal_chat_message_metadata_passthrough: { content_item_kinds: 'not a list' } } },
+      { type: 'response_item', payload: { type: 'function_call_output', output: '[not json' } }, { type: 'event_msg', payload: { type: 'token_count', info: 'x' } }, { type: 'event_msg', payload: { type: 'exec_approval_request', command: 'not a list' } }, { isSidechain: true, type: 'user', parentUuid: null },
+    ].map((rec, i) => {
+      const file = path.join(dir, `weird-${agent}-${i}.jsonl`); fs.writeFileSync(file, JSON.stringify(rec) + '\n' + JSON.stringify(agent === 'codex' ? { type: 'event_msg', timestamp: '2026-01-01T00:00:00.000Z', payload: { type: 'task_started' } } : { type: 'user', timestamp: '2026-01-01T00:00:00.000Z', message: { content: '뒤 줄' } }) + '\n');
+      const tail = new TranscriptTail(file, agent); let first, again;
+      try { first = deep(tail.poll()); } catch (e) { first = { throws: e?.constructor?.name || 'Error', message: e?.message || '' }; }
+      try { again = deep(tail.poll()); } catch (e) { again = { throws: e?.constructor?.name || 'Error', message: e?.message || '' }; }
+      return deep({ rec: JSON.stringify(rec), first, again, offset: tail.offset, partial: tail.partial, seq: tail.seq, items: tail.items.length, unknown: tail.unknown, turnState: (() => { try { return tail.turnState(); } catch (e) { return `throws ${e?.message}`; } })() });
+    })])),
+    // 문맥 창을 볼 때 어느 칸을 읽는가(읽기 기록)
+    contextReads: ['claude', 'codex', 'gemini', undefined].flatMap((agent) => [null, 0, 99].map((window) => { const log = []; const t = new Proxy(Object.assign(Object.create(TranscriptTail.prototype), { agent, model: 'claude-opus-5-5', window }), { get(o, k, r) { if (typeof k === 'string' && k !== 'contextWindow') log.push(k); return Reflect.get(o, k, r); } }); const result = t.contextWindow(); return deep({ agent, window, result, reads: log.join(' ') }); })),
     lineCounts: { claude: claude.length, codex: codex.length },
   };
   function lineStates(name, lines, agent) {
@@ -572,7 +643,7 @@ async function recordBaseline(tmp, deep) {
     return lines.map((l) => {
       fs.appendFileSync(file, JSON.stringify(l) + '\n');
       const items = tail.poll();
-      return deep({ kinds: items.map((it) => it.kind).join(','), turnState: tail.turnState(), ctx: tail.contextWindow(), model: tail.model, usage: tail.lastUsage, window: tail.window, turnOpen: tail.turnOpen, turnDoneAt: tail.turnDoneAt, tools: tail.tools, aiTitle: tail.aiTitle, firstUser: tail.firstUser, unknown: tail.unknown, firstT: tail.firstT, lastT: tail.lastT, sizes: [tail.sidechain.size, tail.calls.size, tail.finished.size, tail.finishedByTask.size, tail.bg.size, tail.toolIn.size].join('/') });
+      return deep({ kinds: items.map((it) => it.kind).join(','), turnState: tail.turnState(), ctx: tail.contextWindow(), model: tail.model, usage: tail.lastUsage, window: tail.window, turnOpen: tail.turnOpen, turnDoneAt: tail.turnDoneAt, tools: tail.tools, aiTitle: tail.aiTitle, firstUser: tail.firstUser, unknown: tail.unknown, firstT: tail.firstT, lastT: tail.lastT, maps: crypto.createHash('sha1').update(JSON.stringify([[...tail.sidechain], [...tail.calls], [...tail.finished], [...tail.finishedByTask], [...tail.bg], [...tail.toolIn], tail.backgroundPending(0, NOW)])).digest('hex').slice(0, 12), sizes: [tail.sidechain.size, tail.calls.size, tail.finished.size, tail.finishedByTask.size, tail.bg.size, tail.toolIn.size].join('/') });
     });
   }
 }
