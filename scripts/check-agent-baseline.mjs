@@ -69,7 +69,13 @@ function parent() {
   const walk = (a, b, at) => {
     if (JSON.stringify(a) === JSON.stringify(b)) return;
     const obj = (x) => x && typeof x === 'object';
-    if (obj(a) && obj(b) && Array.isArray(a) === Array.isArray(b)) { for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) walk(a[k], b[k], `${at}/${k}`); return; }
+    if (obj(a) && obj(b) && Array.isArray(a) === Array.isArray(b)) {
+      const n0 = diffs.length;
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) walk(a[k], b[k], `${at}/${k}`);
+      // 값은 다 같은데 글자가 다르다 = 키 순서가 바뀜(돌려주는 객체의 키 순서도 지키는 계약이다)
+      if (diffs.length === n0) diffs.push({ at: `${at} (키 순서)`, want: Object.keys(a), got: Object.keys(b) });
+      return;
+    }
     diffs.push({ at, want: a, got: b });
   };
   for (const mode of MODES) for (const sec of new Set([...Object.keys(want[mode] || {}), ...Object.keys(got[mode] || {})])) {
@@ -273,6 +279,68 @@ async function child(mode, tmp) {
   const fastFile = path.join(state, 'fast-mode.json');
   const fastCase = (name, prep) => { prep(); events = []; newCase(`fast ${name}`); const r = tryIt(() => buildCommand({ agent: 'claude', model: 'opus' }, work).args.slice(-4, -2)); let after = null; try { after = fs.readFileSync(fastFile, 'utf8'); } catch { /* 없음 */ } return { args: r, events: events.slice(0, -1), after }; };
   out.fastFile = { missing: fastCase('missing', () => fs.rmSync(fastFile, { force: true })), ok: fastCase('ok', () => {}), corrupt: fastCase('corrupt', () => fs.writeFileSync(fastFile, '{ 망가진', 'utf8')), notFast: (() => { fs.rmSync(fastFile, { force: true }); events = []; newCase('fast notFast'); const r = tryIt(() => buildCommand({ agent: 'claude', model: 'sonnet' }, work).cmdline); return { cmdline: r, events: [...events], exists: fs.existsSync(fastFile) }; })() };
+
+  // 글자가 아닌 에이전트 값(목록·객체·숫자 — 화면은 보내지 않지만 API 의 JSON 본문으로는 올 수 있다): 지금 동작 그대로.
+  //   `['claude']` 는 표 찾기에서는 'claude' 로 읽히고 글자 비교(===)에서는 클로드가 아니다 — 그 어긋남까지 찍는다.
+  //   읽기 순서·횟수도 찍는다(값을 읽을 때마다 적는 객체): 같은 값을 몇 번, 어떤 순서로 읽는지가 달라지면 여기서 드러난다.
+  const ODD = [['claude'], ['codex'], ['gemini'], [], {}, { toString: 'x' }, 5, 0, true, false];
+  const oddName = (v) => JSON.stringify(v);
+  const spy = (obj, log, name) => new Proxy(obj, { get(t, k) { if (typeof k === 'string') log.push(`${name}.${k}`); return t[k]; } });
+  out.oddAgents = ODD.map((agent) => {
+    const base = { agent, model: 'opus', effort: 'high', permission: 'plan', approval: 'never', sandbox: 'workspace-write', readOnly: true };
+    const row = { agent: oddName(agent) };
+    row.normalize = tryIt(() => normalize(base));
+    row.normalizeCodexModel = tryIt(() => normalize({ ...base, model: 'gpt-6-luna', sandbox: '' }));
+    row.keepActual = ['claude-opus-4-1', 'gpt-5.5'].map((modelActual) => tryIt(() => normalize({ ...base, model: 'gone', keepActual: true, modelActual })));
+    for (const resumeId of [undefined, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']) {
+      events = []; newCase(`odd ${oddName(agent)} ${resumeId ? 'resume' : 'new'}`); const u0 = uuidN;
+      row[resumeId ? 'buildResume' : 'buildNew'] = { result: tryIt(() => buildCommand(base, work, resumeId ? { resumeId } : undefined)), uuidCalls: uuidN - u0, events: [...events] };
+    }
+    row.isFast = [tryIt(() => isFastModel(agent, 'opus')), tryIt(() => isFastModel(agent, 'sonnet', 'claude-opus-9')), tryIt(() => isFastModel(agent))];
+    row.permLabel = [tryIt(() => permLabel({ ...base })), tryIt(() => permLabel(normalize(base)))];
+    row.keepResume = [{ agent, model: 'm', modelActual: 'claude-opus-4-1' }, { agent, model: 'm', modelActual: 'gpt-5.5' }, { agent: 'claude', model: 'm', modelActual: 'claude-opus-4-1' }].map((rec) => tryIt(() => keepResumeModel({ ...base, modelActual: 'other' }, rec)));
+    row.modelForResume = tryIt(() => modelForResume({ agent, model: 'm', modelActual: 'claude-opus-5-5' }));
+    return row;
+  });
+  // 읽기 순서(정상 글자 이름일 때): 선택값·카드의 칸을 어떤 순서로 몇 번 읽는가
+  out.readOrder = ['claude', 'codex', 'gemini'].map((agent) => {
+    const one = (fn) => { // 읽기 기록은 함수가 돌려준 순간까지만(결과를 표본으로 옮기며 읽는 것은 세지 않는다)
+      const log = []; let reads, result;
+      try { const v = fn(log); reads = log.join(' '); result = deep(v); } catch (e) { reads = log.join(' '); result = { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; }
+      return { reads, result };
+    };
+    const sel = { agent, model: 'gone', effort: 'high', permission: 'plan', approval: 'never', sandbox: 'read-only', readOnly: true, keepActual: true, modelActual: agent === 'codex' ? 'gpt-5.5' : 'claude-opus-4-1', modelLabel: '' };
+    return {
+      agent,
+      normalize: one((log) => normalize(spy(sel, log, 'sel'))),
+      normalizeBadActual: one((log) => normalize(spy({ ...sel, modelActual: 'nope' }, log, 'sel'))),
+      keepResume: one((log) => keepResumeModel(spy({ agent, modelActual: 'x', model: 'm' }, log, 'sel'), spy({ agent, model: 'old', modelActual: agent === 'codex' ? 'gpt-5.5' : 'claude-opus-4-1' }, log, 'rec'))),
+      keepResumeBad: one((log) => keepResumeModel(spy({ agent, modelActual: 'x', model: 'm' }, log, 'sel'), spy({ agent, model: 'old', modelActual: 'invalid name' }, log, 'rec'))),
+      keepResumeNonString: one((log) => keepResumeModel(spy({ agent, modelActual: 'x' }, log, 'sel'), spy({ agent, model: 'old', modelActual: { toString: () => 'claude-x' } }, log, 'rec'))),
+      permLabel: one((log) => permLabel(spy({ agent, model: 'opus', modelActual: 'claude-opus-5-5', permission: 'plan', approval: 'never', sandbox: 'read-only' }, log, 's'))),
+      // 권한 이름표를 찾는 표(AGENTS.<id>)를 선택값의 칸보다 먼저 읽는지 뒤에 읽는지도 본다 — 표를 읽기 기록 객체로 잠깐 바꿔 끼운다
+      permLabelTables: one((log) => {
+        const keep = { claude: AGENTS.claude, codex: AGENTS.codex };
+        try { AGENTS.claude = spy(keep.claude, log, 'T.claude'); AGENTS.codex = spy(keep.codex, log, 'T.codex'); return permLabel(spy({ agent, model: 'opus', modelActual: 'claude-opus-5-5', permission: 'plan', approval: 'never', sandbox: 'read-only' }, log, 's')); }
+        finally { AGENTS.claude = keep.claude; AGENTS.codex = keep.codex; }
+      }),
+      // 칸을 읽는 도중에 표가 통째로 바뀌면 어느 표의 이름표를 쓰는가(= 표를 부르는 그 순간에 찾는가)
+      permLabelSwap: one(() => {
+        const keep = { claude: AGENTS.claude, codex: AGENTS.codex };
+        const s = { agent, model: 'opus', sandbox: '',
+          get permission() { AGENTS.claude = { ...keep.claude, permissions: [{ id: 'plan', label: '바뀐 표' }] }; return 'plan'; },
+          get approval() { AGENTS.codex = { ...keep.codex, approvals: [{ id: 'never', label: '바뀐 표' }] }; return 'never'; } };
+        try { return permLabel(s); } finally { AGENTS.claude = keep.claude; AGENTS.codex = keep.codex; }
+      }),
+      normalizeTables: one((log) => {
+        const keep = { claude: AGENTS.claude, codex: AGENTS.codex };
+        try { AGENTS.claude = spy(keep.claude, log, 'T.claude'); AGENTS.codex = spy(keep.codex, log, 'T.codex'); return normalize(spy({ agent, model: 'nope', effort: 'max', permission: 'plan', approval: 'never', sandbox: 'read-only' }, log, 'sel')); }
+        finally { AGENTS.claude = keep.claude; AGENTS.codex = keep.codex; }
+      }),
+    };
+  });
+
+  fs.rmSync(fastFile, { force: true }); // 위 사례들이 만든 fast 설정 파일을 치운다(뒤 구역은 "파일 없음"에서 시작 — 구역끼리 서로 물들지 않게)
 
   // 모델 목록 갱신이 불리는 때와 횟수 — 고른 뒤 실행 직전에 목록이 바뀌는 틈도 지금 그대로 찍는다
   let refreshN = 0; setModelRefresher(() => { refreshN++; });
