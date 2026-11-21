@@ -75,6 +75,7 @@ export function trustCodex(cwd, codexHome) {
 export function preTrust({ agent, cwd, env = {}, fallback = {} }) {
   try {
     if (agent === 'codex') return { agent, result: trustCodex(cwd, env.CODEX_HOME || fallback.codexHome) };
-    return { agent: 'claude', result: trustClaude(cwd, env.CLAUDE_CONFIG_DIR || fallback.claudeConfigDir) };
+    if (agent === 'claude' || agent === undefined || agent === null || agent === '') return { agent: 'claude', result: trustClaude(cwd, env.CLAUDE_CONFIG_DIR || fallback.claudeConfigDir) };
+    return { agent, result: 'skipped:unknown-agent' }; // 모르는 에이전트 — 다른 에이전트의 설정에 적지 않는다(값이 없을 때만 예전처럼 클로드)
   } catch (e) { return { agent, result: `skipped:${String(e?.message || e)}` }; }
 }

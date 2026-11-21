@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import { stripFaceNote } from './facenote.mjs';
 import { applyLongKey } from './auth.mjs';
 import { CLAUDE_CONFIG_DIR } from './agents.mjs';
-import { legacyElseClaude } from './agents/index.mjs';
+import { adapterOrDefault } from './agents/index.mjs';
 
 export const TITLE_MODEL = 'haiku';
 const TIMEOUT_MS = 90_000;
@@ -74,8 +74,9 @@ export function generateTitle(prompt, { log = () => {}, exe = undefined, agent =
   if (!src) return Promise.resolve('');
   // 세션의 에이전트로 제목을 짓는다(2026-09-19, v2.68): 코덱스 세션인데 헤드리스 클로드(Haiku)를 부르면
   // 클로드 계정이 없는 PC(코덱스만 로그인)에서 세션마다 중계기 429 가 쌓였다(대시보드 "Claude — (none available) 429").
-  // 어떤 헤드리스 명령으로 짓는지는 에이전트마다 다르다(agents/<id>.mjs 의 titleCommand) — 코덱스가 아니면 클로드로 짓는 옛 고르기 그대로.
-  const ad = legacyElseClaude(agent);
+  // 어떤 헤드리스 명령으로 짓는지는 에이전트마다 다르다(agents/<id>.mjs 의 titleCommand). 명부에 없는 에이전트면 짓지 않는다(다른 에이전트로 짓지 않는다).
+  const ad = adapterOrDefault(agent);
+  if (!ad) { log('title gen skipped: unknown agent'); return Promise.resolve(''); }
   const spec = ad.titleCommand({ system: SYSTEM, request: wrap(src), exe, findExe: findClaudeExe, model, titleModel: TITLE_MODEL, codexTitleModel: CODEX_TITLE_MODEL });
   if (spec.skip) { log(spec.skip); return Promise.resolve(''); }
   const { file, args, stdinText } = spec;

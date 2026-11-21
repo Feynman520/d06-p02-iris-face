@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { buildCommand, adapterOfCommand, normalize, CODEX_HOME, assertExpected, modelForResume, keepResumeModel } from './agents.mjs';
-import { strictAdapter, legacyElseClaude } from './agents/index.mjs';
+import { strictAdapter, adapterOrDefault, hasAgent, isMissingAgent, unknownAgentError } from './agents/index.mjs';
 import { withFaceNote } from './facenote.mjs';
 import { titleFromPrompt, clipTitle } from './title.mjs';
 import { generateTitle } from './titler.mjs';
@@ -62,6 +62,8 @@ export const RESUME_NOTE = '[IRIS-Face 자동 재개] IRIS-Face 데몬이 재시
 const EARLY_EXIT_MS = 20000; // 이보다 빨리 끝난 CLI 는 시작 실패로 보고 화면에서 원인 줄을 고른다(v2.98)
 const FACE_VERSION = (() => { try { return require('../package.json').version || ''; } catch { return ''; } })();
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** 명부에 없는 에이전트의 카드에 보일 이유 글(죽은 카드 띠의 "원인:" 자리 · 재개를 눌렀을 때의 오류 글) */
+const unsupportedReason = (agent) => `이 판에서 열 수 없는 에이전트의 세션입니다(${typeof agent === 'string' ? agent.slice(0, 40) : '알 수 없는 값'})`;
 
 // 데몬이 클로드코드 세션 안에서 시작됐을 때 물려받는 "자식 세션" 표식을 걷어낸다(남으면 새 세션이 기록파일을 저장하지 않음).
 export function childEnv() {
@@ -120,7 +122,13 @@ export class SessionManager {
     let arr = []; try { arr = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { arr = []; }
     for (const r of arr) {
       const alive = pidAlive(r.pid);
-      r.lost = !alive && LIVE_STATUSES.has(r.status) && !!r.sessionId; // 살아 있다고 저장돼 있었는데 PID가 없다 = 데몬과 함께 죽은 세션
+      // 명부에 없는 에이전트의 카드(더 새 판이 만든 것 · 손상된 값): 다른 에이전트로 바꿔 열지 않는다 — 카드는 그대로 두고 이유만 보인다(자동 재개 제외, 걸음 5)
+      // 표식(unsupported)은 열 수 없는 카드에만 단다. 이 판이 다시 열 수 있게 된 카드(판을 올린 뒤)는 표식과 그때 적은 이유를 지운다.
+      //   그 카드에 원래 있던 종료 이유는 따로 보관해 두었다가(exitReasonSaved) 표식을 뗄 때 되돌린다 — 안내 글이 원래 이유를 지우지 않게.
+      const wasUnsupported = r.unsupported === true;
+      if (!adapterOrDefault(r.agent)) { if (!wasUnsupported) r.exitReasonSaved = r.exitReason ?? null; r.unsupported = true; r.exitReason = unsupportedReason(r.agent); }
+      else { if (wasUnsupported) r.exitReason = r.exitReasonSaved ?? null; delete r.unsupported; delete r.exitReasonSaved; }
+      r.lost = !alive && LIVE_STATUSES.has(r.status) && !!r.sessionId && !r.unsupported; // 살아 있다고 저장돼 있었는데 PID가 없다 = 데몬과 함께 죽은 세션
       r.status = alive ? 'orphan' : 'dead'; r.titlePending = false; r.prompt = null; // 확인 카드는 살아 있는 화면에서만 뜬다
       this.sessions.set(r.id, r); this.seq = Math.max(this.seq, Number(r.id.replace(/\D/g, '')) || 0);
     }
@@ -172,15 +180,16 @@ export class SessionManager {
     this.nameSession(id, prompt);
     // Face 안내문을 첫 요청 앞에 붙인다(새 세션에만; 이어가기는 맥락에 이미 있음)
     this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
-    legacyElseClaude(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
+    strictAdapter(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
     this.save(); this.hooks.onList?.();
     return rec;
   }
   spawn(cmd, cwd, cols, rows) {
-    const env = childEnv();
     // 띄우기 직전에 그 에이전트의 일(폴더 신뢰 선답 · 열쇠)을 한다 — 이 명령을 만든 어댑터로(agents.mjs buildCommand 가 짝지어 둔다).
-    // buildCommand 가 만들지 않은 명령(바깥에서 직접 꾸민 것)만 옛 방식대로 명령 글자로 가린다.
-    const ad = adapterOfCommand(cmd) || strictAdapter(/^codex\b/i.test(String(cmd.args?.[1] || '')) ? 'codex' : 'claude');
+    // buildCommand 가 만들지 않은 명령은 띄우지 않는다(명령 글자로 에이전트를 짐작하지 않는다 — 걸음 5).
+    const ad = adapterOfCommand(cmd);
+    if (!ad) throw new Error('spawn: buildCommand 가 만든 명령이 아닙니다(어느 에이전트의 명령인지 알 수 없음)');
+    const env = childEnv();
     // 폴더 신뢰 물음 선답(daemon/trust.mjs, 2026-09-19): CLI 가 이 폴더를 처음 볼 때 묻는 "Do you trust…" 를 미리 "예"로 적어 둔다.
     const t = ad.preTrust(cwd, env);
     if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${ad.id} ${cwd} → ${t.result}`);
@@ -189,9 +198,22 @@ export class SessionManager {
     return pty.spawn(cmd.file, cmd.args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
   }
 
+  /**
+   * 모델·에이전트 바꾸기 요청을 받기 전에 본다(요청 처리의 맨 앞 — 아무 일도 하기 전에 거절하려고):
+   *   그 카드가 이 판에서 열 수 있는 것이어야 하고, 요청의 에이전트 값은 비었거나(= 지금 에이전트 그대로) 명부에 있는 것이어야 한다.
+   * @returns {boolean} 다른 에이전트로 바꾸는 요청인가(true = replaceAgent · false = switchTo)
+   */
+  checkSwitch(id, agent) {
+    const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
+    if (!adapterOrDefault(rec.agent)) throw new Error(unsupportedReason(rec.agent));
+    if (!isMissingAgent(agent) && !hasAgent(agent)) throw unknownAgentError(agent);
+    return !isMissingAgent(agent) && agent !== adapterOrDefault(rec.agent).id; // 에이전트 칸이 없는 옛 카드 = 기본 에이전트의 카드
+  }
+
   /** 모델·사고깊이 바꾸기 = 재개 재시작: 현 PID 종료 → 같은 카드로 --resume / codex resume. 에이전트는 못 바꾼다. */
   switchTo(id, { model, expectModel, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
+    if (!adapterOrDefault(rec.agent)) throw new Error(unsupportedReason(rec.agent)); // 다른 에이전트로 바꿔 열지 않는다(카드는 그대로 둔다)
     if (!rec.sessionId) throw new Error('세션 id를 아직 모릅니다(첫 메시지 뒤에 바꿀 수 있습니다)');
     // 모델을 따로 고르지 않은 재개(자동 재개·↻)는 이 세션이 실제로 쓰던 모델을 이어 간다(v2.102)
     const base = normalize({ agent: rec.agent, model: model ?? modelForResume(rec), effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
@@ -217,6 +239,7 @@ export class SessionManager {
   /** 에이전트 바꾸기(Claude↔Codex): 같은 카드에서 다른 CLI를 새로 띄우고, 이전 대화를 첫 요청으로 넘겨 맥락을 잇는다 */
   replaceAgent(id, { agent, model, expectModel, effort, readOnly, permission, approval, sandbox, prompt } = {}) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
+    if (!adapterOrDefault(rec.agent)) throw new Error(unsupportedReason(rec.agent)); // 열 수 없는 카드는 그대로 둔다(새 세션은 새 카드로)
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
     assertExpected(sel, expectModel);
     const st = this.live.get(id); clearTimeout(st?.timer);
@@ -231,7 +254,7 @@ export class SessionManager {
     Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
     // 다른 에이전트로 새로 띄우는 것이므로 안내문을 이어받기 요청 앞에 붙인다
     this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
-    legacyElseClaude(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
+    strictAdapter(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
     this.save(); this.hooks.onList?.();
     return rec;
   }
@@ -427,7 +450,8 @@ export class SessionManager {
     const own = isOwnProcess(table, rec.pid, since);
     return own === true ? 'own' : own === false ? 'reused' : 'unknown';
   }
-  /** 명시적 닫기: 그 세션의 cmd.exe PID 트리 하나만 종료하고 목록에서 제거 */
+  /** 명시적 닫기: 그 세션의 cmd.exe PID 트리 하나만 종료하고 목록에서 제거.
+   *  이 판에서 열 수 없는 카드도 사용자가 직접 닫기·지우기(close · forget)를 누르면 지운다 — "지우지 않는다"는 프로그램이 스스로 지우지 않는다는 약속이다. */
   close(id) {
     const rec = this.sessions.get(id); if (!rec) throw new Error(`no session: ${id}`);
     const st = this.live.get(id); clearTimeout(st?.timer);
@@ -473,7 +497,8 @@ export class SessionManager {
         row.procs = tree.length || 1; if (owner === 'unknown') row.note = 'identity-unchecked';
       }
       this.live.delete(id);
-      if (rec.sessionId) Object.assign(rec, { status: 'exited', lost: false, pid: null, prompt: null, titlePending: false, closedAt: new Date().toISOString(), closedBy: 'shutdown' });
+      // 이어 갈 대화가 없는 카드(첫 메시지 전)는 지운다 — 단, 이 판에서 열 수 없는 카드는 세션 id 가 없어도 지우지 않는다(보존이 약속)
+      if (rec.sessionId || rec.unsupported) Object.assign(rec, { status: 'exited', lost: false, pid: null, prompt: null, titlePending: false, closedAt: new Date().toISOString(), closedBy: 'shutdown' });
       else this.sessions.delete(id);
       report.sessions.push(row);
     }

@@ -9,7 +9,7 @@
 // (parseRecord · turnState · contextWindowGuess — 2026-11-21 에이전트 장부 걸음 2). 이 파일은 파일을 조각조각 읽고 누적 상태를 지닌다.
 // 이 파일과 기록 해석 어댑터는 에이전트의 실행 설정(agents.mjs · agents/<id>.mjs)을 불러오지 않는다.
 import fs from 'node:fs';
-import { strictRecordAdapter, legacyElseClaudeRecord } from './agents/records.mjs';
+import { recordAdapterFor } from './agents/records.mjs';
 
 export { noticeLines, metaNotice } from './agents/claude.records.mjs';
 
@@ -55,12 +55,13 @@ export class TranscriptTail {
    *             질문 카드(ask)면 'closed'(사람 차례), 답 글이면 null(다음 도구 호출 전 생각 중일 수 있어 단정하지 않는다).
    *  @returns {'open'|'closed'|null} */
   turnState() {
-    return legacyElseClaudeRecord(this.agent).turnState(this);
+    const ad = recordAdapterFor(this.agent);
+    return ad ? ad.turnState(this) : null; // 명부에 없는 에이전트의 기록 = 판정하지 않는다
   }
   /** 컨텍스트 창 크기: 코덱스는 기록에 있음, 클로드는 모델로 추정(Claude 5 계열 1M — Haiku 5.5 포함, Haiku 4.x 이하 200k) */
   contextWindow() {
     if (this.window) return this.window;
-    const ad = strictRecordAdapter(this.agent);
+    const ad = recordAdapterFor(this.agent);
     return ad && ad.contextWindowGuess ? ad.contextWindowGuess(this.model) : null; // 추정 함수가 있는 에이전트만 model 을 읽는다
   }
   /** 새로 생긴 줄만 읽어 정규화 항목 배열을 돌려준다 */
@@ -81,7 +82,8 @@ export class TranscriptTail {
     for (const line of lines) {
       if (!line.trim()) continue;
       let rec; try { rec = JSON.parse(line); } catch { continue; }
-      const items = legacyElseClaudeRecord(this.agent).parseRecord(this, rec);
+      const ad = recordAdapterFor(this.agent);
+      const items = ad ? ad.parseRecord(this, rec) : []; // 명부에 없는 에이전트의 기록 = 다른 해석기로 읽지 않는다(항목 없음)
       for (const it of items) {
         it.i = ++this.seq; out.push(it);
         if (this.firstUser == null && it.kind === 'user' && it.text && it.text !== '[이미지]') this.firstUser = it.text;

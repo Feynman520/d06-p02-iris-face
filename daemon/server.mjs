@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { SessionManager, autoResumeState } from './sessions.mjs';
 import { titleFromPrompt } from './title.mjs';
 import { AGENTS, setModelRefresher } from './agents.mjs';
+import { adapterOrDefault } from './agents/index.mjs';
 import { ModelCatalog } from './models.mjs';
 import { TranscriptTail } from './transcript.mjs';
 import { SubagentWatcher } from './subagents.mjs';
@@ -227,7 +228,7 @@ function buildHandoff(items, rec) {
   }
   let body = lines.join('\n\n');
   if (body.length > 8000) body = '…(앞부분 생략)…\n\n' + body.slice(-8000);
-  const from = `${rec.agent === 'claude' ? 'Claude' : 'Codex'} ${rec.modelLabel || rec.model} · ${rec.effort}`;
+  const from = `${adapterOrDefault(rec.agent)?.table.label || '다른 에이전트'} ${rec.modelLabel || rec.model} · ${rec.effort}`;
   return `[이전 대화 이어받기 — ${from} 세션에서 옮겨 옴, 폴더 ${rec.cwd}]\n아래는 지금까지의 대화다. 이미 끝난 작업은 다시 하지 말고, 결정된 내용은 그대로 따른다.\n\n${body || '(이전 대화 없음)'}`;
 }
 
@@ -551,9 +552,12 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && action === 'input') { const b = await readBody(req); sm.write(id, String(b.data ?? '')); return json(res, 200, { ok: true }); }
       if (req.method === 'POST' && action === 'resize') { const b = await readBody(req); sm.resize(id, Number(b.cols), Number(b.rows)); return json(res, 200, { ok: true }); }
       if (req.method === 'POST' && action === 'switch') {
-        const b = await readBody(req); const before = sm.get(id); const beforeCmd = before.cmdline;
+        const b = await readBody(req);
+        // 맨 먼저: 열 수 없는 카드 · 명부에 없는 에이전트 값(0 · false · 목록 · 모르는 이름)은 아무 일도 하기 전에 거절(400). 값이 비었으면 지금 에이전트 그대로.
+        const toOtherAgent = sm.checkSwitch(id, b.agent);
+        const before = sm.get(id); const beforeCmd = before.cmdline;
         let rec;
-        if (b.agent && b.agent !== before.agent) {
+        if (toOtherAgent) {
           // 다른 에이전트로: 이전 대화를 글로 묶어 새 CLI의 첫 요청으로 넘긴다(맥락 이어받기)
           const tl = tailFor(before); try { tl?.poll(); } catch {}
           const handoff = buildHandoff(tl?.items || [], before);

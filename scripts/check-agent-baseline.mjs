@@ -3,7 +3,7 @@
 //   에이전트 장부(등록부)로 옮기는 동안, 옮기기 전과 글자 하나까지 같은 결과가 나오는지 보는 검사다(동작을 바꾸지 않는 옮기기의 증명).
 //   찍는 것: ① 선택값 정리(normalize)·재개 모델·권한 표시 ② 실행 사양(실행 파일·인수 배열·세션 id·기록 경로·재개 명령)
 //            ③ 세션을 띄울 때의 부작용 순서(끝내기 → 코덱스 호환 → fast 설정 → 폴더 신뢰 → 열쇠 → 실행 → 저장)와 자식 환경 변수
-//            ④ 저장되는 카드 값(sessions.json) ⑤ 기록 파일 짝짓기(클로드 새 번호 따라가기 · 코덱스 rollout 찾기) ⑥ 모르는 에이전트 이름의 지금 동작
+//            ④ 저장되는 카드 값(sessions.json) ⑤ 기록 파일 짝짓기(클로드 새 번호 따라가기 · 코덱스 rollout 찾기) ⑥ 명부에 없는 에이전트 값은 거절한다는 것(새 요청 = 오류 · 저장된 카드 = 열지 않고 보존)
 //   두 환경에서 따로 돈다: env(설정 폴더가 환경 변수에 있음 — 실행기가 띄운 데몬) · receipt(환경 변수 없음 + 설치 영수증).
 //   실제 CLI·실제 설정·실 데몬 접촉 0: 가짜 영혼 폴더(IRIS_ROOT 임시) · node-pty 의 spawn 을 가짜로 바꿈 · taskkill 은 기록만 하고 실행하지 않음.
 //
@@ -14,7 +14,8 @@
 //   손 표(모델·권한 목록)를 고친 차례 = `--write=agentsTable`. 옮기기만 한 차례에 표본이 달라졌다면 그것이 회귀다 — 다시 찍지 않는다.
 //
 //   🔴 "지금 동작"이지 "옳은 동작"이 아닌 것도 그대로 찍혀 있다(옮기는 동안은 지키고, 고칠지는 따로 정한다 — 고치는 차례에 그 구역을 다시 찍는다):
-//     · 모르는 에이전트 이름(gemini 등) → 조용히 클로드로 연다 · `constructor`/`toString` 같은 이름 → TypeError
+//     (명부에 없는 에이전트 이름을 조용히 클로드·코덱스로 다루던 옛 폴백은 2026-11-21 걸음 5 에서 없앴다 — 지금 표본은 "거절"이 정답이다.
+//      값이 없는 칸(undefined · null · '')만 기본 에이전트로 본다. 사례 이름에 남은 「지금 동작」 글자는 그때의 이름 그대로다.)
 //     · 선택값 정리와 명령 만들기 사이에 모델 목록이 바뀌면 카드의 모델과 실제로 넘긴 모델이 달라진다(sessions「…사이에 목록이 바뀜」)
 //     · 같은 폴더에서 기록을 기다리는 코덱스 카드 둘이 같은 rollout 하나에 함께 붙는다(pairing) · 에이전트를 바꾼 카드에 옛 `compat`·`keepActual` 이 남는다
 //     · 기록 파일이 줄어들어 처음부터 다시 읽을 때 모델·사용량·배경 작업 표는 비우지 않는다(records …shrunk)
@@ -429,7 +430,7 @@ async function child(mode, tmp) {
   ops.push(op('switchTo codex 목록에서 사라진 모델로 쓰던 세션', () => sm.switchTo(x1.id, {})));
   ops.push(op('replaceAgent claude → codex', () => sm.replaceAgent(c1.id, { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', prompt: '이전 대화 요약' })));
   ops.push(op('replaceAgent codex → claude', () => sm.replaceAgent(x1.id, { agent: 'claude', model: 'opus', effort: 'high', prompt: '' })));
-  ops.push(op('replaceAgent → 모르는 에이전트(gemini) — 지금 동작', () => sm.replaceAgent(g1.id, { agent: 'gemini' })));
+  ops.push(op('replaceAgent → 모르는 에이전트(gemini) — 지금 동작', () => sm.replaceAgent((g1 || x1).id, { agent: 'gemini' })));
   ops.push(op('resume 살아 있는 카드', () => sm.resume(c1.id)));
   // 고른 뒤 실행 직전에 목록이 바뀜(자동 업데이트): 카드에 적히는 모델과 실제로 넘기는 모델
   let flip = 0;
@@ -462,8 +463,10 @@ async function child(mode, tmp) {
   odd.push(op3('switchTo codex (호환이 예외를 던짐)', () => sm3.switchTo(lx.id, {})));
   align3 = () => ({ action: 'blocked', reason: '연결이 중계기가 아님' });
   odd.push(op3('switchTo codex (호환 = blocked → 곧 종료)', () => sm3.switchTo(lx.id, {})));
-  if (la) la.sessionId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
-  odd.push(op3("switchTo 목록 ['codex'] 카드", () => sm3.switchTo(la?.id, {})));
+  // 목록 값 카드는 만들 수 없으므로(거절) 저장돼 있던 카드처럼 직접 넣어 switchTo 의 확인에 닿게 한다
+  sm3.sessions.set('odd-list', { id: 'odd-list', cwd: work, agent: ['codex'], model: 'gpt-6.1-sol', effort: 'medium', status: 'exited', pid: null, sessionId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' });
+  odd.push(op3("switchTo 목록 ['codex'] 카드", () => sm3.switchTo('odd-list', {})));
+  sm3.sessions.delete('odd-list');
   // 세션 띄우기 함수를 바깥에서 직접 부름(buildCommand 가 만들지 않은 명령 · 인자 넷): 명령 글자로 에이전트를 가려 그 에이전트의 폴더 신뢰 · 열쇠를 한다
   const work3 = path.join(tmp, 'Work Three'); fs.mkdirSync(work3, { recursive: true });
   for (const [label, cmd] of [['codex 로 시작', { file: 'cmd.exe', args: ['/c', 'codex', '--x'] }], ['CODEX-cli 대문자', { file: 'cmd.exe', args: ['/c', 'CODEX', '-m'] }], ['claude 로 시작', { file: 'cmd.exe', args: ['/c', 'claude', '--y'] }], ['다른 실행 파일', { file: 'cmd.exe', args: ['/c', 'antigravity', '--z'] }], ['인수 없음', { file: 'x.exe' }], ['codexx(낱말 경계 아님)', { file: 'cmd.exe', args: ['/c', 'codexx'] }]]) {
@@ -534,17 +537,29 @@ async function child(mode, tmp) {
 
   // 옛 저장 카드 읽기(load) → 자동 재개: 에이전트 이름이 없는 것·모르는 것도 지금 그대로
   const state2 = path.join(tmp, 'state2'); fs.mkdirSync(state2, { recursive: true });
-  const DEAD = FAKE_PID0;
+  const DEAD = FAKE_PID0; const ALIVE = FAKE_PID0 + 999000; alivePids.add(ALIVE);
   fs.writeFileSync(path.join(state2, 'sessions.json'), JSON.stringify([
     { id: 's1', cwd: work, agent: 'claude', model: 'opus', modelActual: 'claude-opus-5', effort: 'high', permission: 'bypassPermissions', status: 'busy', pid: DEAD, sessionId: '11111111-1111-4111-8111-111111111111' },
     { id: 's2', cwd: work, agent: 'codex', model: 'gpt-5.6-terra', effort: 'medium', readOnly: true, status: 'idle', pid: DEAD, sessionId: '22222222-2222-4222-8222-222222222222' },
     { id: 's3', cwd: work, model: 'opus', effort: 'high', status: 'idle', pid: DEAD, sessionId: '33333333-3333-4333-8333-333333333333' },
     { id: 's4', cwd: work, agent: 'gemini', model: 'gemini-4-argon-high', modelActual: 'gemini-4-argon-high', effort: 'high', status: 'attention', pid: DEAD, sessionId: '44444444-4444-4444-8444-444444444444' },
+    // 글자가 아닌 값 · 세션 id 가 없는 열 수 없는 카드(원래 이유가 있음) · PID 가 살아 있는 열 수 없는 카드 · 전에 표식이 붙었다가 이제 열 수 있게 된 카드 · 이유가 있는 정상 카드 · 에이전트 칸이 없고 쓰던 정확한 모델이 있는 옛 카드
+    { id: 's5', cwd: work, agent: ['codex'], model: 'gpt-6.1-sol', effort: 'medium', status: 'idle', pid: DEAD, sessionId: '55555555-5555-4555-8555-555555555555' },
+    { id: 's6', cwd: work, agent: 'gemini', model: 'g', effort: 'high', status: 'busy', pid: DEAD, sessionId: null, exitReason: '원래 있던 종료 이유' },
+    { id: 's7', cwd: work, agent: 'gemini', model: 'g', effort: 'high', status: 'busy', pid: ALIVE, sessionId: '77777777-7777-4777-8777-777777777777', previous: [{ agent: 'antigravity', sessionId: 'p1' }] },
+    { id: 's8', cwd: work, agent: 'codex', model: 'gpt-6.1-sol', effort: 'medium', status: 'exited', pid: DEAD, sessionId: '88888888-8888-4888-8888-888888888888', unsupported: true, exitReason: '이 판에서 열 수 없는 에이전트의 세션입니다(codex)', exitReasonSaved: '그 전에 있던 이유' },
+    { id: 's9', cwd: work, agent: 'claude', model: 'opus', effort: 'high', status: 'exited', pid: DEAD, sessionId: '99999999-9999-4999-8999-999999999999', exitReason: '정상 카드의 종료 이유' },
+    { id: 's10', cwd: work, model: 'gone', modelActual: 'claude-opus-4-1', modelLabel: 'Opus 4.1', effort: 'high', status: 'idle', pid: DEAD, sessionId: 'aaaaaaaa-0000-4000-8000-00000000000a' },
   ]), 'utf8');
   const sm2 = new TSM(state2, { onLog: (m) => logs.push(tok(m)), codexHome: homeCodex, alignCodex: (o) => { ev('alignCodex', JSON.stringify({ threadId: o.threadId })); return { action: 'none' }; } });
   // 읽어 들인 직후의 카드(상태 · 잃은 세션 표식 · 열 수 없는 카드 표식과 이유)와 자동 재개 대상
   out.oldCardsLoaded = { cards: sm2.list().map((r) => card(r)), autoResume: sm2.lost().map((r) => r.id) };
-  out.oldCards = ['s1', 's2', 's3', 's4'].map((id) => {
+  // 에이전트 칸이 없는 옛 카드(재개 전 — 재개하면 칸이 채워진다)에 대한 요청 확인: 기본 에이전트를 적어 보내면 같은 에이전트(false), 다른 에이전트면 true
+  out.switchGuardNoAgent = ['s3', 's10'].flatMap((id) => [undefined, null, '', 'claude', 'codex', 'gemini', 0, false].map((agent) => {
+    let r; try { r = sm2.checkSwitch(id, agent); } catch (e) { r = { throws: e?.constructor?.name || 'Error', code: e?.code || null }; }
+    return { id, cardAgent: JSON.stringify(sm2.get(id).agent) ?? '<undefined>', agent: JSON.stringify(agent) ?? '<undefined>', result: r };
+  }));
+  out.oldCards = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10'].map((id) => {
     events = []; spawns = []; logs.length = 0; newCase(`old ${id}`);
     let rec = null, error = null; try { rec = sm2.resume(id, { prompt: 'RESUME' }); } catch (e) { error = { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; }
     return { id, error, events: [...events], spawns: [...spawns], card: rec ? card(rec) : null }; // 사본 — 뒤 구역에서 일어나는 일이 섞여 들지 않게
@@ -629,7 +644,36 @@ async function child(mode, tmp) {
     out.titler.push(await title('프로세스 오류', REQ, { agent: 'claude', exe: EXE }, { error: 'ENOENT' }));
     out.titler.push(await title('spawn 이 던짐', REQ, { agent: 'codex' }, { throwOnSpawn: true }));
     out.titler.push(await title('빈 요청', '   ', { agent: 'codex' }, {}));
+    for (const agent of [null, '']) out.titler.push(await title('에이전트 값이 빔 → 기본 에이전트', REQ, { agent, exe: EXE, model: null }, { out: '채점 기준 수정\n', code: 0 }));
     out.titlerHelpers = deep({ lastAnswer: ['a\nb\n', 'x\ntokens used\n12,345\n', '', null, '한 줄'].map((s) => Tt.lastAnswer(s)), constants: { TITLE_MODEL: Tt.TITLE_MODEL, CODEX_TITLE_MODEL: Tt.CODEX_TITLE_MODEL }, exports: Object.keys(Tt).sort() });
+  }
+
+  // 모델·에이전트 바꾸기 요청의 맨 앞 확인(checkSwitch): 카드 × 요청의 에이전트 값 — 거절은 아무 일도 일어나기 전이어야 한다(events 가 비어 있음)
+  out.switchGuard = ['s1', 's2', 's10', 's4', 's5', 'none'].flatMap((id) => [undefined, null, '', 'claude', 'codex', 'gemini', 'CLAUDE', 0, false, true, [], ['codex'], {}, 'constructor'].map((agent) => {
+    events = []; let r; try { r = sm2.checkSwitch(id, agent); } catch (e) { r = { throws: e?.constructor?.name || 'Error', code: e?.code || null, message: tok(e?.message || '') }; }
+    return { id, agent: JSON.stringify(agent) ?? '<undefined>', result: r, events: [...events] };
+  }));
+  out.unsupportedCard = ['s4', 's6', 's7'].map((id) => {
+    events = []; spawns = []; const before = JSON.stringify(sm2.get(id));
+    const tryOp = (fn) => { try { fn(); return 'ok'; } catch (e) { return { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; } };
+    return { id, replaceAgent: tryOp(() => sm2.replaceAgent(id, { agent: 'claude', model: 'opus' })), switchTo: tryOp(() => sm2.switchTo(id, {})), resume: tryOp(() => sm2.resume(id)), events: [...events], spawns: spawns.length, cardUnchanged: JSON.stringify(sm2.get(id)) === before };
+  });
+  // 전부 종료(창 닫기) 뒤: 열 수 없는 카드는 세션 id 가 없어도 남는다. 다시 읽어도 그대로.
+  {
+    const blocked = cp.spawn; cp.spawn = () => { throw new Error('프로세스 표를 읽지 않음'); }; syncBuiltinESMExports(); // 이 검사에서는 표 없이(확인 못 함) 끝내기
+    events = []; let rep2; try { rep2 = await sm2.endAll({ settleMs: 0 }); } catch (e) { rep2 = { throws: e?.message }; }
+    cp.spawn = blocked; syncBuiltinESMExports();
+    const view = (r) => deep({ id: r.id, agent: r.agent, status: r.status, lost: r.lost ?? null, unsupported: r.unsupported ?? null, exitReason: r.exitReason ?? null, exitReasonSaved: r.exitReasonSaved ?? null, sessionId: r.sessionId ?? null, closedBy: r.closedBy ?? null, previous: r.previous ?? null });
+    const sm2b = new TSM(state2, { onLog: () => {}, codexHome: homeCodex, alignCodex: () => ({ action: 'none' }) });
+    alivePids.delete(ALIVE);
+    const sm2c = new TSM(state2, { onLog: () => {}, codexHome: homeCodex, alignCodex: () => ({ action: 'none' }) });
+    // 사용자가 직접 지우기(forget) · 닫기(close)를 누르면 열 수 없는 카드도 지워진다(프로그램이 스스로 지우지 않는다는 약속과 별개). 저장 파일은 되돌려 둔다.
+    const endEvents = [...events]; const pidGoneView = sm2c.list().map(view);
+    const keepFile = fs.readFileSync(path.join(state2, 'sessions.json'));
+    events = []; const del = (fn) => { try { fn(); return 'ok'; } catch (e) { return { throws: tok(e?.message || '') }; } };
+    const userDelete = { forget: del(() => sm2c.forget('s6')), close: del(() => sm2c.close('s4')), left: sm2c.list().map((r) => r.id), events: [...events] };
+    fs.writeFileSync(path.join(state2, 'sessions.json'), keepFile);
+    out.endAll = { userDelete, report: rep2?.throws ? rep2 : deep({ verified: rep2.verified, sessions: rep2.sessions.map((x) => ({ id: x.id, result: x.result, note: x.note ?? null })), survivors: rep2.survivors.map((x) => x.session) }), events: endEvents, after: sm2.list().map(view), reloaded: sm2b.list().map(view), reloadedAutoResume: sm2b.lost().map((r) => r.id), reloadedPidGone: pidGoneView };
   }
 
   // 설정 파일에 남은 것(폴더 신뢰·시작 안내·fast 설정)
@@ -674,6 +718,15 @@ async function child(mode, tmp) {
 
   out.records = await recordBaseline(tmp, deep);
 
+  // 모델·에이전트 바꾸기 요청(server.mjs 의 switch): 본문을 읽은 바로 다음에 checkSwitch 를 부르고, 그 뒤에야 기록 읽기·바꾸기를 한다(소스 순서 확인)
+  {
+    const src = fs.readFileSync(path.join(ROOT, 'daemon', 'server.mjs'), 'utf8');
+    const from = src.indexOf("action === 'switch'"); const to = src.indexOf("action === 'resume'", from);
+    const blk = from >= 0 && to > from ? src.slice(from, to) : '';
+    const at = (t) => blk.indexOf(t);
+    const guard = at('sm.checkSwitch(id, b.agent)');
+    out.switchRoute = { found: !!blk, guardCalled: guard >= 0, guardBeforeGet: guard >= 0 && guard < at('sm.get(id)'), guardBeforeTail: guard >= 0 && guard < at('tailFor('), guardBeforeReplace: guard >= 0 && guard < at('sm.replaceAgent('), guardBeforeSwitch: guard >= 0 && guard < at('sm.switchTo('), branchByGuard: /if \(toOtherAgent\)/.test(blk), noTruthyBranch: !/if \(b\.agent &&/.test(blk) };
+  }
   out.exports = { agents: Object.keys(A).sort(), agentKeys: Object.keys(AGENTS), agentShape: Object.fromEntries(Object.keys(AGENTS).map((k) => [k, Object.keys(AGENTS[k]).sort()])), constants: deep({ CLAUDE_CONFIG_DIR: A.CLAUDE_CONFIG_DIR, CODEX_HOME: A.CODEX_HOME, ROOT: A.ROOT === ROOT ? '<FACE>' : A.ROOT }) };
 
   out.violations = violations;
@@ -800,6 +853,12 @@ async function recordBaseline(tmp, deep) {
     })),
     contextWindows: [null, '', 'claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-3-haiku', 'gpt-6.1-sol'].flatMap((model) => ['claude', 'codex', 'gemini', undefined].flatMap((agent) => [null, 123456].map((window) => deep({ model, agent, window, result: Object.assign(Object.create(TranscriptTail.prototype), { agent, model, window }).contextWindow() })))),
     // 모양이 이상한 줄(값이 없거나 종류가 다른 칸): 무엇을 돌려주고 어디서 예외가 나는지, 예외 뒤 읽기 자리·누적 상태가 어떻게 남는지
+    presetState: [undefined, null, '', 'claude', 'codex', 'gemini', 'CLAUDE', ['claude'], 0].map((agent) => {
+      const tail = new TranscriptTail(path.join(dir, 'no-such-file.jsonl'), agent);
+      tail.items = [{ kind: 'user', text: 'x' }, { kind: 'tool', name: 'Bash' }]; tail.turnOpen = true; tail.model = 'claude-haiku-3';
+      const tryIt2 = (fn) => { try { return fn(); } catch (e) { return `throws ${e?.message}`; } };
+      return { agent: JSON.stringify(agent) ?? '<undefined>', turnState: tryIt2(() => tail.turnState()), contextWindow: tryIt2(() => tail.contextWindow()) };
+    }),
     weird: Object.fromEntries(['claude', 'codex', 'gemini'].map((agent) => [agent, [
       null, 5, 'text', [], {}, { type: 'user' }, { type: 'user', message: null }, { type: 'user', message: { content: 5 } }, { type: 'user', message: { content: [null] } }, { type: 'user', message: { content: [{ type: 'tool_result', content: { x: 1 } }] } },
       { type: 'assistant', message: { content: 'plain string' } }, { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'AskUserQuestion', input: { questions: 'not a list' } }] } }, { type: 'assistant', message: { content: [{ type: 'tool_use' }], usage: 'x' } },

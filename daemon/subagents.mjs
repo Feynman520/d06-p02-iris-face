@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { TranscriptTail } from './transcript.mjs';
-import { strictAdapter, legacyElseCodex } from './agents/index.mjs';
+import { adapterOrDefault } from './agents/index.mjs';
 
 const QUIET_MS = 60_000;
 const SCAN_BUSY_MS = 1500, SCAN_IDLE_MS = 10_000;
@@ -25,7 +25,8 @@ export class SubagentWatcher {
   }
   /** 살펴볼 폴더들 */
   dirs() {
-    return legacyElseCodex(this.agent).subagentDirs(this);
+    const ad = adapterOrDefault(this.agent);
+    return ad ? ad.subagentDirs(this) : []; // 명부에 없는 에이전트 = 볼 폴더 없음
   }
   /** 새 기록파일이 생겼는지 본다(파일 목록만). busy면 1.5초, 아니면 10초 간격. force=true 면 즉시. */
   scan(busy, force = false) {
@@ -38,7 +39,7 @@ export class SubagentWatcher {
       for (const f of names) {
         if (!f.endsWith('.jsonl')) continue;
         const full = path.join(dir, f); if (this.seen.has(full)) continue;
-        const ad = legacyElseCodex(this.agent);
+        const ad = adapterOrDefault(this.agent); if (!ad) continue;
         if (!f.startsWith(ad.subagentFilePrefix)) continue; this.seen.add(full);
         if (ad.addSubagent(this, full, (file) => new TranscriptTail(file, ad.id, { sub: true }))) added = true;
       }
@@ -64,7 +65,7 @@ export class SubagentWatcher {
       let items = []; try { items = s.tail.poll(); } catch (e) { this.log(`sub ${s.key} poll: ${e.message}`); }
       if (items.length) { updates.push({ key: s.key, items }); s.items = s.tail.items.length; s.tools = s.tail.tools; s.lastAt = s.tail.lastT || s.lastAt; if (!s.startedAt || (s.tail.firstT && s.tail.firstT < s.startedAt)) s.startedAt = s.tail.firstT || s.startedAt; changed = true; }
       if (!s.model && s.tail.model) { s.model = shortModel(s.tail.model); changed = true; } // 클로드 meta.json에 model이 없는 보조(Explore 등)는 기록의 모델 id에서(2026-09-11 실측)
-      const adDetail = strictAdapter(this.agent);
+      const adDetail = adapterOrDefault(this.agent);
       if (adDetail?.subagentDetail && !s.detail && s.tail.firstUser) { s.detail = adDetail.subagentDetail(s); changed = true; }
       const next = this.judge(s, parentTail, parentBusy, now);
       if (next !== s.status) { s.status = next; if (next === 'done' && !s.endedAt) s.endedAt = this.endedAt(s, parentTail) || s.lastAt || new Date().toISOString(); if (next === 'running') s.endedAt = null; changed = true; }
@@ -81,7 +82,7 @@ export class SubagentWatcher {
   }
   judge(s, parentTail, parentBusy, now) {
     // 완료 신호는 에이전트마다 다르다(클로드 = 부모 기록의 tool_result/알림 · 코덱스 = 그 보조 rollout 의 task_complete)
-    if (legacyElseCodex(this.agent).subagentDone(this, s, parentTail)) return 'done';
+    if (adapterOrDefault(this.agent)?.subagentDone(this, s, parentTail)) return 'done';
     // 완료 신호가 없다: 부모가 작업 중이면 running. 부모가 대기·종료인데 기록이 60초 넘게 조용하면 quiet(완료로 단정하지 않는다)
     const last = s.lastAt ? Date.parse(s.lastAt) : 0;
     if (!parentBusy && now - last > QUIET_MS) return 'quiet';
@@ -95,7 +96,7 @@ export class SubagentWatcher {
     return a || b || null;
   }
   endedAt(s, parentTail) {
-    return legacyElseCodex(this.agent).subagentEndedAt(this, s, parentTail);
+    return adapterOrDefault(this.agent)?.subagentEndedAt(this, s, parentTail) ?? null;
   }
   /** 화면에 보내는 목록(기록 본문 제외) */
   list() {

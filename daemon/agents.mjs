@@ -6,18 +6,21 @@
 // (2026-11-21 에이전트 장부 걸음 1 — 바깥에서 보는 함수 이름·돌려주는 모양·기본값·부르는 순서는 그대로).
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ADAPTERS, strictAdapter, legacyElseCodex } from './agents/index.mjs';
+import { ADAPTERS, adapterOrDefault, hasAgent, DEFAULT_AGENT, isMissingAgent, unknownAgentError } from './agents/index.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export { CLAUDE_CONFIG_DIR, claudeProjectSlug } from './agents/claude.mjs';
 export { CODEX_HOME } from './agents/codex.mjs';
 
-// 어댑터 고르기(strictAdapter · legacyElseCodex)는 옮기기 전 코드의 글자 비교와 똑같은 판정이다 — 뜻과 없앨 때는 agents/index.mjs 머리말.
+// 에이전트 값: 없으면 기본(명부의 첫째), 명부에 있으면 그 에이전트, 그 밖은 거절(UNKNOWN_AGENT) — 다른 에이전트로 바꿔 열지 않는다(걸음 5).
 // 재개가 지켜도 되는 "쓰던 정확한 모델 이름"의 모양(지금은 두 에이전트의 이름 모양을 한 식으로 본다 — 머리 글자는 어댑터의 actualPrefix)
 const ACTUAL_NAME_RE = /^(claude-[a-z0-9-]+|gpt-[a-z0-9.-]+)$/;
-const NO_PERMISSION_FIELDS = Object.freeze({ permission: '', approval: '', sandbox: '' });
+// 재개 모델의 머리 글자: 명부에 없는 에이전트 값이면 어떤 이름도 받지 않는다(이름에 올 수 없는 글자로 견줌)
+const actualPrefixOf = (agent) => adapterOrDefault(agent)?.actualPrefix ?? '\u0000';
+// 두 에이전트 값이 같은 에이전트를 가리키는가를 볼 때의 이름: 값이 없으면 기본 에이전트, 명부에 없는 값은 그 값 그대로
+const agentIdOf = (agent) => adapterOrDefault(agent)?.id ?? agent;
 
-export const isFastModel = (agent, model, actual) => { const ad = strictAdapter(agent); return ad ? ad.isFast(model, actual) : false; };
+export const isFastModel = (agent, model, actual) => { const ad = adapterOrDefault(agent); return ad ? ad.isFast(model, actual) : false; };
 // 세션을 만들기·바꾸기 직전 모델 목록을 그 PC CLI 와 맞춘다(daemon/models.mjs ModelCatalog.refresh — 평소엔 stat 한 번).
 let refreshModels = () => {};
 export function setModelRefresher(fn) { refreshModels = typeof fn === 'function' ? fn : () => {}; }
@@ -26,8 +29,10 @@ export function setModelRefresher(fn) { refreshModels = typeof fn === 'function'
 export const AGENTS = Object.fromEntries(Object.entries(ADAPTERS).map(([id, ad]) => [id, ad.table]));
 
 export function normalize(sel = {}) {
+  // 명부에 없는 에이전트 값은 다른 일을 하기 전에(모델 목록을 새로 읽기 전에) 거절한다
+  const agent = isMissingAgent(sel.agent) ? DEFAULT_AGENT : sel.agent;
+  if (!hasAgent(agent)) throw unknownAgentError(agent);
   try { refreshModels(); } catch {}
-  const agent = AGENTS[sel.agent] ? sel.agent : 'claude';
   const a = AGENTS[agent];
   const modelInfo = a.models.find(m => m.id === sel.model) || a.models.find(m => m.id === a.default.model);
   const model = modelInfo.id;
@@ -35,14 +40,14 @@ export function normalize(sel = {}) {
   // 모델 변경 시 지원되는 가장 가까운 이하 깊이로 조정(luna: ultra → max).
   // 3차 검토 6번: 그 PC 코덱스가 사고깊이 목록을 비워 두었으면(지원 안 함) 깊이를 넘기지 않는다(effort = '')
   const effort = efforts.length === 0 ? '' : (a.efforts.slice(0, a.efforts.indexOf(sel.effort) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort);
-  const ad = strictAdapter(agent);
+  const ad = ADAPTERS[agent];
   // 권한 칸은 에이전트마다 다르다(클로드 = permission, 코덱스 = approval·sandbox + 예전 readOnly 호환) — 쓰지 않는 칸은 빈 값
-  const { permission, approval, sandbox } = ad ? ad.permissionFields(sel, a) : NO_PERMISSION_FIELDS;
+  const { permission, approval, sandbox } = ad.permissionFields(sel, a);
   const readOnly = sandbox === 'read-only';
   // modelActual = CLI 에 실제로 넘기는 정확한 모델 이름(클로드 별칭이 풀린 값, 코덱스는 그대로). 모르면 null(판 번호 없는 이름일 때).
-  const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : (ad ? ad.actualFallback(model) : null);
+  const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : ad.actualFallback(model);
   // 재개가 쓰던 정확한 클로드 모델을 지키는 경우(keepResumeModel) — 다시 정규화(buildCommand)해도 그 모델·이름 그대로
-  if (sel.keepActual && typeof sel.modelActual === 'string' && ACTUAL_NAME_RE.test(sel.modelActual) && sel.modelActual.startsWith(legacyElseCodex(agent).actualPrefix)) {
+  if (sel.keepActual && typeof sel.modelActual === 'string' && ACTUAL_NAME_RE.test(sel.modelActual) && sel.modelActual.startsWith(ad.actualPrefix)) {
     return { agent, model: sel.model || model, modelLabel: sel.modelLabel || sel.modelActual, modelActual: sel.modelActual, keepActual: true, effort, permission, approval, sandbox, readOnly };
   }
   return { agent, model, modelLabel: modelInfo.label, modelActual, effort, permission, approval, sandbox, readOnly };
@@ -59,7 +64,7 @@ export function assertExpected(sel, expectModel) {
 }
 /** 재개 때 쓸 모델: 이 세션이 실제로 쓰던 정확한 이름이 지금 목록에 있으면 그 줄(예: 업데이트 뒤 「Fable 5.1 (이전)」) — 재개가 몰래 새 모델로 바뀌지 않게. */
 export function modelForResume(rec) {
-  const list = AGENTS[rec?.agent]?.models || [];
+  const list = adapterOrDefault(rec?.agent)?.table.models || [];
   if (rec?.modelActual) { const hit = list.find((m) => m.actual === rec.modelActual); if (hit) return hit.id; }
   return rec?.model;
 }
@@ -70,19 +75,20 @@ export function modelForResume(rec) {
  * 그 모델을 코덱스가 더는 받지 않으면 곧 끝나고 카드 띠에 원인이 보인다(조용한 대체보다 정직).
  */
 export function keepResumeModel(sel, rec) {
-  if (!rec?.modelActual || sel.modelActual === rec.modelActual || rec.agent !== sel.agent) return sel;
-  if (!ACTUAL_NAME_RE.test(rec.modelActual) || !rec.modelActual.startsWith(legacyElseCodex(sel.agent).actualPrefix)) return sel;
+  if (!rec?.modelActual || sel.modelActual === rec.modelActual || agentIdOf(rec.agent) !== agentIdOf(sel.agent)) return sel;
+  if (!ACTUAL_NAME_RE.test(rec.modelActual) || !rec.modelActual.startsWith(actualPrefixOf(sel.agent))) return sel;
   return { ...sel, model: rec.model, modelActual: rec.modelActual, modelLabel: rec.modelLabel || rec.modelActual, keepActual: true };
 }
 /** 권한 표시용 짧은 말 */
 export function permLabel(s) {
-  return legacyElseCodex(s.agent).permLabel(s, AGENTS);
+  const ad = adapterOrDefault(s.agent);
+  return ad ? ad.permLabel(s, AGENTS) : ''; // 명부에 없는 에이전트 = 표시할 것 없음(값이 없으면 기본 에이전트의 표시)
 }
 
 /** @returns {{ file:string, args:string[], sessionId?:string, recordPath?:string, resumeCmd:string, cmdline:string }} */
 export function buildCommand(sel, cwd, { resumeId } = {}) {
   const s = normalize(sel);
-  const ad = legacyElseCodex(s.agent);
+  const ad = ADAPTERS[s.agent];
   const cmd = ad.buildCommand(s, cwd, { resumeId });
   BUILT_BY.set(cmd, ad);
   return cmd;
