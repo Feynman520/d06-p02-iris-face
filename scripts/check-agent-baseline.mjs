@@ -224,7 +224,9 @@ async function child(mode, tmp) {
     spawns.push(deep({ file, args, opts: { name: opts.name, cols: opts.cols, rows: opts.rows, cwd: opts.cwd, useConpty: opts.useConpty }, env: Object.fromEntries(keys.map((k) => [k, val(k)])), pathAdded: pathNow.endsWith(PATH0) ? pathNow.slice(0, pathNow.length - PATH0.length).split(path.delimiter).filter(Boolean) : '<PATH 가 통째로 바뀜>' }));
     ev('spawn', file, JSON.stringify(args));
     const pid = FAKE_PID0 + pidBase + (++spawnTotal) * 4; if (fakePidAlive) alivePids.add(pid);
-    return { pid, cols: opts.cols, rows: opts.rows, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} };
+    // 화면 글자·종료를 이 검사가 흘려 넣을 수 있게 받는 쪽(콜백)을 쥐고, CLI 로 가는 키 입력을 적어 둔다
+    const proc = { pid, cols: opts.cols, rows: opts.rows, writes: [], onData(cb) { proc.dataCb = cb; }, onExit(cb) { proc.exitCb = cb; }, write(d) { proc.writes.push(d); }, resize() {}, kill() {} };
+    return proc;
   };
 
   const A = await import(pathToFileURL(path.join(ROOT, 'daemon', 'agents.mjs')).href);
@@ -435,6 +437,80 @@ async function child(mode, tmp) {
   ops.push(op('create claude — 정리와 명령 만들기 사이에 목록이 바뀜', () => sm.create({ cwd: work, agent: 'claude', model: 'opus', effort: 'high' })));
   setModelRefresher(() => { refreshN++; }); setModels(FIX);
   out.sessions = ops;
+
+  // ③-2 세션이 살아 있는 동안의 갈림(따로 꾸린 세션 관리자 — 위 표본과 섞이지 않게): 글자가 아닌 에이전트 값 · 코덱스 호환의 오류 · 확인 카드의 키 · 업데이트 물음 자동 응답 · 종료 원인
+  const state3 = path.join(tmp, 'state3'); fs.mkdirSync(state3, { recursive: true });
+  let align3 = () => ({ action: 'none' });
+  const sm3 = new TSM(state3, { onLog: (m) => logs.push(tok(m)), codexHome: homeCodex, alignCodex: (o) => { ev('alignCodex', JSON.stringify({ threadId: o.threadId, faceVersion: typeof o.faceVersion, log: typeof o.log })); return align3(); } });
+  const op3 = (name, fn) => {
+    events = []; spawns = []; logs.length = 0; newCase(`op3 ${name}`);
+    let rec = null, error = null;
+    try { rec = fn(); } catch (e) { error = { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; }
+    return { name, error, events: [...events], spawns: [...spawns], logs: [...logs], card: rec ? card(rec) : null }; // 사본 — 뒤에 일어나는 일이 이 사례에 섞여 들지 않게
+  };
+  const odd = [];
+  let lc, lx, la;
+  odd.push(op3("create 목록 ['codex']", () => (la = sm3.create({ cwd: work, agent: ['codex'], model: 'gpt-6-luna', effort: 'high', approval: 'never', sandbox: 'read-only', permission: 'plan', prompt: '' }))));
+  odd.push(op3("create 목록 ['claude']", () => sm3.create({ cwd: work, agent: ['claude'], model: 'opus', permission: 'plan', prompt: '' })));
+  odd.push(op3('create 숫자 5', () => sm3.create({ cwd: work, agent: 5, prompt: '' })));
+  odd.push(op3('create claude(살아 있는 동안 볼 카드)', () => (lc = sm3.create({ cwd: work, agent: 'claude', model: 'sonnet', prompt: '' }))));
+  odd.push(op3('create codex(살아 있는 동안 볼 카드)', () => (lx = sm3.create({ cwd: work, agent: 'codex', prompt: '' }))));
+  lx.sessionId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  align3 = () => ({ action: 'error', reason: '기록을 읽지 못함' });
+  odd.push(op3('switchTo codex (호환 = error)', () => sm3.switchTo(lx.id, {})));
+  align3 = () => { throw new Error('호환 처리 중 예외'); };
+  odd.push(op3('switchTo codex (호환이 예외를 던짐)', () => sm3.switchTo(lx.id, {})));
+  align3 = () => ({ action: 'blocked', reason: '연결이 중계기가 아님' });
+  odd.push(op3('switchTo codex (호환 = blocked → 곧 종료)', () => sm3.switchTo(lx.id, {})));
+  la.sessionId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  odd.push(op3("switchTo 목록 ['codex'] 카드", () => sm3.switchTo(la.id, {})));
+  // 화면에 확인 물음이 뜸 → 0.7초 뒤 상태 판정 → 확인 카드(누를 키). 코덱스 업데이트 물음은 자동 응답(2 → Enter).
+  const ASK = '\r\n Do you want to proceed?\r\n \u276f 1. Yes\r\n   2. Yes, and don\u2019t ask again\r\n   3. No\r\n\r\n Esc to cancel\r\n';
+  const UPDATE = '\r\n Update available! 0.170.0 -> 0.171.0\r\n\r\n \u203a 1. Update now\r\n   2. Skip\r\n   3. Skip until next version\r\n\r\n enter continue \u00b7 esc skip\r\n';
+  const p3 = (r) => sm3.live.get(r.id)?.pty;
+  for (const r of [lc, lx, la]) p3(r).dataCb(ASK);
+  newCase('op3 업데이트 물음을 볼 카드');
+  const updCard = sm3.create({ cwd: work, agent: 'claude', model: 'sonnet', prompt: '' }); p3(updCard).dataCb(UPDATE);
+  await new Promise((r) => setTimeout(r, 1300));
+  const liveView = (r) => deep({ agent: r.agent, status: r.status, prompt: r.prompt ? { kind: r.prompt.kind, question: r.prompt.question, options: (r.prompt.options || []).map((o) => ({ label: o.label, key: o.key })) } : null, writes: [...(p3(r)?.writes || [])] });
+  const live = { ask: [lc, lx, la].map(liveView), update: liveView(updCard) };
+  // 종료: 곧바로 끝난 CLI 는 화면 마지막 줄에서 원인을 골라 카드에 남긴다(코덱스 호환이 남긴 이유와 합쳐서)
+  logs.length = 0;
+  p3(lx).dataCb('\r\nError: thread was created with a different model provider\r\n'); p3(lc).dataCb('\r\nclaude: command not found\r\n');
+  await new Promise((r) => setTimeout(r, 300));
+  p3(lx).exitCb({ exitCode: 1 }); p3(lc).exitCb({ exitCode: 0 }); p3(la).exitCb({ exitCode: 3 });
+  live.exit = [lc, lx, la].map((r) => deep({ agent: r.agent, status: r.status, exitCode: r.exitCode, exitReason: r.exitReason, live: sm3.live.has(r.id) }));
+  live.exitLogs = [...logs];
+  live.saved = (() => { try { return JSON.parse(fs.readFileSync(path.join(state3, 'sessions.json'), 'utf8')).map((r) => card(r)); } catch (e) { return String(e?.message); } })();
+  out.sessionsLive = { ops: odd, live };
+
+  // ③-3 폴더 신뢰 미리 답하기: 에이전트 값의 종류 × 설정 폴더가 어디서 오는가 × 이미 있는 설정(있는 값은 바꾸지 않는다)
+  const { preTrust } = await import(pathToFileURL(path.join(ROOT, 'daemon', 'trust.mjs')).href);
+  const tdir = path.join(tmp, 'trust'); let tn = 0;
+  const trustCase = (name, agent, { claudeFile, codexFile, env = 'both', fallback = 'both', cwd = 'C:\\Work Dir\\Sub\\' } = {}) => {
+    const home = path.join(tdir, String(++tn)); const c = path.join(home, 'c'), x = path.join(home, 'x'), fc = path.join(home, 'fc'), fx = path.join(home, 'fx');
+    for (const d of [c, x, fc, fx]) fs.mkdirSync(d, { recursive: true });
+    if (claudeFile !== undefined) { fs.writeFileSync(path.join(c, '.claude.json'), claudeFile); fs.writeFileSync(path.join(fc, '.claude.json'), claudeFile); }
+    if (codexFile !== undefined) { fs.writeFileSync(path.join(x, 'config.toml'), codexFile); fs.writeFileSync(path.join(fx, 'config.toml'), codexFile); }
+    const envObj = env === 'both' ? { CLAUDE_CONFIG_DIR: c, CODEX_HOME: x } : env === 'none' ? {} : undefined;
+    const fb = fallback === 'both' ? { claudeConfigDir: fc, codexHome: fx } : fallback === 'none' ? {} : undefined;
+    let result; try { result = preTrust({ agent, cwd, env: envObj, fallback: fb }); } catch (e) { result = { throws: e?.constructor?.name, message: e?.message }; }
+    const rd = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+    return { name, agent: JSON.stringify(agent) ?? '<undefined>', result: deep(result), files: { 'env/.claude.json': rd(path.join(c, '.claude.json')), 'env/config.toml': rd(path.join(x, 'config.toml')), 'fallback/.claude.json': rd(path.join(fc, '.claude.json')), 'fallback/config.toml': rd(path.join(fx, 'config.toml')) } };
+  };
+  out.trust = [
+    ...['claude', 'codex', 'gemini', undefined, null, ['codex'], ['claude'], 5].map((a) => trustCase('새 설정(환경 변수의 폴더)', a)),
+    ...['claude', 'codex', 'gemini'].flatMap((a) => [trustCase('환경 변수 없음 → 대체 폴더', a, { env: 'none' }), trustCase('둘 다 없음', a, { env: 'none', fallback: 'none' }), trustCase('env·fallback 인자 자체가 없음', a, { env: 'missing', fallback: 'missing' })]),
+    trustCase('클로드: 이미 거절로 적힌 폴더·본 횟수 1·다른 키 보존', 'claude', { claudeFile: JSON.stringify({ hasCompletedOnboarding: false, fullscreenUpsellSeenCount: 1, keep: { a: 1 }, projects: { 'C:/Work Dir/Sub': { hasTrustDialogAccepted: false, x: 1 }, 'C:/other': {} } }) }),
+    trustCase('클로드: 다 있음(바꿀 것 없음)', 'claude', { claudeFile: JSON.stringify({ hasCompletedOnboarding: true, hasCompletedClaudeInChromeOnboarding: true, fullscreenUpsellSeenCount: 9, hasSeenAutoDefaultNudge: true, projects: { 'C:/Work Dir/Sub': { hasTrustDialogAccepted: true } } }) }),
+    trustCase('클로드: 깨진 JSON', 'claude', { claudeFile: '{ 깨짐' }), trustCase('클로드: 최상위가 배열', 'claude', { claudeFile: '[]' }), trustCase('클로드: projects 가 글자', 'claude', { claudeFile: '{"projects":"x"}' }), trustCase('클로드: projects 가 null', 'claude', { claudeFile: '{"projects":null}' }),
+    trustCase('클로드: 그 폴더 값이 객체가 아님', 'claude', { claudeFile: '{"projects":{"C:/Work Dir/Sub":5}}' }),
+    trustCase('코덱스: 다른 표가 있는 설정(줄바꿈 없이 끝남)', 'codex', { codexFile: 'model = "x"\n[projects.\'c:\\other\']\ntrust_level = "trusted"' }),
+    trustCase('코덱스: 같은 폴더가 작은따옴표 표로 이미 있음', 'codex', { codexFile: '[projects.\'c:\\work dir\\sub\']\ntrust_level = "untrusted"\n' }),
+    trustCase('코덱스: 같은 폴더가 큰따옴표 표로 이미 있음', 'codex', { codexFile: '[projects."c:\\\\work dir\\\\sub"]\ntrust_level = "untrusted"\n' }),
+    trustCase('코덱스: 빈 설정 파일', 'codex', { codexFile: '' }),
+    trustCase('작업 폴더 없음', 'claude', { cwd: '' }), trustCase('작업 폴더 없음', 'codex', { cwd: '' }),
+  ];
 
   // 옛 저장 카드 읽기(load) → 자동 재개: 에이전트 이름이 없는 것·모르는 것도 지금 그대로
   const state2 = path.join(tmp, 'state2'); fs.mkdirSync(state2, { recursive: true });
