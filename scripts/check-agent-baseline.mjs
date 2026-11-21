@@ -542,6 +542,8 @@ async function child(mode, tmp) {
     { id: 's4', cwd: work, agent: 'gemini', model: 'gemini-4-argon-high', modelActual: 'gemini-4-argon-high', effort: 'high', status: 'attention', pid: DEAD, sessionId: '44444444-4444-4444-8444-444444444444' },
   ]), 'utf8');
   const sm2 = new TSM(state2, { onLog: (m) => logs.push(tok(m)), codexHome: homeCodex, alignCodex: (o) => { ev('alignCodex', JSON.stringify({ threadId: o.threadId })); return { action: 'none' }; } });
+  // 읽어 들인 직후의 카드(상태 · 잃은 세션 표식 · 열 수 없는 카드 표식과 이유)와 자동 재개 대상
+  out.oldCardsLoaded = { cards: sm2.list().map((r) => card(r)), autoResume: sm2.lost().map((r) => r.id) };
   out.oldCards = ['s1', 's2', 's3', 's4'].map((id) => {
     events = []; spawns = []; logs.length = 0; newCase(`old ${id}`);
     let rec = null, error = null; try { rec = sm2.resume(id, { prompt: 'RESUME' }); } catch (e) { error = { throws: e?.constructor?.name || 'Error', message: tok(e?.message || '') }; }
