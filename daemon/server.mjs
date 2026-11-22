@@ -18,6 +18,7 @@ import { readLimits } from './limits.mjs';
 import { findRoot, rootName, Settings } from './workspace.mjs';
 import { dashDir, dashPort, sweeperPath, pythonExe, plannerDir } from './paths.mjs';
 import { Planner } from './planner.mjs';
+import { PlannerRules } from './planner-rules.mjs';
 import { MemoryMonitor } from './memory.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
@@ -71,6 +72,9 @@ const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
 // 플래너(설계 docs\설계-플래너-2026-11-13.md): 장부는 앱 폴더 밖(영혼 폴더 _agent\planner, 시험 데몬은 STATE\planner). 쓰기 전에는 폴더를 만들지 않는다.
 // 여기서는 만들기만 하고 장부 파일은 건드리지 않는다 — 여는 것은 listen 뒤 planner.start().
 const planner = new Planner({ dir: plannerDir(), stateDir: STATE, settings, broadcast: (o) => broadcast(o), log: (m) => log(m) });
+// 규칙 알림(아침 인사 · 시작 전 · 하루 끝 정리): AI 도 윈도우 예약도 쓰지 않고, 켜져 있는 동안 30초마다 장부와 시계를 견준다(listen 뒤 시작).
+const plannerRules = new PlannerRules({ planner, stateDir: STATE, log: (m) => log(m) });
+planner.rules = plannerRules;
 // 도구 설치·제거(판 B, 2026-11-10 — docs\설계-도구화면-2026-11-10.md): 엄선 목록만, 세션과 같은 환경으로 공식 CLI 실행.
 // 살아 있는 세션 수 = 파일 삭제를 미루는 기준(세션이 지운 파일을 나중에 부르지 않게).
 const tools = new ToolManager({
@@ -655,7 +659,7 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();
   // 플래너: 장부는 포트를 잡은 뒤에 연다(두 번째로 뜬 데몬이 장부를 건드리고 끝나지 않게). 여는 데 실패해도 플래너만 쉰다.
   // 휴지통 30일 · 사본 30장 정리는 시작할 때와 하루 한 번(꺼져 있으면 안 함). 장부가 없으면 아무것도 만들지 않는다.
-  try { planner.start(); planner.sweep(); setInterval(() => planner.sweep(), 24 * 60 * 60 * 1000).unref(); log(`planner: ${planner.failed ? 'failed' : planner.enabled ? 'on' : 'off'} rev=${planner.store.rev}${planner.store.readOnly ? ' (read-only)' : ''}${planner.store.recovered ? ' (recovered)' : ''}`); }
+  try { planner.start(); planner.sweep(); plannerRules.start(); setInterval(() => planner.sweep(), 24 * 60 * 60 * 1000).unref(); log(`planner: ${planner.failed ? 'failed' : planner.enabled ? 'on' : 'off'} rev=${planner.store.rev}${planner.store.readOnly ? ' (read-only)' : ''}${planner.store.recovered ? ' (recovered)' : ''}`); }
   catch (e) { log(`planner init error: ${e?.code || e?.name || 'error'}`); }
   // 도구(판 B): 중간에 끊긴 설치·제거를 실제 상태와 맞추고(같은 잠금 아래), 세션이 0 일 때 「제거 대기」를 처리한다(1분마다 확인 — 세션이 있으면 아무것도 안 함).
   tools.reconcile().then((r) => { if (r?.changed) log('tools: reconciled ledger'); }).catch((e) => log(`tools reconcile error: ${e?.message || e}`));
