@@ -15,6 +15,16 @@ export const soulRoot = () => findRoot(path.join(HERE, '..'));
 /** 여러 프로젝트가 공유하는 도구 폴더: <root>\_agent\shared\tools */
 export const toolsDir = () => path.join(soulRoot(), '_agent', 'shared', 'tools');
 
+/**
+ * 플래너 장부 폴더(설계 조각 ③, 2026-11-22). 앱 폴더 밖에 둔다 — 앱을 지우거나 다시 깔아도 일정은 남는다.
+ * IRIS_PLANNER_DIR → (시험 데몬) IRIS_FACE_STATE\planner → <영혼>\_agent\planner. 시험 데몬은 진짜 장부를 건드리지 않는다.
+ */
+export function plannerDir(env = process.env) {
+  if (env.IRIS_PLANNER_DIR) return env.IRIS_PLANNER_DIR;
+  if (env.IRIS_FACE_STATE) return path.join(env.IRIS_FACE_STATE, 'planner');
+  return path.join(soulRoot(), '_agent', 'planner');
+}
+
 /** 공유 도구 폴더 아래 한 도구의 경로: toolPath('document-mcp', 'hwp') 형태 */
 export const toolPath = (name, ...rel) => path.join(toolsDir(), name, ...rel);
 
