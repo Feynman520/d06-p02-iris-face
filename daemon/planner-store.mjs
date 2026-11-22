@@ -30,6 +30,7 @@ export class PlannerError extends Error { constructor(code, message) { super(mes
 const bad = (code, message) => { throw new PlannerError(code, message); };
 
 const newId = () => crypto.randomBytes(5).toString('hex');
+const hashOf = (buf) => crypto.createHash('sha1').update(buf).digest('hex');
 const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined;
 const isCtl = (c) => { const n = c.charCodeAt(0); return n < 32 && n !== 9 && n !== 10 && n !== 13; };
@@ -128,20 +129,20 @@ function settle(it, at) {
 
 export class PlannerStore {
   /** @param {{ dir: string, now?: () => Date, log?: (m: string) => void }} o */
-  constructor({ dir, now = () => new Date(), log = () => {} }) {
+  constructor({ dir, now = () => new Date(), log = () => {}, autoload = true }) {
     this.dir = dir; this.now = now; this.log = log;
     this.file = path.join(dir, 'items.json'); this.changesFile = path.join(dir, 'changes.jsonl'); this.backupDir = path.join(dir, 'backup');
     this.#reset();
-    this.load();
+    if (autoload) this.load();
   }
-  #reset() { this.head = { schema: SCHEMA, seq: 0, rev: 0 }; this.items = []; this.junk = []; this.readOnly = false; this.readOnlyReason = null; this.recovered = null; this.sig = 'none'; }
+  #reset() { this.head = { schema: SCHEMA, seq: 0, rev: 0 }; this.items = []; this.readOnly = false; this.readOnlyReason = null; this.recovered = null; this.sig = 'none'; }
 
   // ---- 읽기 ----
   load() {
     this.#reset();
     if (!fs.existsSync(this.file)) return;
     const r = this.#read(this.file);
-    if (r.ok) return this.#adopt(r.data, r.future);
+    if (r.ok) return this.#adopt(r.data, r.future, r.hash);
     // 깨진 장부: 따로 옮긴 것이 확인돼야 쓰기를 연다. 그 뒤 가장 새(읽을 수 있는) 사본으로 연다.
     const stamp = this.now().toISOString().replace(/[:.]/g, '-');
     const broken = path.join(this.dir, `items.broken-${stamp}.json`);
@@ -150,40 +151,44 @@ export class PlannerStore {
     for (const b of this.backups()) {
       const rb = this.#read(path.join(this.backupDir, b));
       if (!rb.ok || rb.future) continue;
-      this.#adopt(rb.data, false);
+      this.#adopt(rb.data, false, 'none');
       this.recovered = { broken: moved ? path.basename(broken) : null, from: b, reason: r.reason };
       this.log(`planner: 장부를 읽지 못해 사본 ${b} 로 열었습니다 (${r.reason})`);
       break;
     }
     if (!this.recovered) { this.recovered = { broken: moved ? path.basename(broken) : null, from: null, reason: r.reason }; this.log(`planner: 장부를 읽지 못했고 쓸 수 있는 사본도 없습니다 (${r.reason})`); }
     if (!moved) { this.readOnly = true; this.readOnlyReason = 'quarantine-failed'; this.log('planner: 깨진 장부를 따로 옮기지 못해 읽기만 합니다(덮어쓰지 않음)'); return; }
-    this.sig = 'none';
     if (this.recovered.from) { try { this.#save(this.head, this.items); } catch (e) { this.log(`planner: 복구한 장부를 다시 쓰지 못했습니다 (${e.code || 'error'})`); } }
   }
   /** 깨진 장부를 따로 옮긴다(시험에서 바꿔 끼울 수 있게 따로 둔다). */
   _quarantine(from, to) { fs.renameSync(from, to); }
   #read(f) {
     try {
-      const raw = fs.readFileSync(f, 'utf8');
+      const buf = fs.readFileSync(f);
+      const hash = hashOf(buf); const raw = buf.toString('utf8');
       const data = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
       if (!data || typeof data !== 'object' || Array.isArray(data)) return { ok: false, reason: 'shape' };
-      if (Number.isInteger(data.schema) && data.schema > SCHEMA) return { ok: true, future: true, data }; // 더 새로운 형식: 구조를 따지지 않는다
+      if (Number.isInteger(data.schema) && data.schema > SCHEMA) return { ok: true, future: true, data, hash }; // 더 새로운 형식: 구조를 따지지 않는다
       if (!Number.isInteger(data.schema) || data.schema < 1 || !Array.isArray(data.items)) return { ok: false, reason: 'shape' };
-      return { ok: true, future: false, data };
+      return { ok: true, future: false, data, hash };
     } catch (e) { return { ok: false, reason: e instanceof SyntaxError ? 'json' : String(e.code || 'read').slice(0, 20) }; }
   }
-  #adopt(data, future) {
+  #adopt(data, future, hash) {
     const { items, ...head } = data;
     const all = Array.isArray(items) ? items : [];
-    const seen = new Set(); this.items = []; this.junk = [];
-    for (const it of all) { if (valid(it) && !seen.has(it.id)) { seen.add(it.id); this.items.push(it); } else this.junk.push(it); }
+    const seen = new Set(); const junk = []; this.items = [];
+    for (const it of all) { if (valid(it) && !seen.has(it.id)) { seen.add(it.id); this.items.push(it); } else junk.push(it); }
     const maxNo = this.items.reduce((m, it) => (Number.isSafeInteger(it.no) && it.no > m ? it.no : m), 0);
     this.head = { ...head, seq: Number.isSafeInteger(head.seq) && head.seq >= maxNo ? head.seq : maxNo, rev: Number.isSafeInteger(head.rev) && head.rev >= 0 ? head.rev : 0 };
-    if (this.junk.length) this.log(`planner: 알아볼 수 없는 항목 ${this.junk.length}개는 화면에 내지 않고 파일에 그대로 둡니다`);
-    if (future) { this.readOnly = true; this.readOnlyReason = 'newer-schema'; this.log(`planner: 장부 형식 ${head.schema} 은(는) 이 판(${SCHEMA})보다 새것 — 읽기만 합니다`); }
-    this.sig = this.#stat();
+    if (junk.length && !future) { // 다음 저장 때 items 밖의 unreadable 로 옮겨 적는다(내용은 그대로 남기되 다시 항목으로 읽히지 않게)
+      this.head.unreadable = [...(Array.isArray(head.unreadable) ? head.unreadable : []), ...junk];
+      this.log(`planner: 알아볼 수 없는 항목 ${junk.length}개는 화면에 내지 않고 파일에 따로 둡니다`);
+    }
+    if (future) { this.items = []; this.readOnly = true; this.readOnlyReason = 'newer-schema'; this.log(`planner: 장부 형식 ${head.schema} 은(는) 이 판(${SCHEMA})보다 새것 — 읽기만 합니다`); }
+    this.sig = hash;
   }
-  #stat() { try { const s = fs.statSync(this.file); return `${s.mtimeMs}:${s.size}`; } catch { return 'none'; } }
+  /** 지금 파일의 지문(없으면 'none') */
+  #sigNow() { try { return hashOf(fs.readFileSync(this.file)); } catch (e) { return e.code === 'ENOENT' ? 'none' : `unreadable:${e.code || 'error'}`; } }
   backups() { try { return fs.readdirSync(this.backupDir).filter((n) => /^items-\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort().reverse(); } catch { return []; } }
 
   get rev() { return this.head.rev || 0; }
@@ -216,16 +221,17 @@ export class PlannerStore {
     const work = clone(this.items); let seq = this.head.seq || 0;
     const find = (id) => { const it = work.find((x) => x.id === id); if (!it) bad('not-found', '그 일을 찾지 못했습니다.'); return it; };
     const before = new Map(); // id → 바꾸기 전(없던 것은 null)
-    const touch = (id) => { if (!before.has(id)) before.set(id, clone(this.#find(id))); };
+    const opOf = new Map();   // id → 마지막으로 닿은 조작
+    const touch = (id, op) => { if (!before.has(id)) before.set(id, clone(this.#find(id))); opOf.set(id, op); };
     const source = this.#source(meta);
     for (const o of ops) {
       if (!o || typeof o !== 'object') bad('bad-op', '조작을 알아볼 수 없습니다.');
       if (o.op === 'add' || o.op === 'propose') {
         const f = cleanFields(o.item, false);
         const it = settle({ id: newId(), no: ++seq, kind: 'item', state: o.op === 'add' ? 'active' : 'proposed', end: null, time: null, timeEnd: null, done: false, tz: sysTz(), ...f, repeat: cleanRepeat(f.repeat ?? null, null), source: clone(source), createdAt: at, updatedAt: at }, at);
-        touch(it.id); work.push(it);
+        touch(it.id, o.op); work.push(it);
       } else if (o.op === 'update' || o.op === 'accept') {
-        const it = find(o.id); touch(it.id);
+        const it = find(o.id); touch(it.id, o.op);
         if (o.op === 'accept') { if (it.state !== 'proposed') bad('not-proposed', '이미 처리한 제안입니다.'); it.state = 'active'; it.acceptedAt = at; }
         else if (it.state === 'trash') bad('in-trash', '휴지통에 있는 일입니다. 먼저 되살려 주세요.');
         const f = cleanFields(o.patch || {}, true);
@@ -237,7 +243,7 @@ export class PlannerStore {
         if ('time' in f && f.time === null) it.timeEnd = null;
         settle(it, at);
       } else if (o.op === 'check') {
-        const it = find(o.id); touch(it.id);
+        const it = find(o.id); touch(it.id, o.op);
         if (it.state !== 'active') bad('not-active', '달력에 올라와 있는 일만 끝냄으로 바꿀 수 있습니다.');
         if (typeof o.done !== 'boolean') bad('bad-field', '끝냄은 예 · 아니오로 알려 주세요.');
         if (it.repeat) {
@@ -251,15 +257,15 @@ export class PlannerStore {
         else it.done = o.done;
         it.updatedAt = at; settle(it, at);
       } else if (o.op === 'remove') {
-        const it = find(o.id); touch(it.id);
+        const it = find(o.id); touch(it.id, o.op);
         if (it.state === 'trash') bad('in-trash', '이미 휴지통에 있습니다.');
         it.stateBefore = it.state; it.state = 'trash'; it.trashedAt = at; it.updatedAt = at;
       } else if (o.op === 'restore') {
-        const it = find(o.id); touch(it.id);
+        const it = find(o.id); touch(it.id, o.op);
         if (it.state !== 'trash') bad('not-in-trash', '휴지통에 있는 일이 아닙니다.');
         it.state = it.stateBefore === 'proposed' ? 'proposed' : 'active'; delete it.stateBefore; delete it.trashedAt; it.updatedAt = at;
       } else if (o.op === 'decline' || o.op === 'purge') {
-        const it = find(o.id); touch(it.id);
+        const it = find(o.id); touch(it.id, o.op);
         if (o.op === 'decline' && it.state !== 'proposed') bad('not-proposed', '이미 처리한 제안입니다.');
         if (o.op === 'purge' && it.state !== 'trash') bad('not-in-trash', '휴지통에 있는 일만 완전히 지울 수 있습니다.');
         work.splice(work.indexOf(it), 1);
@@ -269,7 +275,7 @@ export class PlannerStore {
     const change = { id: `c${this.rev + 1}-${crypto.randomBytes(3).toString('hex')}`, rev: this.rev + 1, at, by: source, note: meta.note ? str(String(meta.note), 200, '메모') : null, ops: ids.map((id) => ({ id, before: before.get(id), after: clone(work.find((x) => x.id === id) || null) })) };
     this.#commit(work, seq, change);
     this.log(`planner: rev ${this.rev} ops=${[...new Set(ops.map((o) => o.op))].join(',')} n=${ops.length} by=${source.by}${source.via ? '/' + source.via : ''} items=${ids.length}`);
-    return { rev: this.rev, changeId: change.id, ids, items: ids.map((id) => this.get(id)) };
+    return { rev: this.rev, changeId: change.id, ids, items: ids.map((id) => this.get(id)), ops: ids.map((id) => ({ id, op: opOf.get(id) })) };
   }
   #source(meta) {
     return {
@@ -317,8 +323,10 @@ export class PlannerStore {
   sweep() {
     const out = { purged: 0, backupsRemoved: 0 };
     if (this.readOnly) return out;
+    try { this.#fresh(); } catch { return out; }   // 다른 곳에서 바뀌었으면 다시 읽기만 하고 이번에는 아무것도 지우지 않는다
+    if (this.readOnly) return out;
     const limit = this.now().getTime() - TRASH_DAYS * 86400000;
-    const dead = this.items.filter((it) => it.state === 'trash' && !(Date.parse(it.trashedAt || '') >= limit));
+    const dead = this.items.filter((it) => it.state === 'trash' && Date.parse(it.trashedAt || '') < limit); // 지운 때를 알 수 없는 것은 그대로 둔다
     for (let i = 0; i < dead.length; i += OPS_MAX) { this.apply(dead.slice(i, i + OPS_MAX).map((it) => ({ op: 'purge', id: it.id })), { by: 'system', via: 'sweep' }); out.purged += Math.min(OPS_MAX, dead.length - i); }
     let good = 0; // 읽을 수 있는 사본을 새것부터 세어, 30장을 채운 뒤의 것만 지운다(깨진 사본이 멀쩡한 옛 사본을 밀어내지 않게)
     for (const b of this.backups()) {
@@ -346,7 +354,7 @@ export class PlannerStore {
 
   /** 저장 직전: 파일이 내가 마지막으로 본 것과 다르면(다른 곳에서 씀) 다시 읽고 거절한다. */
   #fresh() {
-    if (this.#stat() === this.sig) return;
+    if (this.#sigNow() === this.sig) return;
     this.log('planner: 장부가 다른 곳에서 바뀌어 다시 읽었습니다');
     this.load();
     bad('conflict', '장부가 다른 곳에서 바뀌어 다시 읽었습니다. 한 번 더 해 주세요.');
@@ -354,7 +362,8 @@ export class PlannerStore {
   #commit(work, seq, change) {
     this.#fresh();
     this.#backupOnce();
-    const head = { ...this.head, schema: this.head.schema || SCHEMA, seq, rev: change.rev, updatedAt: change.at, last: change };
+    const head = { ...this.head, schema: this.head.schema || SCHEMA, seq, rev: change.rev, updatedAt: change.at };
+    if (change.by.by !== 'system') head.last = change; // 자동 정리는 사용자의 "방금 한 변경"을 밀어내지 않는다
     this.#save(head, work);            // 여기서 실패하면 메모리는 그대로다
     this.items = work; this.head = head;
     try { fs.appendFileSync(this.changesFile, `${JSON.stringify(change)}\n`, 'utf8'); } catch (e) { this.log(`planner: 변경 이력을 덧붙이지 못했습니다 (${e.code || 'error'}) — 장부와 방금 것 되돌리기는 저장됨`); }
@@ -362,17 +371,18 @@ export class PlannerStore {
   /** 임시 파일에 다 쓰고 디스크로 밀어 넣은 뒤 이름을 바꾼다. 실패하면 PlannerError('write-failed'). */
   #save(head, items) {
     const tmp = `${this.file}.tmp-${process.pid}`;
+    const buf = Buffer.from(`${JSON.stringify({ ...head, items }, null, 1)}\n`, 'utf8');
     try {
       fs.mkdirSync(this.dir, { recursive: true });
       const fd = fs.openSync(tmp, 'w');
-      try { fs.writeSync(fd, `${JSON.stringify({ ...head, items: [...items, ...this.junk] }, null, 1)}\n`, null, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      try { fs.writeSync(fd, buf); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       fs.renameSync(tmp, this.file);
     } catch (e) {
       try { if (fs.statSync(tmp).isFile()) fs.unlinkSync(tmp); } catch { /* 없음 */ }
       this.log(`planner: 장부를 저장하지 못했습니다 (${e.code || 'error'})`);
       throw new PlannerError('write-failed', '장부를 저장하지 못했습니다. 바꾼 것은 적용되지 않았습니다.');
     }
-    this.sig = this.#stat();
+    this.sig = hashOf(buf);
   }
   /** 그날 사본이 없으면 직전 장부를 사본으로(임시 파일 → 이름 바꾸기). 못 만들어도 저장은 계속한다. */
   #backupOnce() {

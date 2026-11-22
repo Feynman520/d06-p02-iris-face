@@ -121,7 +121,7 @@ function datesOf(it, from, to) {
   return out;
 }
 /**
- * 시각이 있는 약속끼리 겹치는가. cand(넣거나 고친 일)와 겹치는 일들을 돌려준다: [{ id, no, title, time, timeEnd, date }] (date = 겹치는 날).
+ * 시각이 있는 약속끼리 겹치는가. cand(넣거나 고친 일)와 겹치는 일들을 돌려준다: [{ id, no, title, time, timeEnd, date }] (date = 그 약속이 시작하는 날).
  * 자정을 넘는 것 · 여러 날에 걸친 것 · 반복하는 일의 뒤 회차(앞으로 56일)까지 본다.
  */
 export function overlapsWith(items, cand) {
@@ -135,9 +135,9 @@ export function overlapsWith(items, cand) {
     if (it.id === cand.id || !it.time) continue;
     let hit = null;
     for (const d of datesOf(it, from, to)) {
+      if (doneOn(it, d)) continue; // 끝낸 약속과는 겹친다고 말하지 않는다
       const [a2, b2] = spanOf(it, d);
-      const m = mine.find(({ s }) => s[0] < b2 && a2 < s[1]);
-      if (m) { hit = m.d > d ? m.d : d; break; }
+      if (mine.some(({ s }) => s[0] < b2 && a2 < s[1])) { hit = d; break; } // date = 그 약속이 시작하는 날("23일 23:30 「…」")
     }
     if (hit) out.push({ id: it.id, no: it.no, title: it.title, time: it.time, timeEnd: it.timeEnd || null, date: hit });
   }

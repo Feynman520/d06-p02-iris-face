@@ -28,7 +28,9 @@ const U = { by: 'user', via: 'test' };
 {
   let clock = new Date(2026, 10, 23, 9, 0, 0); // 2026-11-23 월요일
   const cfg = {}; const sent = []; const logs = [];
-  const pl = new Planner({ dir: path.join(base, 'unit', 'planner'), stateDir: path.join(base, 'unit'), settings: { get: () => cfg }, broadcast: (o) => sent.push(o), log: (m) => logs.push(m), now: () => new Date(clock) });
+  const pl = new Planner({ dir: path.join(base, 'unit', 'planner'), stateDir: path.join(base, 'unit'), settings: { get: () => cfg }, broadcast: (o) => { if (cfg.__castThrows) throw new Error('ws down'); sent.push(o); }, log: (m) => logs.push(m), now: () => new Date(clock) });
+  ok(refuses(() => pl.apply([{ op: 'add', item: { title: 'x', start: '2026-11-23' } }], U), 'unavailable') && pl.view().rows.length === 0, '장부를 열기(start) 전에는 쓰기를 받지 않음');
+  ok(pl.start() === true, '장부 열기');
   let v = pl.view();
   ok(v.ok && v.enabled && v.empty && v.today === '2026-11-23' && v.day === '2026-11-23' && v.month === '2026-11' && v.rows.length === 0 && v.undo === null && !fs.existsSync(pl.store.dir), '빈 장부: 보기만 해서는 폴더를 만들지 않음');
   ok(Object.keys(PLANNER_DEFAULTS).every((k) => k in pl.cfg()) && pl.cfg().plannerCheck === false && pl.cfg().plannerStartMin === 10, '설정의 처음 값(준비 점검만 끔)');
@@ -37,6 +39,14 @@ const U = { by: 'user', via: 'test' };
   const r2 = pl.apply([{ op: 'add', item: { title: '학부모 상담', start: '2026-11-23', time: '15:30' } }], U);
   ok(r2.warnings.length === 1 && r2.warnings[0] === '23일 월요일 15:00 「협의회」와 시간이 겹쳐요.', `겹침은 막지 않고 알려 줌 — ${r2.warnings[0]}`);
   ok(pl.store.list('active').length === 2, '겹쳐도 넣기는 됨');
+  ok(pl.apply([{ op: 'check', id: r2.items[0].id, done: true }], U).warnings.length === 0, '끝냄 체크에는 겹침을 말하지 않음');
+  ok(pl.apply([{ op: 'add', item: { title: '끝낸 것과 겹침', start: '2026-11-23', time: '15:40' } }], U).warnings[0] === '23일 월요일 15:00 「협의회」와 시간이 겹쳐요.', '끝낸 약속은 겹침 상대로 세지 않음(안 끝낸 것만)');
+  pl.store.apply([{ op: 'remove', id: pl.store.list('active').find((it) => it.title === '끝낸 것과 겹침').id }], U);
+  cfg.__castThrows = true;
+  const rc = pl.apply([{ op: 'check', id: r2.items[0].id, done: false }], U);
+  cfg.__castThrows = false;
+  ok(rc.ok && pl.store.get(r2.items[0].id).done === false, '화면에 알리다 실패해도 저장된 변경은 성공으로 답함');
+  ok(refuses(() => pl.decide(r1.items[0].id, 'false'), 'bad-request') && refuses(() => pl.decide(r1.items[0].id), 'bad-request') && refuses(() => pl.decide('', true), 'bad-request'), '제안에 대한 답은 예 · 아니오가 분명해야 함');
   cfg.plannerOverlap = false;
   ok(pl.apply([{ op: 'add', item: { title: '또 겹침', start: '2026-11-23', time: '15:10' } }], U).warnings.length === 0, '겹침 알림을 끄면 말하지 않음');
   cfg.plannerOverlap = true;
@@ -60,7 +70,7 @@ const U = { by: 'user', via: 'test' };
   cfg.plannerEnabled = true;
   const k = pl.keyFor('sess-a');
   ok(/^[0-9a-f]{40}$/.test(k) && pl.keyOk('sess-a', k) && !pl.keyOk('sess-b', k) && !pl.keyOk('sess-a', k.slice(0, 39) + (k[39] === '0' ? '1' : '0')) && !pl.keyOk('', k) && !pl.keyOk('sess-a', null), '세션 열쇠: 그 세션의 것만 맞음');
-  const pl2 = new Planner({ dir: pl.store.dir, stateDir: path.join(base, 'unit'), settings: { get: () => cfg }, now: () => new Date(clock) });
+  const pl2 = new Planner({ dir: pl.store.dir, stateDir: path.join(base, 'unit'), settings: { get: () => cfg }, now: () => new Date(clock) }); pl2.start();
   ok(pl2.keyFor('sess-a') === k && fs.readFileSync(path.join(base, 'unit', 'planner-key'), 'utf8').length === 64, '열쇠는 데몬을 다시 켜도 같음(상태 폴더에 보관)');
   ok(!logs.some((m) => m.includes(k) || /협의회|학부모|참관록/.test(m)), '로그에 열쇠 값 · 일정 내용 없음');
   ok(josa('출장', '을', '를') === '을' && josa('협의회', '을', '를') === '를' && josa('회의', '과', '와') === '와' && josa('PPT', '을', '를') === '을(를)', '조사 고르기');
@@ -69,7 +79,14 @@ const U = { by: 'user', via: 'test' };
   pl.store.apply([{ op: 'remove', id: pl.store.list('active')[0].id }], U);
   clock = new Date(2027, 1, 5, 9, 0, 0);
   const n0 = sent.length; const sw = pl.sweep();
-  ok(sw.purged === 1 && sent.length === n0 + 1, '하루 정리: 휴지통을 비우면 화면에 알림');
+  ok(sw.purged === 2 && sent.length === n0 + 1, '하루 정리: 휴지통을 비우면 화면에 알림');
+  cfg.plannerEnabled = false;
+  ok(pl.sweep() === null, '플래너가 꺼져 있으면 자동 정리도 하지 않음');
+  cfg.plannerEnabled = true;
+  class Boom extends Planner { }
+  const bp = new Boom({ dir: path.join(base, 'boom'), stateDir: path.join(base, 'unit'), settings: { get: () => cfg }, log: (m) => logs.push(m) });
+  bp.store.load = () => { throw Object.assign(new Error('비밀 경로'), { code: 'EACCES' }); };
+  ok(bp.start() === false && bp.failed && bp.view().ok === false && bp.hello().ok === false && refuses(() => bp.apply([{ op: 'add', item: { title: 'x', start: '2026-11-23' } }], U), 'unavailable') && bp.sweep() === null && !logs.some((m) => m.includes('비밀 경로')), '장부를 여는 데 실패해도 던지지 않고 플래너만 쉼 · 사유는 낱말로만 기록');
 }
 
 // ---- 2. 시험 데몬 ----
@@ -87,10 +104,13 @@ const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { c
   env: { ...process.env, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0', IRIS_PLANNER_DIR: '' } });
 const api = async (p, init) => { const r = await fetch(`http://127.0.0.1:${PORT}${p}`, init); return { status: r.status, body: await r.json().catch(() => ({})) }; };
 const post = (p, body, headers = {}) => api(p, { method: 'POST', headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${PORT}`, ...headers }, body: JSON.stringify(body) });
-let ws;
+let ws; let mine = false;
 try {
-  let up = false; for (let i = 0; i < 80 && !up; i++) { await sleep(250); try { up = (await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok; } catch {} }
-  ok(up, `시험 데몬 ${PORT} pid=${d.pid}`);
+  // 이 포트에서 답하는 것이 내가 띄운 데몬인지 PID 로 확인한다 — 다른 프로그램이 3459 를 쓰고 있으면 건드리지 않고 멈춘다
+  let up = false; for (let i = 0; i < 80 && !up && d.exitCode === null; i++) { await sleep(250); try { const h = await (await fetch(`http://127.0.0.1:${PORT}/api/health`)).json(); up = h.ok && h.pid === d.pid; } catch {} }
+  mine = up;
+  ok(up, `시험 데몬 ${PORT} pid=${d.pid}${up ? '' : ' — 내가 띄운 데몬이 아니거나 뜨지 않음(이 포트의 다른 프로그램은 건드리지 않고 멈춤)'}`);
+  if (!up) throw new Error('test daemon not mine');
   const got = [];
   ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
   ws.on('message', (raw) => { try { got.push(JSON.parse(raw.toString('utf8'))); } catch {} });
@@ -131,6 +151,12 @@ try {
   v = (await api('/api/planner/view')).body;
   ok(dd.status === 200 && v.proposals.length === 0 && v.rows.some((r) => r.title === '제안'), '제안 승인(오늘로 고쳐서)');
   ok((await post('/api/planner/decide', { id: sProp.id, yes: true })).body.code === 'not-proposed', '같은 제안에 두 번 답할 수 없음');
+  const revD = (await api('/api/planner/view')).body.rev;
+  const bad1 = await post('/api/planner/decide', { id: sProp.id, yes: 'false' }); const bad2 = await post('/api/planner/decide', { id: sProp.id });
+  const bad3 = await api('/api/planner/decide', { method: 'POST', headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${PORT}` }, body: 'null' });
+  const bad4 = await api('/api/planner/ops', { method: 'POST', headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${PORT}` }, body: '[1]' });
+  ok(bad1.status === 400 && bad1.body.code === 'bad-request' && bad2.status === 400 && bad3.status === 400 && bad4.status === 400 && (await api('/api/planner/view')).body.rev === revD, '분명하지 않은 답 · null · 배열 본문은 400(바뀌는 것 없음)');
+  await post('/api/planner/ops', { ops: [{ op: 'check', id: sTimed.id, done: true }] }, { origin: 'http://secret-origin-xyz.example' });
   ok((await api('/api/planner/changes?limit=3')).body.changes.length === 3 && (await api('/api/planner/nope')).status === 404, '변경 기록 읽기 · 없는 길 404');
 
   await api('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plannerEnabled: false }) });
@@ -145,11 +171,11 @@ try {
   const nowStamp = fs.existsSync(realDir) ? fs.readdirSync(realDir).map((n) => `${n}:${fs.statSync(path.join(realDir, n)).mtimeMs}`).join('|') : '';
   ok(fs.existsSync(realDir) === realExisted && nowStamp === realStamp, '진짜 장부 폴더 무접촉');
   const log = fs.readFileSync(path.join(state, 'daemon.log'), 'utf8');
-  ok(/planner: on rev=3/.test(log) && !/약속|큰 일|제안|몰래/.test(log), '데몬 로그: 플래너 시작 줄 · 일정 내용 없음');
+  ok(/planner: on rev=3/.test(log) && !/약속|큰 일|제안|몰래/.test(log) && !/secret-origin|evil\.example/.test(log) && /403 POST \/api\/planner\/ops \(다른 출처\)/.test(log), '데몬 로그: 플래너 시작 줄 · 일정 내용도 요청이 준 글자(출처)도 없음');
 } catch (x) { fail++; console.log(`FAIL unexpected — ${x?.stack || x}`); }
 finally {
   try { ws?.close(); } catch {}
-  try { await fetch(`http://127.0.0.1:${PORT}/api/shutdown`, { method: 'POST' }); } catch {}
+  if (mine) { try { await fetch(`http://127.0.0.1:${PORT}/api/shutdown`, { method: 'POST' }); } catch {} }
   let alive = true; for (let i = 0; i < 16 && alive; i++) { await sleep(250); try { process.kill(d.pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; } }
   if (alive) { try { process.kill(d.pid); } catch {} }
   try { fs.rmSync(base, { recursive: true, force: true }); } catch {}

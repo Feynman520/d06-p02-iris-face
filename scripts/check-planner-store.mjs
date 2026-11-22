@@ -184,8 +184,8 @@ try {
   fs.writeFileSync(nw.file, JSON.stringify(rawN), 'utf8');
   const bytes = fs.readFileSync(nw.file);
   const nw2 = mk(nw.dir);
-  ok(nw2.readOnly && nw2.list().length === 1 && refuses(() => nw2.apply([{ op: 'add', item: { title: 'x', start: '2026-11-23' } }], U), 'read-only') && refuses(() => nw2.undo(), 'read-only'), '더 새로운 형식의 장부는 읽기만');
-  nw2.markAlerted([{ id: nw2.list()[0].id, key: 'k' }]); nw2.sweep();
+  ok(nw2.readOnly && nw2.list().length === 0 && refuses(() => nw2.apply([{ op: 'add', item: { title: 'x', start: '2026-11-23' } }], U), 'read-only') && refuses(() => nw2.undo(), 'read-only'), '더 새로운 형식의 장부는 읽기만');
+  nw2.markAlerted([{ id: rawN.items[0].id, key: 'k' }]); nw2.sweep();
   ok(Buffer.compare(bytes, fs.readFileSync(nw.file)) === 0, '읽기만일 때 파일을 한 글자도 바꾸지 않음');
 
   const br = mk();
@@ -280,7 +280,7 @@ try {
   ok(C.dayRows(late, '2026-11-23', '2026-11-23').map((r) => r.no).join() === '1', '밀린 일: 기간은 시각이 있어도 따라옴 · 지나간 약속과 반복은 아님');
   const ov = [A({ no: 1, title: '늦은 약속', start: '2026-11-23', time: '23:30' }), A({ no: 2, title: '사흘 행사', start: '2026-11-23', end: '2026-11-25', time: '09:00', timeEnd: '18:00' }), A({ no: 3, title: '수요일 약속', start: '2026-11-25', time: '10:00' })];
   ok(C.overlapsWith([ov[0]], { id: 'x', start: '2026-11-24', time: '00:00' }).length === 1 && C.overlapsWith([ov[0]], { id: 'x', start: '2026-11-24', time: '00:30' }).length === 0, '겹침: 자정을 넘는 1시간');
-  ok(C.overlapsWith([ov[1]], { id: 'x', start: '2026-11-24', time: '10:00' })[0]?.date === '2026-11-24' && C.overlapsWith([ov[1]], { id: 'x', start: '2026-11-25', time: '18:00' }).length === 0, '겹침: 여러 날에 걸친 일(첫날 시작 시각~끝 날 끝 시각)');
+  ok(C.overlapsWith([ov[1]], { id: 'x', start: '2026-11-24', time: '10:00' })[0]?.date === '2026-11-23' && C.overlapsWith([ov[1]], { id: 'x', start: '2026-11-25', time: '18:00' }).length === 0, '겹침: 여러 날에 걸친 일(첫날 시작 시각~끝 날 끝 시각)');
   ok(C.overlapsWith([ov[2]], { id: 'x', start: '2026-11-23', time: '10:00', repeat: { freq: 'daily', interval: 1 } })[0]?.date === '2026-11-25' && C.overlapsWith([ov[2]], { id: 'x', start: '2026-11-23', time: '10:00', repeat: { freq: 'weekly', interval: 1 } }).length === 0, '겹침: 반복하는 일은 뒤 회차까지 봄');
   ok(C.isDate('2024-02-29') && !C.isDate('2100-02-29') && C.addDays('2024-02-28', 1) === '2024-02-29' && C.mondayOf('2027-01-01') === '2026-12-28' && C.dueInWeek([A({ no: 1, title: '해를 넘는 주', start: '2026-12-30', end: '2027-01-02' })], '2026-12-28') === 1, '윤년 · 해를 넘는 주');
   // 9-9 검증
@@ -306,9 +306,45 @@ try {
   ok(vv2.list().length === 3 && vv2.list().filter((x) => x.id === v3.id).length === 1 && vv2.get('weird') === null && vv2.rev === 0, '알아볼 수 없는 항목 · 겹치는 번호는 화면에 내지 않음 · 이상한 판 번호는 바로잡음');
   vv2.apply([{ op: 'update', id: v3.id, patch: { alerts: { before: 20 } } }], { by: 'user', via: '비밀 회의 안건' });
   const rawV2 = JSON.parse(fs.readFileSync(vv.file, 'utf8'));
-  ok(rawV2.items.some((x) => x && x.id === 'weird') && rawV2.items.includes('not-an-object') && rawV2.items.some((x) => x && x.title === '같은 번호 둘째') && vv2.get(v3.id).alerts.futureRule.a === 1 && vv2.get(v3.id).alerts.before === 20, '안 보이는 항목도 파일에는 그대로 · 알림 설정 안의 모르는 칸 보존');
-  const v4 = vv2.apply([{ op: 'add', item: { title: '새 번호', start: '2026-11-23' } }], U).items[0];
-  ok(v4.no === 4 && vv2.get(v3.id).source.via === 'test' && vv2.changes(1)[0].by.via === 'test' && vv2.changes(2)[1].by.via === null && !logs.some((m) => m.includes('비밀 회의 안건')), '이상한 순번은 가장 큰 번호 다음부터 · 정해진 낱말이 아닌 출처는 받지 않고 로그에도 안 남김');
+  ok(rawV2.unreadable.some((x) => x && x.id === 'weird') && rawV2.unreadable.includes('not-an-object') && rawV2.unreadable.some((x) => x && x.title === '같은 번호 둘째') && rawV2.items.every((x) => x && x.title !== '같은 번호 둘째' && x.id !== 'weird') && vv2.get(v3.id).alerts.futureRule.a === 1 && vv2.get(v3.id).alerts.before === 20, '안 보이는 항목은 파일에 따로(unreadable) 남김 · 알림 설정 안의 모르는 칸 보존');
+  // 같은 번호의 정상 항목을 지워도 따로 둔 것이 되살아나지 않는다(코덱스 검토 걸음 2)
+  vv2.apply([{ op: 'remove', id: v3.id }], U); vv2.apply([{ op: 'purge', id: v3.id }], U);
+  const vv3 = mk(vv.dir);
+  ok(vv3.get(v3.id) === null && !vv3.list().some((x) => x.title === '같은 번호 둘째') && JSON.parse(fs.readFileSync(vv.file, 'utf8')).unreadable.length === 3, '정상 항목을 완전히 지운 뒤 다시 켜도 같은 번호의 것이 항목으로 되살아나지 않음');
+  vv3.apply([{ op: 'add', item: { title: '한 번 더 저장', start: '2026-11-23' } }], U);
+  ok(JSON.parse(fs.readFileSync(vv.file, 'utf8')).unreadable.length === 3, '따로 둔 것은 저장할 때마다 불어나지 않음');
+  const v4 = vv3.apply([{ op: 'add', item: { title: '새 번호', start: '2026-11-23' } }], U).items[0];
+  ok(v4.no === 5 && v4.source.via === 'test' && vv3.changes(20).some((c) => c.by.via === null && c.by.by === 'user') && !logs.some((m) => m.includes('비밀 회의 안건')), '순번은 이어서 · 정해진 낱말이 아닌 출처는 받지 않고 로그에도 안 남김');
+  // 9-10 코덱스 검토(걸음 2)
+  const hs = mk(); const hs1 = hs.apply([{ op: 'add', item: { title: 'AAAA', start: '2026-11-23' } }], U).items[0];
+  const st = fs.statSync(hs.file); const same = fs.readFileSync(hs.file, 'utf8').replaceAll('AAAA', 'BBBB');
+  fs.writeFileSync(hs.file, same, 'utf8'); fs.utimesSync(hs.file, st.atime, st.mtime);
+  ok(fs.statSync(hs.file).size === st.size && refuses(() => hs.apply([{ op: 'update', id: hs1.id, patch: { title: 'CCCC' } }], U), 'conflict') && hs.get(hs1.id).title === 'BBBB', '같은 크기 · 같은 시각으로 바뀐 장부도 알아채고 다시 읽음(내용의 지문으로 견줌)');
+  const sw2 = mk();
+  const tk1 = sw2.apply([{ op: 'add', item: { title: '오래 전에 지운 것', start: '2026-11-23' } }], U).items[0];
+  const tk2 = sw2.apply([{ op: 'add', item: { title: '지운 때를 모르는 것', start: '2026-11-23' } }], U).items[0];
+  sw2.apply([{ op: 'remove', id: tk1.id }, { op: 'remove', id: tk2.id }], U);
+  const rawS = JSON.parse(fs.readFileSync(sw2.file, 'utf8')); delete rawS.items.find((x) => x.id === tk2.id).trashedAt; fs.writeFileSync(sw2.file, JSON.stringify(rawS), 'utf8');
+  const sw3 = mk(sw2.dir);
+  const userCh = sw3.apply([{ op: 'add', item: { title: '사용자가 방금 넣은 것', start: '2026-11-23' } }], U);
+  clock = new Date(2027, 0, 20, 9, 0, 0);
+  const swr = sw3.sweep();
+  ok(swr.purged === 1 && sw3.get(tk1.id) === null && sw3.get(tk2.id) !== null, '휴지통: 지운 때를 알 수 없는 것은 그대로 둠');
+  ok(sw3.lastChange.id === userCh.changeId && mk(sw2.dir).lastChange.id === userCh.changeId, '자동 정리는 사용자의 방금 한 변경(되돌리기)을 밀어내지 않음');
+  sw3.undo();
+  ok(!sw3.list().some((x) => x.title === '사용자가 방금 넣은 것'), '정리 뒤에도 방금 것 되돌리기가 됨');
+  const fz = mk(); fz.apply([{ op: 'add', item: { title: '하나', start: '2026-11-23' } }], U); fz.apply([{ op: 'add', item: { title: '둘', start: '2026-11-23' } }], U);
+  fs.mkdirSync(fz.backupDir, { recursive: true });
+  for (let i = 1; i <= 35; i++) fs.writeFileSync(path.join(fz.backupDir, `items-2025-0${1 + Math.floor(i / 20)}-${String(1 + (i % 20)).padStart(2, '0')}.json`), '{"schema":1,"items":[]}');
+  const before35 = fz.backups().length;
+  fs.writeFileSync(fz.file, JSON.stringify({ schema: SCHEMA + 1, items: [] }), 'utf8'); // 켜져 있는 사이 다른 곳에서 새 형식으로 바꿈
+  fz.sweep();
+  ok(fz.backups().length === before35 && fz.readOnly, '정리 전에 장부를 다시 확인: 새 형식으로 바뀌어 있으면 사본을 지우지 않음');
+  clock = new Date(2026, 10, 23, 9, 0, 0);
+  const late0 = new PlannerStore({ dir: path.join(base, 'lazy'), now: () => new Date(clock), autoload: false });
+  fs.mkdirSync(late0.dir, { recursive: true }); fs.writeFileSync(late0.file, '깨진 것', 'utf8');
+  ok(fs.readdirSync(late0.dir).length === 1 && fs.readFileSync(late0.file, 'utf8') === '깨진 것', '만들기만 해서는 장부를 건드리지 않음(여는 것은 load 를 부를 때)');
+  ok(C.overlapsWith([{ ...ov[2], done: true }], { id: 'x', start: '2026-11-25', time: '10:00' }).length === 0 && C.overlapsWith([ov[0]], { id: 'x', start: '2026-11-24', time: '00:00' })[0].date === '2026-11-23', '겹침: 끝낸 약속은 빼고 · 날짜는 그 약속이 시작하는 날');
   ok(typeof v4.tz === 'string' && v4.tz.length > 0, '시간대를 함께 적어 둠');
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }
 finally { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} }
