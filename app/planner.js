@@ -160,7 +160,7 @@ window.Planner = (() => {
     hideTip();
     const hidden = cfg.plannerEnabled === false && cfg.notifyDone === false; // 플래너도 작업 알림도 끈 사람에게는 단추를 두지 않는다
     const covered = !!opts.drawerOpen();                                    // 설정·대시보드 서랍이 무대를 덮고 있다
-    host.hidden = hidden || covered;
+    host.hidden = (hidden && !cur) || covered;                              // 다만 말하는 동안(설정의 알림 미리보기 등)은 보인다
     const say = cur ? sayHtml(cur, sayNew) : '';
     sayNew = false;
     const tone = cur ? cur.tone : 'rest';
@@ -221,7 +221,7 @@ window.Planner = (() => {
   function say(b) {
     if (!host || !b || !b.text) return null;
     const group = b.group || 'info';
-    const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, ttl: b.ttl === 0 ? 0 : (b.ttl || TTL), timer: 0, closed: false };
+    const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, meta: b.meta || null, ttl: b.ttl === 0 ? 0 : (b.ttl || TTL), timer: 0, closed: false };
     line.close = () => closeLine(line);
     const one = { group, tone: b.tone || 'iris', lines: [line], actions: b.actions || null };
     if (cur && cur.group === group && !cur.actions && !one.actions) {            // 같은 종류: 줄로 쌓는다(최대 4줄, 오래된 것부터 빠짐)
@@ -246,7 +246,7 @@ window.Planner = (() => {
   const pause = () => { if (cur) for (const l of cur.lines) clearTimeout(l.timer); };
   const resume = () => { if (cur) for (const l of cur.lines) arm(l); };
   /** 떠 있는 것 + 차례를 기다리는 것(검사 · 설정 미리보기용) */
-  const bubbles = () => [...(cur ? [cur] : []), ...queue].flatMap((b, bi) => b.lines.map((l) => ({ group: b.group, tone: b.tone, text: l.text, sub: l.sub, id: l.id, shown: bi === 0 && !!cur })));
+  const bubbles = () => [...(cur ? [cur] : []), ...queue].flatMap((b, bi) => b.lines.map((l) => ({ group: b.group, tone: b.tone, text: l.text, sub: l.sub, tip: l.tip, id: l.id, meta: l.meta, shown: bi === 0 && !!cur })));
 
   // ---- 데몬이 시킨 한마디(planner 방송의 say) ----
   function sayFromDaemon(s) {

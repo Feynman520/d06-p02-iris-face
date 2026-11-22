@@ -17,18 +17,32 @@ for (const c of ['playwright', path.join(process.env.APPDATA || '', 'npm/node_mo
 if (!pw) { console.log('SKIP: playwright 없음'); process.exit(0); }
 
 // 알림이 그려지는 곳(겉모습) — 이 객체만 화면 구조를 안다.
+// 2026-11-22(플래너 걸음 4) 바뀐 것: 네모 알림(#toasts) → 육각 단추의 말풍선(app/planner.js).
+//   · 무엇이 달라지나: 같은 종류(끝남끼리 등)는 한 말풍선에 줄로 쌓이고, 다른 종류는 앞의 말풍선이 닫힌 뒤 차례로 뜬다(전에는 종류와 상관없이 4장까지 함께 떴다).
+//     그래서 list 는 "떠 있는 줄 + 차례를 기다리는 줄"을 함께 센다 — 알림이 만들어졌는가(규칙)는 그대로 검사하고, 한꺼번에 보이는가는 더 묻지 않는다.
+//   · 세션의 상태 알림은 문장으로 말하고(「…」 작업이 끝났어요.) 걸린 시간 · 조합은 올렸을 때 설명으로 간다. 제목 · 아랫줄 자료는 그대로 따라온다(meta).
+//   · 그 밖의 규칙(언제 알리는가 · 보류 · 4개까지 · 8초 · 올리면 멈춤 · 누르면 그 세션 · × 는 닫기만 · 초점 · 윈도 알림)은 하나도 바뀌지 않았다 — 아래 시험이 그대로다.
 const VIEW = {
-  extraScripts: [],                 // 알림이 기대는 다른 화면 코드(없음)
-  extraHtml: '',
-  // 화면에 떠 있는 알림들: [{ title, sub, status }]
+  extraCss: ['planner.css'],
+  extraScripts: ['icons.js', 'planner.js'],
+  extraHtml: '<main id="stage" style="position:relative;height:640px"><footer id="dock" style="position:absolute;left:0;right:0;bottom:0;height:76px"></footer></main>',
+  init: 'Planner.init({});',
+  // 알림들(떠 있는 것 + 차례를 기다리는 것): [{ title, sub, status }]
+  list: `Planner.bubbles().map((b) => ({ title: b.meta ? b.meta.title : b.text, sub: b.meta ? b.meta.sub : b.sub, status: b.meta ? b.meta.status : '' }))`,
+  item: (i) => `document.querySelectorAll('.pl-say .pl-line')[${i}]`,
+  closeBtn: (i) => `document.querySelectorAll('.pl-say .pl-line')[${i}].querySelector('.pl-x')`,
+  hoverIn: () => `document.querySelector('.pl-say').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`,
+  hoverOut: () => `document.querySelector('.pl-say').dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))`,
+};
+// planner.js 가 없는 쪽의 대체 길(옛 네모 알림) — 맨 아래에서 한 번 확인한다
+const PLAIN = {
+  extraCss: [], extraScripts: [], extraHtml: '', init: '',
   list: `[...document.querySelectorAll('#toasts .toast:not(.out)')].map((el) => ({ title: el.querySelector('.toast-title').textContent, sub: el.querySelector('.toast-sub').textContent, status: [...el.classList].find((c) => c !== 'toast' && c !== 'in') || '' }))`,
-  item: (i) => `document.querySelectorAll('#toasts .toast:not(.out)')[${i}]`,
-  closeBtn: (i) => `document.querySelectorAll('#toasts .toast:not(.out)')[${i}].querySelector('.toast-x')`,
 };
 
-const HARNESS = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body>
+const harness = (V) => `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css">${V.extraCss.map((c) => `<link rel="stylesheet" href="/${c}">`).join('')}</head><body>
 <input id="typing" value="쓰던 글">
-${VIEW.extraHtml}
+${V.extraHtml}
 <script>
 (() => { // 가짜 시계: 8초 뒤 사라짐 · 보조 3초 여유를 기다리지 않고 시험한다
   let now = 1700000000000, seq = 1; const timers = new Map();
@@ -45,13 +59,14 @@ ${VIEW.extraHtml}
   Object.defineProperty(document, 'visibilityState', { get: () => (window.__hidden ? 'hidden' : 'visible'), configurable: true });
 })();
 </script>
-${VIEW.extraScripts.map((s) => `<script src="/${s}"></script>`).join('\n')}
+${V.extraScripts.map((s) => `<script src="/${s}"></script>`).join('\n')}
 <script src="/notify.js"></script>
-<script>Notify.init({ onPick: (id) => window.__picked.push(id), current: () => window.__cur, enabled: () => window.__on, osEnabled: () => window.__osOn });</script>
+<script>${V.init}Notify.init({ onPick: (id) => window.__picked.push(id), current: () => window.__cur, enabled: () => window.__on, osEnabled: () => window.__osOn });</script>
 </body></html>`;
 const server = http.createServer((q, s) => {
   const u = new URL(q.url, 'http://x').pathname;
-  if (u === '/') { s.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return s.end(HARNESS); }
+  if (u === '/') { s.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return s.end(harness(VIEW)); }
+  if (u === '/plain') { s.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return s.end(harness(PLAIN)); }
   const f = path.join(APP, decodeURIComponent(u.replace(/^\/app\//, '/')));
   if (!f.startsWith(APP) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end(); }
   s.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : 'application/octet-stream' }); fs.createReadStream(f).pipe(s);
@@ -61,10 +76,10 @@ const browser = await pw.chromium.launch();
 const errors = [];
 const SES = { a: { id: 'a', title: '결과 보고서 초안', cwd: 'C:\\x\\보고서', agent: 'claude', modelLabel: 'Opus' }, b: { id: 'b', title: '', cwd: 'C:\\x\\채점', agent: 'codex', model: 'gpt' }, c: { id: 'c', title: '가정통신문' } };
 
-async function fresh() {
+async function fresh(where = '/') {
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.goto(`http://127.0.0.1:${server.address().port}${where}`);
   const ev = (code) => page.evaluate(code);
   return {
     page, ev,
@@ -158,9 +173,9 @@ try {
     await t.page.close(); }
   { const t = await fresh();
     await t.ev(`Notify.push({ id: 'a', title: '하나', sub: '' })`);
-    await t.ev(`${VIEW.item(0)}.dispatchEvent(new MouseEvent('mouseenter'))`);
+    await t.ev(VIEW.hoverIn());
     await t.adv(20000); ok((await t.list()).length === 1, '마우스를 올리면 사라지지 않음');
-    await t.ev(`${VIEW.item(0)}.dispatchEvent(new MouseEvent('mouseleave'))`);
+    await t.ev(VIEW.hoverOut());
     await t.adv(7900); ok((await t.list()).length === 1, '마우스를 떼면 다시 8초');
     await t.adv(200); ok((await t.list()).length === 0, '뗀 뒤 8초에 사라짐');
     await t.page.close(); }
@@ -232,6 +247,31 @@ try {
     await t.set({ __cur: 'a' });
     await t.status('a', 'busy'); await t.status('a', 'idle', true);
     ok((await t.list()).length === 3, '창이 보이지 않는 상태(visibilityState)면 보고 있던 세션도 알림');
+    await t.page.close(); }
+
+  // 7. 말풍선으로 옮긴 모양(2026-11-22) — 규칙이 아니라 겉모습
+  { const t = await fresh();
+    await t.status('a', 'busy'); await t.adv(134000); await t.status('a', 'idle', true);
+    const say = await t.ev(`(() => { const s = document.querySelector('.pl-say'); const l = s.querySelector('.pl-line'); return { tone: s.dataset.tone, text: l.querySelector('p').textContent, tip: l.dataset.tip, pick: l.classList.contains('pick'), hex: document.querySelector('#pl-hex').classList.contains('speak') }; })()`);
+    ok(say.tone === 'ok' && say.text === '「결과 보고서 초안」 작업이 끝났어요.' && say.tip === '작업이 끝났습니다 · 2분 14초 걸림 · Claude Opus' && say.pick && say.hex, '끝남 = 초록 말풍선의 한 문장 · 걸린 시간과 조합은 올렸을 때 · 누르면 그 세션');
+    await t.status('c', 'busy'); await t.status('c', 'idle', true);
+    await t.status('b', 'busy'); await t.status('b', 'attention', true);
+    const two = await t.ev(`({ lines: [...document.querySelectorAll('.pl-say .pl-line p')].map((p) => p.textContent), all: Planner.bubbles().map((b) => b.group + (b.shown ? '*' : '')) })`);
+    ok(two.lines.length === 2 && two.lines[1] === '「가정통신문」 작업이 끝났어요.' && two.all.join() === 'done*,done*,attention', '같은 종류는 한 말풍선에 줄로 · 다른 종류(확인 필요)는 차례를 기다림');
+    await t.adv(8100);
+    const next = await t.ev(`({ tone: document.querySelector('.pl-say')?.dataset.tone, text: document.querySelector('.pl-say .pl-line p')?.textContent })`);
+    ok(next.tone === 'warn' && next.text === '「채점」에서 확인을 기다려요.', '앞의 말풍선이 사라지면 다음 것(확인 필요 = 노랑)');
+    await t.adv(7800); ok((await t.list()).length === 1, '차례를 기다린 알림의 8초는 뜬 때부터(앞의 것이 사라진 8초 시점부터 다시 8초)');
+    await t.adv(300); ok((await t.list()).length === 0, '그 뒤 사라짐');
+    await t.ev(`Notify.push({ title: '세팅 마무리 완료', sub: '세션을 이어 열었습니다.', status: 'idle', force: true })`);
+    const gen = await t.ev(`({ text: document.querySelector('.pl-say .pl-line p').childNodes[0].textContent, small: document.querySelector('.pl-say .pl-line small').textContent })`);
+    ok(gen.text === '세팅 마무리 완료' && gen.small === '세션을 이어 열었습니다.', '그 밖의 알림(세팅 · 모듈 등)은 제목 + 아랫줄 그대로');
+    ok((await t.ev(`!document.querySelector('#toasts')`)), '네모 알림은 더 만들지 않음');
+    await t.page.close(); }
+  { const t = await fresh('/plain'); // planner.js 가 없는 쪽: 옛 네모 알림으로 뜬다(대체 길)
+    await t.status('a', 'busy'); await t.status('a', 'idle', true);
+    const l = await t.ev(PLAIN.list);
+    ok(l.length === 1 && l[0].title === '결과 보고서 초안' && l[0].sub.includes('작업이 끝났습니다'), '대체 길: 플래너 화면 코드가 없으면 옛 네모 알림');
     await t.page.close(); }
 
   ok(errors.length === 0, `화면 오류 없음${errors.length ? ' — ' + errors[0] : ''}`);
