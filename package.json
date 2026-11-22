@@ -47,6 +47,7 @@
     "verify:notify": "node scripts/check-notify.mjs",
     "verify:planner-store": "node scripts/check-planner-store.mjs",
     "verify:planner-api": "node scripts/check-planner-api.mjs",
+    "verify:planner-ui": "node scripts/check-planner-ui.mjs",
     "verify:bgwork": "node scripts/check-bgwork.mjs",
     "verify:stophook": "node scripts/check-stophook.mjs",
     "verify:header": "node scripts/check-header.mjs",
