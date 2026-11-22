@@ -44,6 +44,7 @@
     "verify:ontology-interview": "node scripts/check-ontology-interview.mjs",
     "verify:memory": "node scripts/check-memory.mjs",
     "verify:notice": "node scripts/check-notice.mjs",
+    "verify:notify": "node scripts/check-notify.mjs",
     "verify:bgwork": "node scripts/check-bgwork.mjs",
     "verify:stophook": "node scripts/check-stophook.mjs",
     "verify:header": "node scripts/check-header.mjs",
