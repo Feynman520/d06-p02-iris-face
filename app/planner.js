@@ -33,13 +33,15 @@ window.Planner = (() => {
   const rangeText = (a, b) => (a.slice(0, 7) === b.slice(0, 7) ? `${parts(a).d}~${parts(b).d}일` : `${parts(a).m}/${parts(a).d}~${parts(b).m}/${parts(b).d}`);
 
   // ---- 상태 ----
-  let opts = { openFolder: () => {}, chatIn: () => {}, openSession: () => {}, drawerOpen: () => false };
+  let opts = { openFolder: () => {}, chatIn: () => {}, openSession: () => {}, openSettings: () => {}, drawerOpen: () => false };
   let cfg = { plannerEnabled: true, plannerTalk: true, notifyDone: true };
-  let host = null, over = null, tipEl = null;
+  let host = null, over = null, tipEl = null, panelEl = null, rowEl = null;
   let open = false, talk = false, strip = false, fresh = false, talkFresh = false, focusIn = false;
+  let composing = false, panelDirty = false, compact = false, threadLen = 0;
   let sel = null, month = null, view = null, count = 0, busy = false, loadSeq = 0;
   const folded = new Set();
   let thread = [];            // { who:'me'|'ai', text, cards?, undo?, warn?, confirm?, wait? }
+  let talkCtx = null;         // 「말로 고치기」로 연 대화의 대상(제안) — 판이나 대화를 닫으면 지운다
   let cur = null;             // 떠 있는 말풍선 { group, tone, lines:[…], actions, where }
   const queue = [];
 
@@ -137,6 +139,7 @@ window.Planner = (() => {
   function noteHtml() {
     if (!view) return '<div class="pl-note">플래너를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.</div>';
     if (view.ok === false) return '<div class="pl-note">수첩을 열지 못했어요. IRIS 를 다시 켜 주세요.</div>';
+    if (!view.enabled) return `<div class="pl-note">플래너가 꺼져 있어요. 지금은 보기만 됩니다. <button type="button" class="pl-tb" data-settings>설정 열기</button></div>`;
     if (view.readOnly === 'newer-schema') return '<div class="pl-note">이 수첩은 더 새로운 IRIS 가 쓰던 것이라 지금은 고칠 수 없어요. IRIS 를 업데이트해 주세요.</div>';
     if (view.readOnly) return '<div class="pl-note">수첩 파일을 읽지 못해, 덮어쓰지 않으려고 고치기를 막아 두었어요.</div>';
     if (view.recovered) return `<div class="pl-note">수첩 파일을 읽지 못해 ${view.recovered.from ? '가장 새 사본으로 열었어요' : '빈 수첩으로 열었어요'}. 읽지 못한 파일은 따로 남겨 두었습니다.</div>`;
@@ -147,7 +150,7 @@ window.Planner = (() => {
     const rows = view.rows.map(rowHtml).join('') || '<div class="pl-empty">할 것이 없어요</div>';
     const head = `<div class="pl-head"><strong>${esc(longDay(view.day))}</strong>${view.day === view.today ? '<span class="pl-pill now">오늘</span>' : ''}<span class="pl-sp"></span>${ib('chev-left', '이전 달', '', 'data-month="-1"')}${ib('target', '오늘로', '', 'data-today')}${ib('chev-right', '다음 달', '', 'data-month="1"')}${ib('close', '닫기', '', 'data-close')}</div>`;
     const talkPart = talk ? `<div class="pl-talk${talkFresh ? ' in' : ''}"><button type="button" class="pl-talk-x" data-talk-x data-tip="대화 접기" aria-label="대화 접기">${I('chev-down')}</button><div class="pl-thread" id="pl-thread" aria-live="polite">${threadHtml()}</div></div>` : '';
-    return `<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너">${head}${noteHtml()}${stripHtml()}${talk ? week() : grid()}<div class="pl-list">${rows}</div>${talkPart}${footHtml()}</div>`;
+    return `<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너">${head}${noteHtml()}${stripHtml()}${talk || compact ? week() : grid()}<div class="pl-list">${rows}</div>${talkPart}${footHtml()}</div>`;
   }
   function sayHtml(b, isNew) {
     const lines = b.lines.map((l, i) => `<div class="pl-line${l.pick ? ' pick' : ''}" data-line="${i}"${l.tip ? ` data-tip="${esc(l.tip)}"` : ''}><p>${esc(l.text)}${l.sub ? `<small>${esc(l.sub)}</small>` : ''}</p><button type="button" class="pl-x" data-line-x="${i}" tabindex="-1" aria-label="닫기">${I('close')}</button></div>`).join('');
@@ -155,7 +158,8 @@ window.Planner = (() => {
     return `<div class="pl-say${isNew ? ' in' : ''}" data-tone="${esc(b.tone)}" role="status">${lines}${acts ? `<div class="pl-acts">${acts}</div>` : ''}</div>`;
   }
   let sayNew = false;
-  function render() {
+  /** 단추 줄(말풍선 + 육각 단추)만 다시 그린다 — 판은 건드리지 않는다. */
+  function renderRow() {
     if (!host) return;
     hideTip();
     const hidden = cfg.plannerEnabled === false && cfg.notifyDone === false; // 플래너도 작업 알림도 끈 사람에게는 단추를 두지 않는다
@@ -164,19 +168,43 @@ window.Planner = (() => {
     const say = cur ? sayHtml(cur, sayNew) : '';
     sayNew = false;
     const tone = cur ? cur.tone : 'rest';
-    host.innerHTML = (open ? panelHtml() : '')
-      + `<div class="pl-row">${covered ? '' : say}<button type="button" class="pl-hex${cur ? ' speak' : ''}" id="pl-hex" data-tone="${esc(tone)}"${open ? '' : ' data-tip="플래너 열기"'} aria-label="플래너" aria-expanded="${open}">${HEX}${count ? `<span class="pl-cnt">${count}</span>` : ''}</button></div>`;
+    rowEl.innerHTML = `${covered ? '' : say}<button type="button" class="pl-hex${cur ? ' speak' : ''}" id="pl-hex" data-tone="${esc(tone)}"${open ? '' : ' data-tip="플래너 열기"'} aria-label="플래너" aria-expanded="${open}">${HEX}${count ? `<span class="pl-cnt">${count}</span>` : ''}</button>`;
     over.hidden = !(covered && cur);          // 서랍이 덮고 있으면 말풍선만 구석에(지금의 알림과 같은 자리)
     over.innerHTML = covered && cur ? say : '';
-    fresh = false; talkFresh = false;
-    fit();
-    const th = $('#pl-thread'); if (th) th.scrollTop = th.scrollHeight;
-    if (focusIn) { focusIn = false; const inp = $('#pl-in'); if (inp && !inp.disabled) inp.focus(); }
+    fit(over.hidden ? rowEl : over);
   }
+  /** 판을 다시 그린다. 입력칸에 적던 글 · 커서 · 초점, 목록 · 대화의 스크롤을 지킨다. 한글을 조합하는 중이면 조합이 끝난 뒤에 그린다. */
+  function renderPanel() {
+    if (!host) return;
+    if (composing) { panelDirty = true; return; }
+    panelDirty = false;
+    if (!open) { panelEl.innerHTML = ''; fresh = false; talkFresh = false; threadLen = 0; return; }
+    const inp0 = $('#pl-in', panelEl); const list0 = $('.pl-list', panelEl); const strip0 = $('.pl-strip-b', panelEl); const th0 = $('#pl-thread', panelEl);
+    const keep = {
+      value: inp0 ? inp0.value : '', a: inp0 ? inp0.selectionStart : 0, b: inp0 ? inp0.selectionEnd : 0, focused: !!inp0 && document.activeElement === inp0,
+      list: list0 ? list0.scrollTop : 0, strip: strip0 ? strip0.scrollTop : 0, th: th0 ? th0.scrollTop : 0, thBottom: !th0 || th0.scrollTop + th0.clientHeight >= th0.scrollHeight - 4,
+    };
+    hideTip();
+    panelEl.innerHTML = panelHtml();
+    fresh = false; talkFresh = false;
+    const inp = $('#pl-in', panelEl);
+    if (inp) {
+      if (keep.value) { inp.value = keep.value; try { inp.setSelectionRange(keep.a, keep.b); } catch { /* 잠긴 칸 */ } }
+      if ((keep.focused || focusIn) && !inp.disabled) inp.focus();
+    }
+    focusIn = false;
+    const list = $('.pl-list', panelEl); if (list) list.scrollTop = keep.list;
+    const st = $('.pl-strip-b', panelEl); if (st) st.scrollTop = keep.strip;
+    const th = $('#pl-thread', panelEl);
+    if (th) { th.scrollTop = keep.thBottom || thread.length !== threadLen ? th.scrollHeight : keep.th; }
+    threadLen = thread.length;
+    fit(panelEl);
+  }
+  function render() { renderPanel(); renderRow(); }
   /** 말풍선 폭 = 가장 긴 줄. 줄이 바뀐 글은 CSS 만으로 상자가 줄지 않아 직접 잰다(나타나는 확대 중이면 배율을 되돌린다). */
-  function fit() {
+  function fit(root) {
     try {
-      for (const el of document.querySelectorAll('.pl-say p, .pl-bub.ai p, .pl-bub.me')) {
+      for (const el of (root || document).querySelectorAll('.pl-say p, .pl-bub.ai p, .pl-bub.me')) {
         el.style.width = '';
         const box = el.getBoundingClientRect();
         const k = el.offsetWidth && box.width ? box.width / el.offsetWidth : 1;
@@ -194,10 +222,19 @@ window.Planner = (() => {
   function place() {
     if (!host) return;
     const stage = $('#stage'), dock = $('#dock'), sub = $('#sub');
-    const bottom = (dock ? dock.offsetHeight : 76) + 8;
+    const tall = (id) => { const el = $(id); return el && !el.hidden ? el.offsetHeight : 0; };
+    // 본체의 확인 카드 · 끝난 세션 띠가 떠 있으면 그 위로 올라간다(그 단추를 가리지 않게)
+    const bottom = (dock ? dock.offsetHeight : 76) + tall('#approval') + tall('#dead-bar') + 8;
     host.style.setProperty('--pl-bottom', `${bottom}px`);
-    host.style.setProperty('--pl-shift', `${sub && !sub.hidden ? sub.offsetWidth : 0}px`);
-    if (stage) host.style.setProperty('--pl-h', `${Math.max(320, stage.clientHeight - bottom - 76)}px`);
+    const sw = stage ? stage.clientWidth : 1000, sh = stage ? stage.clientHeight : 800;
+    let shift = sub && !sub.hidden ? sub.offsetWidth : 0;
+    if (sw - 44 - shift < 300) shift = 0;                     // 서랍 옆에 판이 설 자리가 없으면 비켜나지 않는다
+    host.style.setProperty('--pl-shift', `${shift}px`);
+    host.style.setProperty('--pl-w', `${Math.max(260, Math.min(384, sw - 44 - shift))}px`);
+    const avail = sh - bottom - 76;
+    host.style.setProperty('--pl-h', `${Math.max(240, avail)}px`);
+    const was = compact; compact = avail < 440;               // 낮은 창에서는 달 대신 그 주만 보인다(입력칸이 잘리지 않게)
+    if (was !== compact && open) renderPanel();
   }
 
   // ---- 설명 풍선 ----
@@ -226,14 +263,19 @@ window.Planner = (() => {
     const one = { group, tone: b.tone || 'iris', lines: [line], actions: b.actions || null };
     if (cur && cur.group === group && !cur.actions && !one.actions) {            // 같은 종류: 줄로 쌓는다(최대 4줄, 오래된 것부터 빠짐)
       while (cur.lines.length >= MAX_LINES) dropLine(cur.lines[0]);
-      cur.lines.push(line); cur.tone = one.tone; arm(line); render();
+      cur.lines.push(line); cur.tone = one.tone; if (!hovering) arm(line); renderRow();
       return line;
     }
-    if (cur) { queue.push(one); queue.sort((x, y) => (PRI[x.group] ?? 2) - (PRI[y.group] ?? 2)); return line; }
+    if (cur) {
+      const same = one.actions ? null : queue.find((q) => q.group === group && !q.actions); // 차례를 기다리는 것끼리도 같은 종류는 한 말풍선으로(최대 4줄)
+      if (same) { while (same.lines.length >= MAX_LINES) dropLine(same.lines[0]); same.lines.push(line); same.tone = one.tone; return line; }
+      queue.push(one); queue.sort((x, y) => (PRI[x.group] ?? 2) - (PRI[y.group] ?? 2));
+      return line;
+    }
     show(one);
     return line;
   }
-  function show(b) { cur = b; sayNew = true; for (const l of b.lines) arm(l); render(); }
+  function show(b) { cur = b; sayNew = true; hovering = false; for (const l of b.lines) arm(l); renderRow(); }
   function arm(l) { clearTimeout(l.timer); if (l.ttl) l.timer = setTimeout(() => closeLine(l), l.ttl); }
   function dropLine(l) { clearTimeout(l.timer); l.closed = true; if (cur) cur.lines = cur.lines.filter((x) => x !== l); for (const q of queue) q.lines = q.lines.filter((x) => x !== l); }
   function closeLine(l) {
@@ -241,10 +283,11 @@ window.Planner = (() => {
     dropLine(l);
     for (let i = queue.length - 1; i >= 0; i--) if (!queue[i].lines.length) queue.splice(i, 1);
     if (cur && !cur.lines.length) { cur = null; const next = queue.shift(); if (next) return show(next); }
-    render();
+    renderRow();
   }
-  const pause = () => { if (cur) for (const l of cur.lines) clearTimeout(l.timer); };
-  const resume = () => { if (cur) for (const l of cur.lines) arm(l); };
+  let hovering = false; // 말풍선 위에 마우스가 있는 동안은 사라지지 않는다(그사이 쌓인 줄도)
+  const pause = () => { hovering = true; if (cur) for (const l of cur.lines) clearTimeout(l.timer); };
+  const resume = () => { hovering = false; if (cur) for (const l of cur.lines) arm(l); };
   /** 떠 있는 것 + 차례를 기다리는 것(검사 · 설정 미리보기용) */
   const bubbles = () => [...(cur ? [cur] : []), ...queue].flatMap((b, bi) => b.lines.map((l) => ({ group: b.group, tone: b.tone, text: l.text, sub: l.sub, tip: l.tip, id: l.id, meta: l.meta, shown: bi === 0 && !!cur })));
 
@@ -265,7 +308,9 @@ window.Planner = (() => {
 
   // ---- 하는 일 ----
   function openPanel(day) { open = true; fresh = true; if (day) { sel = day; month = day.slice(0, 7); } else if (!sel && view) sel = view.today; render(); load(); }
-  function closePanel() { open = false; talk = false; render(); }
+  function closePanel() { open = false; talk = false; talkCtx = null; render(); }
+  /** 대화를 접는다. 입력칸의 초점을 먼저 놓는다 — 다시 그리며 초점을 돌려주면 그 초점이 대화를 다시 열기 때문이다. */
+  function foldTalk() { const inp = $('#pl-in', panelEl); if (inp) inp.blur(); talk = false; talkCtx = null; renderPanel(); }
   function openTalk() {
     if (!talk) talkFresh = true; talk = true; strip = false; focusIn = true;
     if (!thread.length) thread.push({ who: 'ai', text: '넣을 것이나 바꿀 것을 말해 주세요. 제가 달력에 정리할게요.' });
@@ -304,8 +349,7 @@ window.Planner = (() => {
     else thread.push({ who: 'ai', text: r.say || '했어요.', cards: r.cards || [], undo: r.changeId || null, warn: r.warnings || [], confirm: r.confirm || null });
     if (r.changeId) for (const m of thread.slice(0, -1)) m.undo = null;   // 되돌리기 단추는 가장 새 것 하나에만
     if (r.goto) { sel = r.goto; month = sel.slice(0, 7); }
-    focusIn = true;
-    load();
+    load();   // 초점은 건드리지 않는다 — 입력칸에 있었으면 그대로 남고, 다른 곳으로 옮겨 갔으면 따라가지 않는다
   }
   function fixProposal(id) {
     const p = view && view.proposals.find((x) => x.id === id); if (!p) return;
@@ -313,7 +357,6 @@ window.Planner = (() => {
     thread.push({ who: 'ai', text: `「${p.title}」 제안을 어떻게 바꿀까요?` });
     render();
   }
-  let talkCtx = null;
 
   // ---- 눌림 ----
   function onClick(e) {
@@ -328,17 +371,18 @@ window.Planner = (() => {
     if ((el = q('[data-undo]'))) { const m = thread[Number(el.dataset.undo)]; if (m && m.undo) undoChange(m.undo); return; }
     if ((el = q('[data-yes]')) || (el = q('[data-no]'))) { const m = thread[Number(el.dataset.yes ?? el.dataset.no)]; if (m && m.confirm) talkSend('', { confirm: m.confirm, yes: 'yes' in el.dataset, silent: true }); return; }
     if (q('#pl-send')) { const inp = $('#pl-in'); const v = inp ? inp.value : ''; const c = talkCtx; talkCtx = null; return talkSend(v, c || {}); }
-    if (q('[data-talk-x]')) { talk = false; talkCtx = null; return render(); }
-    if (q('[data-strip]')) { strip = !strip; return render(); }
+    if (q('[data-talk-x]')) return foldTalk();
+    if (q('[data-strip]')) { strip = !strip; return renderPanel(); }
     if ((el = q('[data-acc]'))) return decide(el.dataset.acc, true);
     if ((el = q('[data-dec]'))) return decide(el.dataset.dec, false);
     if ((el = q('[data-fix]'))) return fixProposal(el.dataset.fix);
     if ((el = q('[data-work]'))) { const p = view.proposals.find((x) => x.id === el.dataset.work); if (p && p.action) opts.chatIn(p.action.folder, p.action.prompt || ''); return; }
-    if ((el = q('[data-fold]'))) { const id = el.dataset.fold; if (folded.has(id)) folded.delete(id); else folded.add(id); return render(); }
+    if ((el = q('[data-fold]'))) { const id = el.dataset.fold; if (folded.has(id)) folded.delete(id); else folded.add(id); return renderPanel(); }
     if ((el = q('[data-ck]'))) return check(el.dataset.ck, el.dataset.step || null, el.dataset.date || null, !el.classList.contains('on'));
     if ((el = q('[data-day]'))) { sel = el.dataset.day; month = sel.slice(0, 7); return load(); }
     if (q('[data-today]')) { sel = view.today; month = sel.slice(0, 7); return load(); }
-    if ((el = q('[data-month]'))) { month = monthAdd(view.month, Number(el.dataset.month)); sel = month === view.today.slice(0, 7) ? view.today : `${month}-01`; return load(); }
+    if ((el = q('[data-month]'))) { month = monthAdd(month || view.month, Number(el.dataset.month)); sel = month === view.today.slice(0, 7) ? view.today : `${month}-01`; return load(); } // 응답 전에 또 눌러도 한 달씩 더 간다
+    if (q('[data-settings]')) return opts.openSettings('planner');
     if ((el = q('[data-folder]'))) return opts.openFolder(el.dataset.folder);
     if ((el = q('[data-chat]'))) return opts.chatIn(el.dataset.chat, '');
   }
@@ -347,6 +391,8 @@ window.Planner = (() => {
     opts = { ...opts, ...o };
     const stage = $('#stage') || document.body;
     host = document.createElement('div'); host.id = 'pl'; host.className = 'pl'; stage.appendChild(host);
+    panelEl = document.createElement('div'); panelEl.id = 'pl-panel'; host.appendChild(panelEl);
+    rowEl = document.createElement('div'); rowEl.className = 'pl-row'; host.appendChild(rowEl);
     over = document.createElement('div'); over.id = 'pl-over'; over.className = 'pl pl-over'; over.hidden = true; document.body.appendChild(over);
     tipEl = document.createElement('div'); tipEl.id = 'pl-tip'; tipEl.setAttribute('role', 'tooltip'); tipEl.hidden = true; document.body.appendChild(tipEl);
     for (const h of [host, over]) {
@@ -356,40 +402,47 @@ window.Planner = (() => {
       h.addEventListener('mouseover', (e) => { if (e.target.closest('.pl-say')) pause(); });
       h.addEventListener('mouseout', (e) => { if (e.target.closest('.pl-say') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.pl-say'))) resume(); });
     }
-    host.addEventListener('focusin', (e) => { if (e.target.id === 'pl-in' && !talk) { openTalk(); render(); } });
-    host.addEventListener('keydown', (e) => {
-      if (e.isComposing) return;
-      if (e.key === 'Enter' && e.target.id === 'pl-in') { e.preventDefault(); e.stopPropagation(); const c = talkCtx; talkCtx = null; talkSend(e.target.value, c || {}); }
-      else if (e.target.id === 'pl-in' && e.key !== 'Escape') e.stopPropagation(); // 판의 입력칸에서 친 글자가 본체 단축키(확인 카드 1~9 등)로 새지 않게
+    host.addEventListener('focusin', (e) => { if (e.target.id === 'pl-in' && !talk) { openTalk(); renderPanel(); } });
+    // 키 경계: 플래너 안(입력칸 · 단추)에서 누른 키는 본체로 올려 보내지 않는다 — 본체의 확인 카드(1~9 · y · n · Enter)나 단축키가 대신 눌리지 않게.
+    // Esc 만 올려 보낸다(본체 onEscape 한 곳에서 "대화 → 판" 순서로 닫는다).
+    for (const h of [host, over]) h.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.code === 'Escape') return;
+      e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter' && e.target.id === 'pl-in') { e.preventDefault(); const c = talkCtx; talkCtx = null; talkSend(e.target.value, c || {}); }
     });
+    // 한글을 조합하는 동안에는 판을 다시 그리지 않는다(조합이 끊기지 않게) — 끝나면 미뤄 둔 것을 그린다
+    host.addEventListener('compositionstart', () => { composing = true; });
+    host.addEventListener('compositionend', () => { composing = false; if (panelDirty) renderPanel(); });
     document.addEventListener('mouseover', overTip);
     document.addEventListener('focusin', overTip);
     document.addEventListener('scroll', hideTip, true);
     window.addEventListener('resize', () => { place(); });
     try {
       const ro = new ResizeObserver(() => place());
-      for (const id of ['#dock', '#sub', '#stage']) { const el = $(id); if (el) ro.observe(el); }
+      for (const id of ['#dock', '#sub', '#stage', '#approval', '#dead-bar']) { const el = $(id); if (el) ro.observe(el); }
+      for (const id of ['#approval', '#dead-bar']) { const el = $(id); if (el) new MutationObserver(() => place()).observe(el, { attributes: true, attributeFilter: ['hidden'] }); }
       const sub = $('#sub'); if (sub) new MutationObserver(() => place()).observe(sub, { attributes: true, attributeFilter: ['hidden'] });
       // 설정 · 대시보드 서랍이 열리고 닫힐 때: 단추는 서랍 아래에 숨고, 말풍선만 구석에 뜬다
-      for (const id of ['#settings', '#dash']) { const el = $(id); if (el) new MutationObserver(() => render()).observe(el, { attributes: true, attributeFilter: ['hidden', 'class'] }); }
+      for (const id of ['#settings', '#dash']) { const el = $(id); if (el) new MutationObserver(() => renderRow()).observe(el, { attributes: true, attributeFilter: ['hidden', 'class'] }); }
     } catch { /* 옛 환경: 창 크기 변화 때만 다시 잰다 */ }
     place(); render();
   }
-  function onHello(p) { if (p && typeof p.proposals === 'number') { count = p.proposals; cfg.plannerEnabled = p.enabled !== false; render(); if (open) load(); } }
+  function onHello(p) { if (p && typeof p.proposals === 'number') { count = p.proposals; cfg.plannerEnabled = p.enabled !== false; renderRow(); if (open) load(); } }
   function onMessage(m) {
     if (!m) return;
     if (typeof m.proposals === 'number') count = m.proposals;
     if (m.say) sayFromDaemon(m.say);
-    if (open) load(); else render();
+    if (open) load(); else renderRow();
   }
   /** Esc: 대화 → 판 순서로 한 단계씩만 닫는다. 닫은 것이 있으면 true(본체는 다른 일을 하지 않는다). */
   function onEscape() {
     if (!open) return false;
-    if (talk) { talk = false; talkCtx = null; render(); return true; }
+    if (talk) { foldTalk(); return true; }
     closePanel(); return true;
   }
   function applySettings(c) { cfg = { ...cfg, ...(c || {}) }; render(); if (open) load(); }
   /** 서랍이 열리거나 닫혔을 때(본체가 알려 준다) */
-  function refresh() { place(); render(); }
+  function refresh() { place(); renderRow(); }
   return { init, onHello, onMessage, onEscape, say, bubbles, applySettings, refresh, isOpen: () => open, open: (day) => openPanel(day || null), close: closePanel };
 })();

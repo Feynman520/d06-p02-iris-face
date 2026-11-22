@@ -127,7 +127,7 @@ function datesOf(it, from, to) {
 export function overlapsWith(items, cand) {
   if (!cand.time || !isDate(cand.start)) return [];
   const lastDay = cand.repeat ? addDays(cand.start, OVERLAP_LOOKAHEAD_DAYS) : endOf(cand);
-  const mine = datesOf(cand, cand.start, lastDay).map((d) => ({ d, s: spanOf(cand, d) }));
+  const mine = datesOf(cand, cand.start, lastDay).filter((d) => !doneOn(cand, d)).map((d) => ({ d, s: spanOf(cand, d) })); // 끝낸 날의 것은 견주지 않는다
   if (!mine.length) return [];
   const from = addDays(cand.start, -1), to = addDays(lastDay, 1);
   const out = [];

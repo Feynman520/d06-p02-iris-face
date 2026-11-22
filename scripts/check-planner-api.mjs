@@ -175,7 +175,8 @@ try {
 } catch (x) { fail++; console.log(`FAIL unexpected — ${x?.stack || x}`); }
 finally {
   try { ws?.close(); } catch {}
-  if (mine) { try { await fetch(`http://127.0.0.1:${PORT}/api/shutdown`, { method: 'POST' }); } catch {} }
+  // 끄기 직전에 한 번 더: 이 포트에서 답하는 것이 아직 내가 띄운 데몬일 때만 종료를 보낸다
+  if (mine) { try { const h = await (await fetch(`http://127.0.0.1:${PORT}/api/health`)).json(); if (h.pid === d.pid) await fetch(`http://127.0.0.1:${PORT}/api/shutdown`, { method: 'POST' }); } catch {} }
   let alive = true; for (let i = 0; i < 16 && alive; i++) { await sleep(250); try { process.kill(d.pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; } }
   if (alive) { try { process.kill(d.pid); } catch {} }
   try { fs.rmSync(base, { recursive: true, force: true }); } catch {}

@@ -42,11 +42,12 @@ const HARNESS = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><lin
 <style>html,body{margin:0;height:100%;background:var(--base);color:var(--ink)} #app{display:block;height:100vh} #stage{position:relative;height:100vh;display:flex;flex-direction:column}
 #dock{margin-top:auto;height:76px;padding:0;flex:none} #sub{position:absolute;right:0;top:0;bottom:76px;width:300px;background:var(--surface)} #settings,#dash{position:fixed;inset:0;background:var(--surface);z-index:20;transform:none;opacity:1}</style></head><body>
 <div id="app"><aside id="settings" hidden></aside><aside id="dash" hidden></aside>
-<main id="stage"><input id="typing" value="쓰던 글" style="margin:20px;width:300px"><aside id="sub" hidden></aside><footer id="dock"></footer></main></div>
+<main id="stage"><input id="typing" value="쓰던 글" style="margin:20px;width:300px"><aside id="sub" hidden></aside><div style="margin-top:auto"></div><div id="approval" hidden style="height:120px;flex:none"></div><div id="dead-bar" hidden style="height:40px;flex:none"></div><footer id="dock" style="margin-top:0"></footer></main></div>
 <script src="/icons.js"></script><script src="/planner.js"></script>
 <script>
-  window.__calls = []; window.__drawer = false;
-  Planner.init({ openFolder: (p) => __calls.push(['folder', p]), chatIn: (p, t) => __calls.push(['chat', p, t]), openSession: (id) => __calls.push(['session', id]), drawerOpen: () => window.__drawer });
+  window.__calls = []; window.__drawer = false; window.__keys = [];
+  document.addEventListener('keydown', (e) => window.__keys.push(e.key)); // 본체의 단축키 자리(여기까지 올라온 키만 센다)
+  Planner.init({ openFolder: (p) => __calls.push(['folder', p]), chatIn: (p, t) => __calls.push(['chat', p, t]), openSession: (id) => __calls.push(['session', id]), openSettings: (p) => __calls.push(['settings', p]), drawerOpen: () => window.__drawer });
 </script></body></html>`;
 const server = http.createServer(async (q, s) => {
   const url = new URL(q.url, 'http://x'); const u = url.pathname;
@@ -240,6 +241,72 @@ try {
   ok((await ev(`document.getElementById('pl-tip').hidden`)), '떼면 사라짐');
   ok((await ev(`[...document.querySelectorAll('.pl button')].every((b) => b.getAttribute('aria-label') || b.textContent.trim())`)), '단추마다 이름(aria-label 또는 글자)');
   ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(await ev(`document.querySelector('.pl').textContent`)), '화면에 이모지 없음');
+
+  // ---- 13. 코덱스 검토(걸음 3)에서 나온 것 ----
+  // 13-1 적던 글 · 커서 · 초점은 다시 그려도 남는다. 말풍선은 판을 다시 그리지 않는다.
+  await page.click('#pl-in'); await page.keyboard.type('적던 말입니다'); await ev(`document.querySelector('#pl-in').setSelectionRange(2, 4); document.querySelector('#pl-in').__mark = 1`);
+  await ev(`Planner.say({ group: 'done', tone: 'ok', text: '적는 사이에 온 알림' })`); await settle();
+  ok((await ev(`document.querySelector('#pl-in').__mark`)) === 1 && (await ev(`document.querySelector('#pl-in').value`)) === '적던 말입니다', '말풍선이 떠도 판(입력칸)은 다시 그리지 않음');
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0 })`); await settle();
+  const kept = await ev(`(() => { const i = document.querySelector('#pl-in'); return { v: i.value, a: i.selectionStart, b: i.selectionEnd, f: document.activeElement === i, mark: i.__mark }; })()`);
+  ok(kept.v === '적던 말입니다' && kept.a === 2 && kept.b === 4 && kept.f && kept.mark === undefined, '수첩이 바뀌어 판을 다시 그려도 적던 글 · 커서 · 초점이 남음');
+  await ev(`(() => { const i = document.querySelector('#pl-in'); i.__mark = 2; i.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); })()`);
+  await ev(`Planner.onMessage({ type: 'planner', rev: 2, proposals: 0 })`); await settle();
+  ok((await ev(`document.querySelector('#pl-in').__mark`)) === 2, '한글을 조합하는 동안에는 판을 다시 그리지 않음');
+  await ev(`document.querySelector('#pl-in').dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))`); await settle();
+  ok((await ev(`document.querySelector('#pl-in').__mark`)) === undefined && (await ev(`document.querySelector('#pl-in').value`)) === '적던 말입니다', '조합이 끝나면 미뤄 둔 것을 그림(글은 그대로)');
+  const sc = await ev(`(() => { const l = document.querySelector('.pl-list'); l.scrollTop = 30; return l.scrollTop; })()`);
+  await ev(`Planner.onMessage({ type: 'planner', rev: 3, proposals: 0 })`); await settle();
+  ok(sc > 0 ? (await ev(`document.querySelector('.pl-list').scrollTop`)) === sc : true, '목록의 스크롤 자리도 남음');
+  await ev(`document.querySelector('#pl-in').value = ''; document.querySelector('.pl-say [data-line-x]')?.click()`);
+  // 13-2 플래너 안에서 누른 키는 본체로 올라가지 않는다(Esc 만)
+  await ev(`window.__keys.length = 0; (() => { const b = document.querySelector('.pl-list .pl-ck'); b.focus(); for (const k of ['Enter', '1', 'y', 'Escape']) b.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, bubbles: true, cancelable: true })); })()`);
+  ok(JSON.stringify(await ev('window.__keys')) === '["Escape"]', '플래너 단추에서 누른 Enter · 숫자 · y 는 본체로 새지 않음(Esc 만 올라감)');
+  await ev(`window.__keys.length = 0; (() => { const i = document.querySelector('#pl-in'); i.focus(); for (const k of ['1', 'n', 'F2']) i.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); })()`);
+  ok((await ev('window.__keys.length')) === 0, '입력칸에서 친 글자도 본체 단축키로 새지 않음');
+  // 13-3 응답이 오는 사이 초점을 옮겼으면 다시 가져오지 않는다
+  await page.click('#pl-in'); await page.keyboard.type('아이리스에게');
+  await ev(`document.querySelector('#pl-send').click(); document.getElementById('typing').focus()`); await page.waitForTimeout(400);
+  ok((await ev(`document.activeElement.id`)) === 'typing' && (await ev(`document.querySelectorAll('.pl-thread .pl-bub.me').length`)) >= 1, '답이 오는 사이 다른 곳으로 옮긴 초점을 다시 가져오지 않음');
+  // 13-4 차례를 기다리는 것끼리도 같은 종류는 합친다
+  await ev(`Planner.say({ group: 'greet', tone: 'iris', text: '계속 떠 있는 말', ttl: 0 }); for (let i = 0; i < 6; i++) Planner.say({ group: 'done', tone: 'ok', text: '끝남 ' + i });`); await settle();
+  const qd = (await ev('Planner.bubbles()')).filter((b) => b.group === 'done');
+  ok(qd.length === 4 && qd[0].text === '끝남 2' && qd.every((b) => !b.shown), '기다리는 같은 종류는 한 말풍선으로(최대 4줄, 오래된 것부터 빠짐)');
+  await ev(`for (let i = 0; i < 9 && document.querySelector('.pl-say [data-line-x]'); i++) document.querySelector('.pl-say [data-line-x]').click()`); await settle();
+  // 13-5 달을 빨리 두 번 넘겨도 두 달
+  await ev(`Planner.close(); Planner.open('2026-11-23')`); await settle();
+  await ev(`document.querySelector('[data-month="1"]').click(); document.querySelector('[data-month="1"]').click()`); await page.waitForTimeout(300);
+  ok((await text('.pl-head strong'))[0] === '1월 1일 금요일', '응답 전에 「다음 달」을 두 번 눌러도 두 달 넘어감');
+  await ev(`Planner.open('2026-11-23')`); await settle();
+  // 13-6 꺼져 있을 때의 안내 + 설정 열기 · 닫으면 「말로 고치기」의 대상도 잊는다
+  cfg.plannerEnabled = false; await ev(`Planner.applySettings({ plannerEnabled: false })`); await settle();
+  ok((await text('.pl-note'))[0].startsWith('플래너가 꺼져 있어요'), '꺼져 있으면 판에 안내');
+  await page.click('[data-settings]'); await settle();
+  ok(JSON.stringify((await ev('window.__calls')).filter((c) => c[0] === 'settings')) === '[["settings","planner"]]', '「설정 열기」');
+  cfg.plannerEnabled = true; await ev(`Planner.applySettings({ plannerEnabled: true })`); await settle();
+  // 13-7 본체의 확인 카드가 뜨면 그 위로 · 좁고 낮은 창
+  const b0 = await ev(`innerHeight - document.querySelector('#pl-hex').getBoundingClientRect().bottom`);
+  await ev(`document.getElementById('approval').hidden = false`); await page.waitForTimeout(300);
+  const b1 = await ev(`innerHeight - document.querySelector('#pl-hex').getBoundingClientRect().bottom`);
+  const clear = await ev(`document.querySelector('#pl-hex').getBoundingClientRect().bottom <= document.getElementById('approval').getBoundingClientRect().top`);
+  ok(Math.abs(b1 - b0 - 120) < 2 && clear, `본체의 확인 카드가 뜨면 단추가 그 위로 올라감(${Math.round(b0)} → ${Math.round(b1)})`);
+  await ev(`document.getElementById('approval').hidden = true`); await page.waitForTimeout(300);
+  await page.setViewportSize({ width: 560, height: 520 }); await ev(`document.getElementById('sub').hidden = false`); await page.waitForTimeout(400);
+  const small = await ev(`(() => { const p = document.querySelector('.pl-panel').getBoundingClientRect(), f = document.querySelector('.pl-foot').getBoundingClientRect(), x = document.querySelector('[data-close]').getBoundingClientRect(); return { left: p.left, top: p.top, right: innerWidth - p.right, footBottom: innerHeight - f.bottom, xTop: x.top, days: document.querySelectorAll('.pl-cal button').length, w: p.width }; })()`);
+  ok(small.left >= 0 && small.top >= 0 && small.footBottom >= 0 && small.xTop >= 0 && small.days === 7, `좁고 낮은 창: 판 · 닫기 · 입력칸이 화면 안에 들어오고 달 대신 그 주(폭 ${Math.round(small.w)} · 위 ${Math.round(small.top)})`);
+  await shot('8-small');
+  await ev(`document.getElementById('sub').hidden = true`); await page.setViewportSize({ width: 1100, height: 860 }); await page.waitForTimeout(400);
+  ok((await ev(`document.querySelectorAll('.pl-cal button').length`)) === 30, '창을 다시 키우면 달 전체');
+  // 13-8 꺾쇠 · 따옴표가 들어가는 다른 자리
+  const evil = `"><img src=x onerror="window.__xss2=1">'`;
+  pl.store.apply([{ op: 'add', item: { title: '폴더와 단계', start: '2026-11-23', folder: `C:\\\\x\\\\${evil}`, time: '18:00' } }], U);
+  pl.store.apply([{ op: 'add', item: { title: '단계 있는 일', start: '2026-11-23', end: '2026-11-24', steps: [{ title: evil, day: '2026-11-23' }] } }], U);
+  pl.store.apply([{ op: 'propose', item: { title: evil, start: '2026-11-23' } }], { by: 'session', via: 'cli', evidence: evil, session: { id: 'x', title: evil, agent: 'claude' } });
+  await ev(`Planner.onMessage({ type: 'planner', rev: 9, proposals: 1 })`); await settle();
+  await page.click('[data-strip]'); await settle();
+  await ev(`Planner.say({ group: 'done', tone: 'ok', text: ${JSON.stringify(evil)}, sub: ${JSON.stringify(evil)}, tip: ${JSON.stringify(evil)} })`); await settle();
+  ok((await ev('window.__xss2')) === undefined && (await ev(`document.querySelectorAll('.pl img, #pl-over img').length`)) === 0 && (await text('.pl-r.step .tx')).includes(evil) && (await text('.pl-strip-b .tx'))[0] === evil && (await ev(`document.querySelector('.pl-strip-b .tx').dataset.tip`)).includes(evil) && (await text('.pl-say .pl-line p'))[0].startsWith(evil), '꺾쇠 · 따옴표는 폴더 · 단계 · 제안 · 근거 · 말풍선 어디서나 글자 그대로');
+  await ev(`document.querySelector('.pl-say [data-line-x]')?.click(); Planner.close()`);
 
   ok(errors.length === 0, `화면 오류 없음${errors.length ? ' — ' + errors[0] : ''}`);
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }

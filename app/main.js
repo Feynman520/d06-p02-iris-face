@@ -692,7 +692,6 @@
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
     if (renaming) { renaming.cancel(); return; }      // 이름 고치는 중 Esc = 고치기 취소만(작업 중단 아님, v2.85)
     if (Tutorial.isOpen()) { Tutorial.back(); return; } // 튜토리얼 위에서 Esc = 그 안의 한 단계 뒤로만(크게 보기 닫기·역할 다시 고르기) — 작업 중단으로 새지 않는다(v2.90 → v2.93)
-    if (!Settings.isOpen() && $('#dash').hidden && window.Planner?.onEscape()) return; // 플래너가 펴져 있으면 Esc = 대화 → 판 순서로 한 단계만 닫기(작업 중단으로 새지 않는다)
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
     if (Settings.isOpen() && window.OntologyView?.back?.()) return; // 온톨로지에서 역할을 골랐거나 검색 중이면 Esc = 한 단계 뒤로만(서랍은 그대로, v2.91)
     if (Settings.isOpen()) { Settings.hide(); return; }
@@ -701,6 +700,7 @@
     if (SubPanel.isOpen()) { SubPanel.close(); ta.focus(); return; } // 보조 작업 서랍이 열려 있으면 Esc = 서랍만 닫힘(중단 아님)
     if (!$('#cam').hidden) { camStop(); return; }
     if (FolderPicker.isOpen()) { FolderPicker.hide(); return; }
+    if (window.Planner?.onEscape()) return; // 플래너가 펴져 있으면 Esc = 대화 → 판 순서로 한 단계만 닫기 — 앞에 떠 있는 것(녹음 · 서랍 · 폴더 고르기)보다는 뒤, 작업 중단보다는 앞
     if (setupMode === 'switch') { setupMode = 'new'; renderSetup(); return; }
     // 확인 카드가 떠 있으면 Esc = 터미널과 같게 취소 키(ESC)를 그 세션에 보낸다(v2.43)
     if (mode === 'chat' && Approval.isOpen() && Approval.choose('\x1b')) { ta.focus(); return; }
@@ -722,13 +722,20 @@
   // ---------- 플래너(app/planner.js, 2026-11-22): 육각 단추 + 말풍선 + 달력 판. 폴더 열기는 영혼 안 폴더만(데몬이 검사), 대화 시작은 「첫 대화 해 보기」처럼 요청문만 채운다(보내기는 사용자). ----------
   Planner.init({
     openFolder: (p) => { fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: p }) }).catch(() => {}); },
-    chatIn: (p, text) => {
+    chatIn: async (p, text) => {
       if (!p) return;
+      // 입력창에 쓰던 요청이나 첨부가 있으면 다른 폴더의 새 작업에 섞이지 않게 먼저 묻는다(그대로 두기 = 아무 일도 하지 않음)
+      const draftBox = $('#composer-text');
+      if (draftBox.value.trim() || attachments.length) {
+        if (!(await Dialog.confirm('입력창에 쓰던 요청이 있습니다.\n지우고 이 폴더에서 새 작업을 시작할까요?', { okLabel: '지우고 시작' }))) return;
+        draftBox.value = ''; attachments.length = 0; renderAttach(); draftBox.dispatchEvent(new Event('input', { bubbles: true }));
+      }
       if (current) goHome();
       folder = { path: p, rel: p, name: String(p).split(/[\\/]/).filter(Boolean).pop() || p };
       render(); const box = $('#composer-text'); if (text) { box.value = text; box.dispatchEvent(new Event('input', { bubbles: true })); } box.focus(); box.setSelectionRange(box.value.length, box.value.length);
     },
     openSession: (id) => { if (sessions.some(s => s.id === id)) select(id); },
+    openSettings: (pane) => { Settings.show(pane); },
     drawerOpen: () => Settings.isOpen() || !$('#dash').hidden,
   });
   Planner.applySettings(Settings.get());
