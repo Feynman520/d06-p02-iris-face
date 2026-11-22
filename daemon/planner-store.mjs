@@ -210,10 +210,10 @@ export class PlannerStore {
    * 조작 묶음을 한 번에. 하나라도 말이 안 되면 아무것도 적지 않는다(PlannerError).
    * ops: { op:'add'|'propose', item } · { op:'update', id, patch } · { op:'check', id, done, stepId?, date? }
    *      · { op:'remove', id }(휴지통) · { op:'restore', id } · { op:'accept', id, patch? } · { op:'decline', id } · { op:'purge', id }
-   * meta: { by:'user'|'session'|'iris'|'system', via?(VIA), session?, asked?, evidence?, note? }
+   * meta: { by:'user'|'session'|'iris'|'system', via?(VIA), session?, asked?, evidence?, note? } · 셋째 인자 { dry:true } = 검사만 하고 적지 않는다
    * @returns {{ rev: number, changeId: string, ids: string[], items: object[] }}
    */
-  apply(ops, meta = {}) {
+  apply(ops, meta = {}, { dry = false } = {}) {
     this.#blocked();
     if (!Array.isArray(ops) || !ops.length) bad('no-ops', '바꿀 것이 없습니다.');
     if (ops.length > OPS_MAX) bad('too-many', `한 번에 바꿀 수 있는 것은 ${OPS_MAX}건까지입니다.`);
@@ -272,6 +272,7 @@ export class PlannerStore {
       } else bad('bad-op', '조작을 알아볼 수 없습니다.');
     }
     const ids = [...before.keys()];
+    if (dry) return { rev: this.rev, changeId: null, ids, items: ids.map((id) => clone(work.find((x) => x.id === id) || null)), ops: ids.map((id) => ({ id, op: opOf.get(id) })) }; // 검사만(말이 되는지) — 아무것도 적지 않는다
     const change = { id: `c${this.rev + 1}-${crypto.randomBytes(3).toString('hex')}`, rev: this.rev + 1, at, by: source, note: meta.note ? str(String(meta.note), 200, '메모') : null, ops: ids.map((id) => ({ id, before: before.get(id), after: clone(work.find((x) => x.id === id) || null) })) };
     this.#commit(work, seq, change);
     this.log(`planner: rev ${this.rev} ops=${[...new Set(ops.map((o) => o.op))].join(',')} n=${ops.length} by=${source.by}${source.via ? '/' + source.via : ''} items=${ids.length}`);

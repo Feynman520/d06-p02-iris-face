@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Planner } from '../daemon/planner.mjs';
+import { PlannerTalk } from '../daemon/planner-talk.mjs';
 
 const APP = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app');
 let pass = 0, fail = 0;
@@ -307,6 +308,43 @@ try {
   await ev(`Planner.say({ group: 'done', tone: 'ok', text: ${JSON.stringify(evil)}, sub: ${JSON.stringify(evil)}, tip: ${JSON.stringify(evil)} })`); await settle();
   ok((await ev('window.__xss2')) === undefined && (await ev(`document.querySelectorAll('.pl img, #pl-over img').length`)) === 0 && (await text('.pl-r.step .tx')).includes(evil) && (await text('.pl-strip-b .tx'))[0] === evil && (await ev(`document.querySelector('.pl-strip-b .tx').dataset.tip`)).includes(evil) && (await text('.pl-say .pl-line p'))[0].startsWith(evil), '꺾쇠 · 따옴표는 폴더 · 단계 · 제안 · 근거 · 말풍선 어디서나 글자 그대로');
   await ev(`document.querySelector('.pl-say [data-line-x]')?.click(); Planner.close()`);
+
+  // ---- 14. 아이리스에게 말하기(숨은 AI 는 가짜 실행기 — 실제 AI 접촉 0) ----
+  const script = []; const asked = [];
+  const J = (say, ops = []) => JSON.stringify({ say, ops });
+  pl.talkSvc = new PlannerTalk({ planner: pl, stateDir: base, agents: () => ['claude'], now: () => new Date(2026, 10, 23, 9, 0, 0),
+    run: async (a) => { asked.push(a); await new Promise((r) => setTimeout(r, 250)); const next = script.shift(); return next ? { ok: true, text: next, model: 'claude-haiku-5-5', modelActual: true, tokens: 3200, ms: 250 } : { ok: false, reason: 'limit', ms: 1 }; } });
+  await page.click('#pl-hex'); await settle(); await page.click('#pl-in'); await settle();
+  script.push(J('26일 목요일부터 27일 금요일까지로 넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26', end: '2026-11-27' }]));
+  await page.fill('#pl-in', '26일부터 27일까지 출장'); await page.keyboard.press('Enter'); await page.waitForTimeout(80);
+  ok((await text('.pl-thread .pl-bub.me')).pop() === '26일부터 27일까지 출장' && (await ev(`!!document.querySelector('.pl-thread .pl-wait')`)) && (await ev(`document.getElementById('pl-in').value`)) === '', '말을 보내면: 내 말이 대화에 · 생각하는 점 · 입력칸은 비움');
+  await page.waitForTimeout(600);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '26일 목요일부터 27일 금요일까지로 넣었어요.' && (await text('.pl-thread .pl-card .tx')).pop() === '출장' && (await ev(`document.querySelectorAll('.pl-thread [data-undo]').length`)) === 1 && !(await ev(`!!document.querySelector('.pl-thread .pl-wait')`)), '아이리스의 답 + 넣은 일 카드 + 되돌리기');
+  ok((await ev(`document.querySelector('.pl-list').textContent.includes('출장')`)) && (await ev(`document.activeElement.id`)) === 'pl-in', '달력이 넣은 날로 가서 그 일이 보임 · 입력칸 초점 그대로(이어서 말할 수 있음)');
+  ok(asked.length === 1 && asked[0].prompt.includes('사용자의 말: 26일부터 27일까지 출장') && asked[0].prompt.startsWith('오늘: 2026-11-23 월요일 09:00'), '숨은 AI 는 한 번만 부름(오늘 · 수첩 · 말)');
+  await shot('9-talk-add');
+  await page.click('.pl-thread [data-undo]'); await page.waitForTimeout(300);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '방금 바꾼 것을 되돌렸어요.' && !pl.store.list('active').some((it) => it.title === '출장') && (await ev(`document.querySelectorAll('.pl-thread [data-undo]').length`)) === 0, '되돌리기: 넣은 것이 사라지고 단추도 사라짐');
+  script.push(J('지웠어요.', [{ op: 'remove', no: late.no }]));
+  await page.fill('#pl-in', '채점 기준 확인 지워 줘'); await page.keyboard.press('Enter'); await page.waitForTimeout(700);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '「수행평가 채점 기준 확인」을(를) 지우기 — 이렇게 할까요?' && (await ev(`document.querySelectorAll('.pl-thread [data-yes]').length`)) === 1 && pl.store.get(late.id).state === 'active', '지우기는 먼저 묻는다(「그렇게 해 주세요」 · 「아니요」)');
+  await shot('10-talk-confirm');
+  await page.click('.pl-thread [data-yes]'); await page.waitForTimeout(400);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '그렇게 했어요.' && pl.store.get(late.id).state === 'trash' && (await ev(`document.querySelectorAll('.pl-thread [data-yes]').length`)) === 0 && asked.length === 2 && (await ev(`document.querySelectorAll('.pl-thread [data-undo]').length`)) === 1, '그렇게 해 주세요 → 그때 지움(휴지통) · AI 를 다시 부르지 않음 · 되돌리기');
+  script.push(J('수요일(25일) 몇 시인가요?', [{ op: 'ask' }]));
+  await page.fill('#pl-in', '수요일에 학부모 상담'); await page.keyboard.press('Enter'); await page.waitForTimeout(700);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '수요일(25일) 몇 시인가요?' && (await ev(`document.querySelectorAll('.pl-thread .pl-bub.ai:last-child .pl-res').length`)) === 0, '되묻기: 말만');
+  script.push(J('넣었어요.', [{ op: 'add', title: '학부모 상담', start: '2026-11-23', time: '15:30' }]));
+  await page.fill('#pl-in', '오늘 3시 반'); await page.keyboard.press('Enter'); await page.waitForTimeout(700);
+  ok((await text('.pl-thread .pl-bub.ai:last-child p.warn'))[0].includes('「협의회」와 시간이 겹쳐요') && asked[3].prompt.includes('아이리스: 수요일(25일) 몇 시인가요?') && asked[3].prompt.includes('사용자: 수요일에 학부모 상담'), '겹침 알림은 답 아래에 · 이어지는 말에는 앞의 대화가 함께 감');
+  await page.fill('#pl-in', '금요일 2시 연수'); await page.keyboard.press('Enter'); await page.waitForTimeout(500);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '지금은 아이리스를 부를 수 없어요(사용 한도가 찼어요). 말은 적어 두었어요 — 연결되면 정리할게요.' && pl.talkSvc.inbox().length === 1, '부를 수 없을 때: 말을 받아 두었다고 알림');
+  await shot('11-talk-held');
+  cfg.plannerTalk = false;
+  await page.fill('#pl-in', '내일 회의'); await page.keyboard.press('Enter'); await page.waitForTimeout(300);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop().includes('말하기가 꺼져 있어요') && asked.length === 5, '말하기를 끄면 부르지 않고 그렇게 답함');
+  cfg.plannerTalk = true;
+  await ev(`Planner.close()`); await settle();
 
   ok(errors.length === 0, `화면 오류 없음${errors.length ? ' — ' + errors[0] : ''}`);
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }

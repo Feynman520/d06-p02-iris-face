@@ -340,6 +340,7 @@ window.Planner = (() => {
     if (!open) { open = true; fresh = true; }
     openTalk();
     if (t && !extra.silent) thread.push({ who: 'me', text: t });
+    { const inp = $('#pl-in', panelEl); if (inp && t && inp.value.trim() === t) inp.value = ''; } // 보낸 말은 입력칸에서 비운다(다시 그릴 때 적던 글을 지키므로 여기서 먼저)
     const wait = { who: 'ai', wait: true }; thread.push(wait); busy = true; render();
     const recent = thread.filter((m) => !m.wait).slice(-7, -1).map((m) => ({ who: m.who, text: m.text }));
     const r = await api('/api/planner/talk', { text: t, day: sel, recent, ...extra });

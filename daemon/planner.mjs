@@ -54,6 +54,8 @@ export class Planner {
     this.cast = broadcast;
     this.store = new PlannerStore({ dir, now, log, autoload: false });
     this.secret = null; this.started = false; this.failed = false;
+    this.rules = null;    // 규칙 알림(planner-rules.mjs) — server.mjs 가 꽂는다
+    this.talkSvc = null;  // 아이리스에게 말하기(planner-talk.mjs) — server.mjs 가 꽂는다
   }
   /** 장부를 연다. 실패해도 던지지 않는다(플래너만 쉰다). */
   start() {
@@ -178,6 +180,15 @@ export class Planner {
     try {
       if (req.method === 'GET' && p === '/api/planner/view') return h.json(res, 200, this.view({ month: q.get('month'), day: q.get('day') }));
       if (req.method === 'GET' && p === '/api/planner/changes') return h.json(res, 200, { ok: true, changes: this.store.changes(Math.min(100, Math.max(1, Number(q.get('limit')) || 20))) });
+      if (req.method === 'GET' && p === '/api/planner/usage') return h.json(res, 200, { ok: true, ...(this.talkSvc ? this.talkSvc.usage() : { today: { calls: 0, tokens: 0 }, week: { calls: 0, tokens: 0 }, model: null, inbox: 0 }) });
+      if (req.method === 'POST' && p === '/api/planner/talk') {
+        // 아이리스에게 말하기: 같은 출처만. 말 · 답은 로그에 싣지 않는다. 결과는 언제나 200 + { ok, say, … }(화면이 대화에 그대로 적는다).
+        if (!h.sameOrigin(req)) { this.log(`planner: 403 ${where} (다른 출처)`); return h.json(res, 403, { ok: false, code: 'forbidden', error: 'forbidden origin' }); }
+        let b; try { b = await h.readBody(req); } catch { b = null; }
+        if (!b || typeof b !== 'object' || Array.isArray(b)) return h.json(res, 400, { ok: false, code: 'bad-json', error: '요청을 알아볼 수 없습니다.' });
+        if (!this.talkSvc) return h.json(res, 200, { ok: false, say: '지금은 아이리스를 부를 수 없어요.' });
+        return h.json(res, 200, await this.talkSvc.talk(b));
+      }
       if (req.method === 'POST' && ['/api/planner/ops', '/api/planner/undo', '/api/planner/decide'].includes(p)) {
         if (!h.sameOrigin(req)) { this.log(`planner: 403 ${where} (다른 출처)`); return h.json(res, 403, { ok: false, code: 'forbidden', error: 'forbidden origin' }); }
         let b; try { b = await h.readBody(req); } catch { b = null; }

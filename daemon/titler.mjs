@@ -33,7 +33,7 @@ export function findClaudeExe() {
 }
 
 // 데몬이 클로드코드 세션 안에서 시작됐을 때 물려받는 "자식 세션" 표식을 걷어낸다(sessions.mjs와 같은 규칙)
-function childEnv() {
+export function childEnv() {
   const env = { ...process.env };
   for (const k of Object.keys(env)) {
     if (k === 'CLAUDE_CONFIG_DIR') continue;
