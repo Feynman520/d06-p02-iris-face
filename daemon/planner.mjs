@@ -30,7 +30,8 @@ export const PLANNER_DEFAULTS = Object.freeze({
   plannerCheck: false,         // 준비 점검(AI 가 스스로 도는 유일한 기능 — 알고 켜도록 끔)
   plannerQuietUntil: null,     // 잠시 조용히(이 시각까지)
 });
-export const CROWD_MIN = 4;    // 한 주(월~일)에 마감(기간의 마지막 날)이 이만큼이면 "몰렸다"고 말한다
+export const CROWD_MIN = 4;
+export const BODY_MAX = 64 * 1024; // /api/planner/* 가 받는 요청 본문의 상한    // 한 주(월~일)에 마감(기간의 마지막 날)이 이만큼이면 "몰렸다"고 말한다
 
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
 /** 받침에 따라 조사 고르기: josa('출장', '을', '를') → '을' */
@@ -56,6 +57,7 @@ export class Planner {
     this.secret = null; this.started = false; this.failed = false;
     this.rules = null;    // 규칙 알림(planner-rules.mjs) — server.mjs 가 꽂는다
     this.talkSvc = null;  // 아이리스에게 말하기(planner-talk.mjs) — server.mjs 가 꽂는다
+    this.cliSvc = null;   // 세션용 명령의 창구(planner-cli.mjs) — server.mjs 가 꽂는다
   }
   /** 장부를 연다. 실패해도 던지지 않는다(플래너만 쉰다). */
   start() {
@@ -135,6 +137,8 @@ export class Planner {
     if (typeof id !== 'string' || !id || typeof yes !== 'boolean') throw new PlannerError('bad-request', '제안에 대한 답을 알아볼 수 없습니다.');
     return this.apply([yes ? { op: 'accept', id, patch: patch || undefined } : { op: 'decline', id }], { by: 'user', via: 'proposal' });
   }
+  /** 전부 종료: 규칙 점검을 멈추고, 돌고 있는 숨은 호출이 있으면 끝낸다(새로 부르지도 않는다). */
+  stop() { try { this.rules?.stop(); } catch { /* 이미 멈춤 */ } try { this.talkSvc?.stop(); } catch { /* 이미 멈춤 */ } }
   /** 화면에 알린다 — 장부는 이미 저장됐으므로, 알리다 실패해도 던지지 않는다. */
   #changed(say) { this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, ...(say ? { say } : {}) }); }
   #send(o) { try { this.cast(o); } catch (e) { this.log(`planner: 화면에 알리지 못했습니다 (${e?.code || e?.name || 'error'})`); } }
@@ -178,9 +182,23 @@ export class Planner {
       return h.json(res, 500, { ok: false, code: 'error', error: '플래너에서 오류가 났습니다.' });
     };
     try {
+      // 플래너의 POST 는 모두 작은 JSON 이다 — 크기를 밝히지 않았거나(조각 전송) 큰 요청은 읽기 전에 거절한다(데몬의 메모리를 지킨다)
+      if (req.method === 'POST') {
+        const len = Number(req.headers?.['content-length']);
+        if (req.headers && (req.headers['transfer-encoding'] || !(len >= 0) || len > BODY_MAX)) { this.log(`planner: 413 ${where}`); return h.json(res, 413, { ok: false, code: 'too-large', error: '요청이 너무 큽니다.', text: '요청이 너무 큽니다.' }); }
+      }
       if (req.method === 'GET' && p === '/api/planner/view') return h.json(res, 200, this.view({ month: q.get('month'), day: q.get('day') }));
       if (req.method === 'GET' && p === '/api/planner/changes') return h.json(res, 200, { ok: true, changes: this.store.changes(Math.min(100, Math.max(1, Number(q.get('limit')) || 20))) });
       if (req.method === 'GET' && p === '/api/planner/usage') return h.json(res, 200, { ok: true, ...(this.talkSvc ? this.talkSvc.usage() : { today: { calls: 0, tokens: 0 }, week: { calls: 0, tokens: 0 }, model: null, inbox: 0 }) });
+      if (req.method === 'POST' && p === '/api/planner/cli') {
+        // 세션용 명령(iris-planner): 화면이 아니라 세션 안의 명령이 부른다 — 출처가 붙어 온 요청(웹 쪽)은 받지 않고, 그 세션의 열쇠로 가린다.
+        if (req.headers.origin) { this.log(`planner: 403 ${where} (웹 쪽 요청)`); return h.json(res, 403, { ok: false, text: 'forbidden' }); }
+        let b; try { b = await h.readBody(req); } catch { b = null; }
+        if (!b || typeof b !== 'object' || Array.isArray(b)) return h.json(res, 400, { ok: false, text: '요청을 알아볼 수 없습니다.' });
+        if (!this.cliSvc) return h.json(res, 503, { ok: false, text: '플래너를 지금 쓸 수 없습니다.' });
+        const r = this.cliSvc.handle(req.headers, b);
+        return h.json(res, r.code, r.out);
+      }
       if (req.method === 'POST' && p === '/api/planner/talk') {
         // 아이리스에게 말하기: 같은 출처만. 말 · 답은 로그에 싣지 않는다. 결과는 언제나 200 + { ok, say, … }(화면이 대화에 그대로 적는다).
         if (!h.sameOrigin(req)) { this.log(`planner: 403 ${where} (다른 출처)`); return h.json(res, 403, { ok: false, code: 'forbidden', error: 'forbidden origin' }); }

@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Planner } from '../daemon/planner.mjs';
 import { PlannerTalk } from '../daemon/planner-talk.mjs';
+import { PlannerRules } from '../daemon/planner-rules.mjs';
 
 const APP = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app');
 let pass = 0, fail = 0;
@@ -327,7 +328,7 @@ try {
   ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '방금 바꾼 것을 되돌렸어요.' && !pl.store.list('active').some((it) => it.title === '출장') && (await ev(`document.querySelectorAll('.pl-thread [data-undo]').length`)) === 0, '되돌리기: 넣은 것이 사라지고 단추도 사라짐');
   script.push(J('지웠어요.', [{ op: 'remove', no: late.no }]));
   await page.fill('#pl-in', '채점 기준 확인 지워 줘'); await page.keyboard.press('Enter'); await page.waitForTimeout(700);
-  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '「수행평가 채점 기준 확인」을(를) 지우기 — 이렇게 할까요?' && (await ev(`document.querySelectorAll('.pl-thread [data-yes]').length`)) === 1 && pl.store.get(late.id).state === 'active', '지우기는 먼저 묻는다(「그렇게 해 주세요」 · 「아니요」)');
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '「수행평가 채점 기준 확인」 지우기 — 이렇게 할까요?' && (await ev(`document.querySelectorAll('.pl-thread [data-yes]').length`)) === 1 && pl.store.get(late.id).state === 'active', '지우기는 먼저 묻는다(「그렇게 해 주세요」 · 「아니요」)');
   await shot('10-talk-confirm');
   await page.click('.pl-thread [data-yes]'); await page.waitForTimeout(400);
   ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '그렇게 했어요.' && pl.store.get(late.id).state === 'trash' && (await ev(`document.querySelectorAll('.pl-thread [data-yes]').length`)) === 0 && asked.length === 2 && (await ev(`document.querySelectorAll('.pl-thread [data-undo]').length`)) === 1, '그렇게 해 주세요 → 그때 지움(휴지통) · AI 를 다시 부르지 않음 · 되돌리기');
@@ -345,6 +346,33 @@ try {
   ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop().includes('말하기가 꺼져 있어요') && asked.length === 5, '말하기를 끄면 부르지 않고 그렇게 답함');
   cfg.plannerTalk = true;
   await ev(`Planner.close()`); await settle();
+
+  // ---- 15. 창이 뒤에 있을 때 · 미리보기 · 「내일로 옮기기」의 날짜 · 준비 전에 온 말(2026-11-23 검토 반영) ----
+  await ev(`document.querySelectorAll('.pl-say [data-line-x]').forEach((b) => b.click())`); await settle();
+  await ev(`window.__osCalls = []; window.Notify = { os: (o) => { window.__osCalls.push({ title: o.title, sub: o.sub }); return true; } }; window.__realFocus = document.hasFocus; document.hasFocus = () => false;`);
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'sched', tone: 'iris', os: true, text: '오후 3시 「협의회」가 10분 남았어요.', tip: '15:00 협의회', actions: [{ kind: 'open', day: '2026-11-23' }] } })`); await settle();
+  ok(JSON.stringify(await ev('window.__osCalls')) === '[{"title":"오후 3시 「협의회」가 10분 남았어요.","sub":"15:00 협의회"}]', '창이 뒤에 있으면 약속 알림을 윈도우 알림 길로도 넘김');
+  await ev(`Planner.say({ group: 'done', tone: 'ok', text: '뒤에 있는 동안 끝난 작업', ttl: 300 })`);
+  await page.waitForTimeout(700);
+  ok((await text('.pl-say .pl-line p'))[0] === '오후 3시 「협의회」가 10분 남았어요.' && (await ev('Planner.bubbles()')).some((b) => b.text === '뒤에 있는 동안 끝난 작업'), '창이 뒤에 있는 동안에는 말풍선이 사라지지 않고 기다림');
+  await ev(`document.querySelector('.pl-say [data-line-x]').click()`); await settle();
+  ok((await text('.pl-say .pl-line p'))[0] === '뒤에 있는 동안 끝난 작업', '다음 차례의 말풍선도 뒤에 있는 동안 남아 있음');
+  await ev(`document.hasFocus = window.__realFocus; window.dispatchEvent(new Event('focus'));`); await page.waitForTimeout(700);
+  ok((await ev(`!document.querySelector('.pl-say')`)), '창으로 돌아오면 그때부터 시간을 세어 사라짐');
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'sched', tone: 'iris', os: true, text: '보고 있을 때의 알림' } })`); await settle();
+  ok((await ev('window.__osCalls.length')) === 1, '보고 있을 때는 윈도우 알림을 띄우지 않음');
+  await ev(`document.querySelectorAll('.pl-say [data-line-x]').forEach((b) => b.click())`); await settle();
+  await ev(`Planner.say({ group: 'attention', tone: 'warn', text: '남아 있는 말풍선', ttl: 0 }); Planner.say({ group: 'done', tone: 'ok', text: '예시 알림', force: true })`); await settle();
+  ok((await text('.pl-say .pl-line p'))[0] === '예시 알림' && JSON.stringify((await ev('Planner.bubbles()')).map((b) => b.text)) === '["예시 알림","남아 있는 말풍선"]', '설정의 미리보기는 떠 있는 말풍선 뒤에서 기다리지 않음(떠 있던 것은 다음 차례로)');
+  await ev(`document.querySelectorAll('.pl-say [data-line-x]').forEach((b) => b.click())`); await settle(); await ev(`document.querySelectorAll('.pl-say [data-line-x]').forEach((b) => b.click())`); await settle();
+  pl.rules = new PlannerRules({ planner: pl, stateDir: base, now: () => new Date(2026, 10, 23, 9, 0, 0) });
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', text: '오늘 끝낸 일 1개, 남은 일 2개예요.', actions: [{ kind: 'move', count: 2, day: '2026-11-22' }, { kind: 'open', day: '2026-11-22', label: '오늘 보기' }] } })`); await settle();
+  await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(400);
+  ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '날짜가 바뀌어서 옮기지 않았어요. 달력에서 다시 확인해 주세요.', '어제 뜬 「내일로 옮기기」를 오늘 누르면 옮기지 않음(말풍선이 말하던 그날 것만)');
+  await ev(`Planner.close()`); await settle();
+  // 준비(init) 전에 온 말: 버리지 않고 모아 두었다가 준비되면 말한다 — 새 인스턴스로 확인(끝에서, 화면에 판이 하나 더 생긴다)
+  const early = await ev(`(async () => { const src = await (await fetch('/planner.js')).text(); const keep = window.Planner; new Function(src)(); const P2 = window.Planner; window.Planner = keep; const h = P2.say({ group: 'done', tone: 'ok', text: '준비 전에 온 말' }); const before = P2.bubbles().length; P2.init({}); return { handle: !!h && typeof h.close === 'function', before, after: P2.bubbles().map((b) => b.text) }; })()`);
+  ok(early.handle && early.before === 0 && early.after.join() === '준비 전에 온 말', '준비 전에 온 말은 버리지 않고 준비되면 말함');
 
   ok(errors.length === 0, `화면 오류 없음${errors.length ? ' — ' + errors[0] : ''}`);
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }

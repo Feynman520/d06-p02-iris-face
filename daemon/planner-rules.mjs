@@ -22,9 +22,13 @@ const dayWord = (n) => (n === 0 ? '오늘' : n === 1 ? '내일' : n === 2 ? '모
 const timeWord = (t) => { const h = +t.slice(0, 2), m = +t.slice(3, 5); const h12 = h % 12 === 0 ? 12 : h % 12; return `${h < 12 ? '오전' : '오후'} ${h12}시${m ? ` ${m}분` : ''}`; };
 
 export class PlannerRules {
-  /** @param {{ planner: import('./planner.mjs').Planner, stateDir: string, now?: () => Date, log?: (m: string) => void }} o */
-  constructor({ planner, stateDir, now = () => new Date(), log = () => {} }) {
-    this.pl = planner; this.now = now; this.log = log;
+  /**
+   * @param {{ planner: import('./planner.mjs').Planner, stateDir: string, now?: () => Date, log?: (m: string) => void, ready?: () => boolean }} o
+   *   ready() = 지금 말을 받을 창이 있는가(데몬이 창보다 먼저 뜬다 — 받는 창이 없을 때 말하면 "알렸다"고만 적히고 아무도 못 본다)
+   */
+  constructor({ planner, stateDir, now = () => new Date(), log = () => {}, ready = () => true }) {
+    this.pl = planner; this.now = now; this.log = log; this.ready = ready;
+    this.told = new Set(); // 이번 실행에서 이미 말한 약속(장부에 적지 못해도 30초마다 되풀이하지 않게)
     this.file = path.join(stateDir, 'planner-rules.json');
     this.state = { morning: null, evening: null, seenAt: null }; this.loaded = false; this.timer = null; this.first = true;
   }
@@ -45,7 +49,8 @@ export class PlannerRules {
     const onToday = items.filter((it) => occursOn(it, today) && !doneOn(it, today));
     const late = items.filter((it) => isLate(it, today));
     // 가까운 마감 = 이미 시작한 기간의 마지막 날이 3일 뒤 · 내일 · 오늘인 것(아직 시작하지 않은 기간은 시작하는 날의 "오늘 할 것"에서 말한다)
-    const due = items.filter((it) => !it.repeat && isPeriod(it) && it.start <= today && !itemDone(it) && DUE_DAYS.includes(diffDays(today, it.end)))
+    const daysOf = (it) => { const d = it.alerts && it.alerts.dueDays; return Array.isArray(d) && d.length && d.every((n) => Number.isInteger(n) && n >= 0 && n <= 60) ? d : DUE_DAYS; }; // 이 일만 다르게("이건 일주일 전에도 알려 줘")
+    const due = items.filter((it) => !it.repeat && isPeriod(it) && it.start <= today && !itemDone(it) && daysOf(it).includes(diffDays(today, it.end)))
       .sort((a, b) => (a.end < b.end ? -1 : a.end > b.end ? 1 : (a.no || 0) - (b.no || 0))).map((it) => ({ id: it.id, title: it.title, days: diffDays(today, it.end), end: it.end }));
     const crowd = weekday(today) === 1 ? dueInWeek(items, today) : 0; // 몰림은 월요일 아침에만
     const starts = onToday.filter((it) => it.time && (!isPeriod(it) || it.start === today)).sort((a, b) => (a.time < b.time ? -1 : 1));
@@ -57,7 +62,7 @@ export class PlannerRules {
     if (s.todo && s.late) parts.push(`오늘 할 것이 ${s.todo}개, 밀린 일이 ${s.late}개 있어요.`);
     else if (s.todo) parts.push(`오늘 할 것이 ${s.todo}개 있어요.`);
     else if (s.late) parts.push(`밀린 일이 ${s.late}개 있어요.`);
-    if (s.due.length === 1) parts.push(`「${s.due[0].title}」${josa(s.due[0].title, '이', '가')} ${s.due[0].days > 2 ? `${WD[weekday(s.due[0].end)]}요일` : dayWord(s.due[0].days)}까지예요.`);
+    if (s.due.length === 1) parts.push(`「${s.due[0].title}」${josa(s.due[0].title, '이', '가')} ${s.due[0].days > 6 ? `${+s.due[0].end.slice(5, 7)}월 ${+s.due[0].end.slice(8, 10)}일` : s.due[0].days > 2 ? `${WD[weekday(s.due[0].end)]}요일` : dayWord(s.due[0].days)}까지예요.`);
     else if (s.due.length > 1) parts.push(`마감이 가까운 일이 ${s.due.length}개 있어요.`);
     if (s.crowd) parts.push(`이번 주에 마감이 ${s.crowd}개 몰려 있어요.`);
     return parts.length ? `${hello} ${parts.join(' ')}` : '';
@@ -67,6 +72,7 @@ export class PlannerRules {
   tick() {
     const pl = this.pl; const said = [];
     if (!pl.started || pl.failed || !pl.enabled) return said;
+    if (!this.ready()) return said;                 // 받을 창이 아직 없다 — 아무것도 소비하지 않고 다음 점검에(그때 "막 켠 것"으로 본다)
     this.#load();
     const now = this.now(); const nowMs = now.getTime(); const today = localDate(now); const hm = localTime(now); const cfg = pl.cfg();
     const prev = this.state.seenAt ? Date.parse(this.state.seenAt) : NaN;
@@ -81,29 +87,45 @@ export class PlannerRules {
     const speak = (s) => { said.push(s); pl.say(s); };
 
     // ---- 시작 전 알림 + 놓친 약속 ----
+    //   날짜가 아니라 실제 시각으로 견준다: 내일 0시 5분 약속의 10분 전은 오늘 밤이고, 어젯밤 약속을 자정 넘어 깨어나서 알 수도 있다.
     if (cfg.plannerStartAlert !== false && !empty) {
-      const lead = [5, 10, 15, 30].includes(Number(cfg.plannerStartMin)) ? Number(cfg.plannerStartMin) : 10;
-      const nowMin = minutesOf(hm); const marks = []; const soon = []; const missed = [];
-      for (const it of items) {
-        if (!it.time || !occursOn(it, today) || doneOn(it, today) || (isPeriod(it) && it.start !== today)) continue;
-        const key = `start:${today}`; if (it.alerted && it.alerted[key]) continue;
-        const left = minutesOf(it.time) - nowMin;                 // 시작까지 남은 분(음수 = 지남)
-        if (left > lead) continue;                                 // 아직 멀다
-        if (quiet) continue;                                       // 조용히: 적어 두지 않는다 — 끝난 뒤 "지나간 약속"으로 말한다
-        if (left >= 0) soon.push({ it, left });
-        else if (catchUp && -left <= MISSED_MAX_MIN) missed.push({ it, left }); // 켜져 있는 동안 지나간 것(이미 지난 시각으로 넣은 약속 등)은 말없이 적어 두기만 한다
-        marks.push({ id: it.id, key });
+      const baseLead = [5, 10, 15, 30].includes(Number(cfg.plannerStartMin)) ? Number(cfg.plannerStartMin) : 10;
+      const floorMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes()).getTime();
+      const marks = []; const soon = []; const missed = [];
+      for (const date of [addDays(today, -1), today, addDays(today, 1)]) {
+        for (const it of items) {
+          if (!it.time || !occursOn(it, date) || doneOn(it, date) || (isPeriod(it) && it.start !== date)) continue;
+          const key = `start:${date}T${it.time}`;          // 시각까지 넣는다 — 알린 뒤 시각을 바꾸면 새 시각에 다시 알린다
+          if ((it.alerted && it.alerted[key]) || this.told.has(`${it.id}|${key}`)) continue;
+          const atMs = new Date(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10), +it.time.slice(0, 2), +it.time.slice(3, 5)).getTime();
+          const left = Math.round((atMs - floorMs) / 60000);     // 시작까지 남은 분(음수 = 지남)
+          const own = Number(it.alerts && it.alerts.leadMin);     // 이 일만 다르게("이건 30분 전에 알려 줘")
+          const lead = Number.isInteger(own) && own >= 0 && own <= 1440 ? own : baseLead;
+          if (left > lead || -left > MISSED_MAX_MIN) continue;   // 아직 멀다 / 너무 오래 지났다(말하지도 적지도 않는다)
+          if (quiet) continue;                                    // 조용히: 적어 두지 않는다 — 끝난 뒤 "지나간 약속"으로 말한다
+          if (left >= 0) soon.push({ it, left, date });
+          else if (catchUp || (Number.isFinite(prev) && atMs > prev)) missed.push({ it, left, date }); // 막 켰거나 · 깨어났거나 · 시계가 건너뛰어 그사이 지나간 약속
+          // 그 밖(켜져 있는 동안 이미 지난 시각으로 넣은 약속)은 말없이 적어 두기만 한다
+          marks.push({ id: it.id, key });
+        }
       }
-      for (const { it, left } of soon.sort((a, b) => a.left - b.left)) {
+      soon.sort((a, b) => a.left - b.left);
+      const actOf = (it) => (it.folder ? [{ kind: 'folder', path: it.folder }, { kind: 'chat', path: it.folder }] : [{ kind: 'open', day: today }]);
+      if (soon.length === 1) {
+        const { it, left } = soon[0];
         const text = left <= 0 ? `「${it.title}」${josa(it.title, '이', '가')} 지금 시작해요.` : `${timeWord(it.time)} 「${it.title}」${josa(it.title, '이', '가')} ${left}분 남았어요.`;
-        speak({ group: 'sched', tone: 'iris', text, tip: `${it.time}${it.timeEnd ? `~${it.timeEnd}` : ''} ${it.title}`, actions: it.folder ? [{ kind: 'folder', path: it.folder }, { kind: 'chat', path: it.folder }] : [{ kind: 'open', day: today }] });
+        speak({ group: 'sched', tone: 'iris', os: true, text, tip: `${it.time}${it.timeEnd ? `~${it.timeEnd}` : ''} ${it.title}`, actions: actOf(it) });
+      } else if (soon.length > 1) {
+        // 같은 때에 여럿이면 말풍선 하나로 모은다
+        speak({ group: 'sched', tone: 'iris', os: true, text: `곧 시작하는 약속이 ${soon.length}개 있어요.`, tip: soon.map(({ it }) => `${it.time} ${it.title}`).join(' · '), actions: [{ kind: 'open', day: today }] });
       }
       if (missed.length) {
-        // 막 켰거나 깨어났거나 조용히가 끝났을 때 한 번에: "꺼져 있는 동안 지난 약속이 2개 있어요"
+        // 막 켰거나 깨어났거나 조용히가 끝났을 때 한 번에: "지나간 약속이 2개 있어요"
+        missed.sort((a, b) => b.left - a.left);
         const one = missed.length === 1 ? missed[0].it : null;
-        speak({ group: 'sched', tone: 'iris', text: one ? `${timeWord(one.time)} 「${one.title}」 시간이 지났어요.` : `지나간 약속이 ${missed.length}개 있어요.`, tip: missed.map(({ it }) => `${it.time} ${it.title}`).join(' · '), actions: [{ kind: 'open', day: today }] });
+        speak({ group: 'sched', tone: 'iris', os: true, text: one ? `${timeWord(one.time)} 「${one.title}」 시간이 지났어요.` : `지나간 약속이 ${missed.length}개 있어요.`, tip: [...missed].reverse().map(({ it }) => `${it.time} ${it.title}`).join(' · '), actions: [{ kind: 'open', day: today }] });
       }
-      if (marks.length) pl.store.markAlerted(marks);
+      if (marks.length) { for (const m of marks) this.told.add(`${m.id}|${m.key}`); pl.store.markAlerted(marks); if (this.told.size > 2000) this.told.clear(); }
     }
 
     // ---- 그날의 첫 인사(가까운 마감 · 몰린 주 포함): 그날 처음 켰을 때, 밤새 켜 두었으면 정한 아침 시각에 ----
@@ -130,7 +152,7 @@ export class PlannerRules {
         const movable = rest.filter((it) => !it.repeat && !it.time && !isPeriod(it) && !(it.steps && it.steps.length)); // 내일로 옮길 수 있는 것 = 시각 없는 하루짜리
         if (done || rest.length) {
           const text = rest.length ? `오늘 끝낸 일 ${done}개, 남은 일 ${rest.length}개예요.` : `오늘 할 일 ${done}개를 다 끝냈어요.`;
-          speak({ group: 'greet', tone: 'iris', text, tip: rest.map((it) => it.title).slice(0, 6).join(' · '), actions: [...(movable.length ? [{ kind: 'move', count: movable.length }] : []), { kind: 'open', day: today, label: '오늘 보기' }] });
+          speak({ group: 'greet', tone: 'iris', text, tip: rest.map((it) => it.title).slice(0, 6).join(' · '), actions: [...(movable.length ? [{ kind: 'move', count: movable.length, day: today }] : []), { kind: 'open', day: today, label: '오늘 보기' }] });
         }
         this.state.evening = today;
       }
@@ -142,8 +164,10 @@ export class PlannerRules {
   }
 
   /** 하루 끝 정리의 「내일로 옮기기」: 오늘 남은 시각 없는 하루짜리 일을 내일로(기간 · 약속 · 반복 · 단계 있는 일은 그대로). 한 번에 되돌릴 수 있다. */
-  moveRestToTomorrow() {
+  moveRestToTomorrow(day = null) {
     const today = localDate(this.now()); const tomorrow = addDays(today, 1);
+    // 말풍선이 자정을 넘겨 남아 있다가 눌린 경우: 그때 말한 "오늘"이 아니면 옮기지 않는다(다른 날의 일을 옮기게 되므로)
+    if (day && day !== today) return { ok: false, moved: 0, say: '날짜가 바뀌어서 옮기지 않았어요. 달력에서 다시 확인해 주세요.' };
     const rest = this.pl.store.list('active').filter((it) => it.start === today && !it.repeat && !it.time && !isPeriod(it) && !(it.steps && it.steps.length) && !itemDone(it));
     if (!rest.length) return { ok: true, moved: 0, say: '내일로 옮길 일이 없어요.' };
     const r = this.pl.apply(rest.map((it) => ({ op: 'update', id: it.id, patch: { start: tomorrow } })), { by: 'user', via: 'rules' });

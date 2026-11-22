@@ -43,7 +43,7 @@ window.Notify = (() => {
     if (window.Planner && typeof window.Planner.say === 'function') {
       const k = SAY[status] || SAY.idle;
       return window.Planner.say({
-        group: k.group, tone: k.tone, id: id || null, pick: id ? (x) => opts.onPick(x) : null, meta: { title, sub: sub || '', status },
+        force, group: k.group, tone: k.tone, id: id || null, pick: id ? (x) => opts.onPick(x) : null, meta: { title, sub: sub || '', status },
         ...(session ? { text: k.text(title), tip: sub || '' } : { text: title, sub: sub || '' }),
       });
     }
@@ -66,12 +66,12 @@ window.Notify = (() => {
   }
 
   // ---- 윈도 OS 알림(창이 뒤에 있을 때) ----
-  function osNotify({ id, title, sub }) {
+  function osNotify({ id, title, sub, onClick = null }) {
     if (!('Notification' in window)) return;
     const fire = () => {
       try {
         const n = new Notification(title, { body: sub || '', tag: `iris-${id || 'preview'}`, silent: false });
-        n.onclick = () => { try { n.close(); } catch {} window.focus(); window.irisHost?.refocus?.().catch?.(() => {}); if (id) opts.onPick(id); };
+        n.onclick = () => { try { n.close(); } catch {} window.focus(); window.irisHost?.refocus?.().catch?.(() => {}); if (onClick) onClick(); else if (id) opts.onPick(id); };
       } catch {}
     };
     if (Notification.permission === 'granted') fire();
@@ -130,6 +130,9 @@ window.Notify = (() => {
     push(sample);
     if (opts.osEnabled()) osNotify(sample);
   }
+  /** 플래너의 약속 알림: 창이 뒤에 있고 「윈도우 알림」이 켜져 있을 때만 OS 알림(누르면 onClick). 알림을 끈 사용자에게는 띄우지 않는다. */
+  let osSeq = 0;
+  function os({ title, sub, onClick }) { if (!opts.enabled() || !opts.osEnabled() || !winAway()) return false; osNotify({ id: `planner-${++osSeq}`, title, sub, onClick: onClick || (() => {}) }); return true; }
   function init(o) { opts = { ...opts, ...o }; if (!(window.Planner && typeof window.Planner.say === 'function')) box(); } // 말풍선으로 말하는 쪽에서는 네모 알림 자리를 만들지 않는다
-  return { init, onStatus, onSubs, push, preview, requestOs, external };
+  return { init, onStatus, onSubs, push, preview, requestOs, external, os };
 })();

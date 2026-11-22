@@ -236,6 +236,19 @@ try {
     const l = await t.list();
     ok(l.length === 3 && l[2].sub.includes('세션이 종료됐습니다'), '윈도 알림을 못 쓰는 환경에서도 화면 알림은 뜸 · dead 도 종료로 알림');
     await t.page.close(); }
+  { const t = await fresh(); // 플래너의 약속 알림이 쓰는 윈도 알림 길(Notify.os) — 2026-11-23
+    await t.ev(`window.__made = []; window.__clicked = 0; window.Notification = function (title, o) { window.__os.push({ title, body: (o && o.body) || '', tag: (o && o.tag) || '' }); window.__made.push(this); this.close = () => {}; }; window.Notification.permission = 'granted';`);
+    await t.set({ __focus: true, __osOn: true });
+    ok((await t.ev(`Notify.os({ title: '오후 3시 「협의회」가 10분 남았어요.', sub: '15:00 협의회' })`)) === false && (await t.os()).length === 0, '약속 알림: 창을 보고 있으면 윈도 알림을 띄우지 않음');
+    await t.set({ __focus: false, __osOn: false });
+    ok((await t.ev(`Notify.os({ title: 'x', sub: '' })`)) === false && (await t.os()).length === 0, '약속 알림: 「윈도 알림」을 꺼 두었으면 띄우지 않음');
+    await t.set({ __osOn: true, __on: false });
+    ok((await t.ev(`Notify.os({ title: 'x', sub: '' })`)) === false && (await t.os()).length === 0, '약속 알림: 알림 전체를 꺼 두었으면 띄우지 않음');
+    await t.set({ __on: true });
+    ok((await t.ev(`Notify.os({ title: '오후 3시 「협의회」가 10분 남았어요.', sub: '15:00 협의회', onClick: () => { window.__clicked++; } })`)) === true && (await t.os()).length === 1 && (await t.os())[0].title.includes('협의회') && (await t.os())[0].tag.startsWith('iris-planner-'), '약속 알림: 창이 뒤에 있고 켜져 있으면 윈도 알림');
+    await t.ev(`window.__made[0].onclick()`);
+    ok((await t.ev('window.__clicked')) === 1 && (await t.ev('window.__picked')).length === 0, '약속 알림을 누르면 플래너가 준 동작만(세션을 고르지 않음)');
+    await t.page.close(); }
   { const t = await fresh(); // 글자는 글자로만
     await t.ev(`Notify.push({ id: 'x', title: '<img src=x onerror="window.__xss=1">제목', sub: '<b>굵게</b>' })`);
     const l = await t.list();

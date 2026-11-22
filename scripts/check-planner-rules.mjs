@@ -22,10 +22,11 @@ function world(seed, cfg = {}) {
   pl.start();
   const add = (item) => pl.store.apply([{ op: 'add', item }], U).items[0];
   const ids = seed ? seed(add, pl) || {} : {};
-  const rules = new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m) });
+  const gate = { ready: true };
+  const rules = new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m), ready: () => gate.ready });
   const tick = () => rules.tick().map((s) => s.text);
   const again = () => new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m) });
-  return { pl, rules, tick, sent, logs, cfg, ids, dir, again, add };
+  return { pl, rules, tick, sent, logs, cfg, ids, dir, again, add, gate };
 }
 const BOOK = (add) => ({
   late: add({ title: '수행평가 채점 기준 확인', start: '2026-11-20' }),
@@ -97,7 +98,7 @@ try {
     at(23, 14, 50, 10);
     const said = w.rules.tick();
     ok(said.length === 1 && said[0].text === '오후 3시 「협의회」가 10분 남았어요.' && said[0].group === 'sched' && said[0].tip === '15:00 협의회' && JSON.stringify(said[0].actions.map((a) => a.kind)) === '["folder","chat"]', `시작 10분 전 — ${said[0]?.text}`);
-    ok(w.pl.store.get(w.ids.meet.id).alerted['start:2026-11-23'], '알렸다는 기록을 장부에(되돌리기 대상 아님)');
+    ok(w.pl.store.get(w.ids.meet.id).alerted['start:2026-11-23T15:00'] && said[0].os === true, '알렸다는 기록을 장부에(날짜 + 시각, 되돌리기 대상 아님) · 창이 뒤에 있으면 윈도우 알림으로도');
     step(30); ok(w.tick().length === 0, '같은 약속을 두 번 알리지 않음');
     at(23, 15, 0, 5); ok(w.tick().length === 0, '시작 시각이 지나도 다시 말하지 않음'); }
   at(23, 14, 30, 0);
@@ -111,7 +112,7 @@ try {
     w.pl.store.apply([{ op: 'check', id: w.ids.b.id, done: true }], U);
     w.rules.state.morning = '2026-11-23';
     const said = w.rules.tick();
-    ok(said.length === 2 && said[0].text === '오전 9시 30분 「아침 회의」가 5분 남았어요.' && said[0].tip === '09:30~10:00 아침 회의' && said[0].actions[0].kind === 'open' && said[1].text.includes('「매일 조회」'), '끝낸 약속은 알리지 않음 · 반복하는 약속은 그날 것 · 폴더가 없으면 「오늘 보기」');
+    ok(said.length === 1 && said[0].text === '곧 시작하는 약속이 2개 있어요.' && said[0].tip === '09:30 아침 회의 · 09:30 매일 조회' && said[0].actions.length === 1 && said[0].actions[0].kind === 'open', `같은 때에 여럿이면 말풍선 하나로 · 끝낸 약속은 세지 않음 — ${said.map((x) => x.text).join(' / ')}`);
     at(24, 9, 25); w.rules.state.morning = '2026-11-24';
     ok(w.tick().join() === '오전 9시 30분 「매일 조회」가 5분 남았어요.', '반복하는 약속은 다음 날에도 다시 알림'); }
   at(23, 15, 0, 10);
@@ -131,8 +132,8 @@ try {
   at(23, 15, 20, 0);
   { const w = world(BOOK); w.rules.state.morning = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
     w.pl.store.apply([{ op: 'add', item: { title: '이미 지난 시각으로 넣은 약속', start: '2026-11-23', time: '15:10' } }], U);
-    const meetAlerted = w.pl.store.markAlerted([{ id: w.ids.meet.id, key: 'start:2026-11-23' }]);
-    ok(meetAlerted === 1 && w.tick().length === 0 && w.pl.store.list('active').find((it) => it.title.startsWith('이미 지난')).alerted['start:2026-11-23'], '켜져 있는 동안 지난 시각으로 넣은 약속은 말없이 적어 두기만');
+    const meetAlerted = w.pl.store.markAlerted([{ id: w.ids.meet.id, key: 'start:2026-11-23T15:00' }]);
+    ok(meetAlerted === 1 && w.tick().length === 0 && w.pl.store.list('active').find((it) => it.title.startsWith('이미 지난')).alerted['start:2026-11-23T15:10'], '켜져 있는 동안 지난 시각으로 넣은 약속은 말없이 적어 두기만');
     at(23, 15, 40); w.rules.state.seenAt = new Date(clock.getTime() - 20 * 60000).toISOString();
     ok(w.tick().length === 0, '잠들었다 깨어나도 이미 알린 것은 다시 말하지 않음'); }
   at(23, 14, 40, 0);
@@ -155,14 +156,16 @@ try {
   at(23, 16, 29, 30);
   { const w = world((add) => ({ a: add({ title: '끝낼 일', start: '2026-11-23' }), b: add({ title: '남을 일', start: '2026-11-23' }), c: add({ title: '남을 일 2', start: '2026-11-23' }), p: add({ title: '기간', start: '2026-11-22', end: '2026-11-24' }), t: add({ title: '약속', start: '2026-11-23', time: '10:00' }) }));
     w.pl.store.apply([{ op: 'check', id: w.ids.a.id, done: true }], U);
-    w.pl.store.markAlerted([{ id: w.ids.t.id, key: 'start:2026-11-23' }]);
+    w.pl.store.markAlerted([{ id: w.ids.t.id, key: 'start:2026-11-23T10:00' }]);
     w.rules.state.morning = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
     ok(w.tick().length === 0, '정리 시각 전에는 조용');
     at(23, 16, 30, 0);
     const said = w.rules.tick();
-    ok(said.length === 1 && said[0].text === '오늘 끝낸 일 1개, 남은 일 4개예요.' && JSON.stringify(said[0].actions.map((a) => a.kind)) === '["move","open"]' && said[0].actions[0].count === 2, `하루 끝 정리 — ${said[0]?.text}`);
+    ok(said.length === 1 && said[0].text === '오늘 끝낸 일 1개, 남은 일 4개예요.' && JSON.stringify(said[0].actions.map((a) => a.kind)) === '["move","open"]' && said[0].actions[0].count === 2 && said[0].actions[0].day === '2026-11-23', `하루 끝 정리 — ${said[0]?.text}`);
     step(30); ok(w.tick().length === 0, '하루에 한 번');
-    const mv = w.rules.moveRestToTomorrow();
+    const stale = w.rules.moveRestToTomorrow('2026-11-22');
+    ok(stale.ok === false && stale.moved === 0 && stale.say.startsWith('날짜가 바뀌어서') && !w.pl.store.list('active').some((it) => it.start === '2026-11-24' && it.title.startsWith('남을')), '「내일로 옮기기」: 말풍선이 자정을 넘겨 남아 있다 눌리면(그날이 아니면) 옮기지 않음');
+    const mv = w.rules.moveRestToTomorrow('2026-11-23');
     const book = w.pl.store.list('active');
     ok(mv.moved === 2 && mv.say === '남은 일 2개를 내일로 옮겼어요.' && mv.goto === '2026-11-24' && book.find((it) => it.title === '남을 일').start === '2026-11-24' && book.find((it) => it.title === '기간').start === '2026-11-22' && book.find((it) => it.title === '약속').start === '2026-11-23' && book.find((it) => it.title === '끝낼 일').start === '2026-11-23', '「내일로 옮기기」: 시각 없는 하루짜리 남은 일만(기간 · 약속 · 끝낸 일은 그대로)');
     w.pl.undo(mv.changeId);
@@ -198,10 +201,51 @@ try {
   at(23, 11, 50, 0);
   { const w = world((add) => { add({ title: '점심 약속', start: '2026-11-23', time: '12:00' }); add({ title: '자정 넘어', start: '2026-11-24', time: '00:05' }); }); w.rules.state.morning = '2026-11-23';
     ok(w.tick()[0] === '오후 12시 「점심 약속」이 10분 남았어요.', '낮 12시 = 오후 12시');
-    at(23, 23, 58, 0); w.rules.state.evening = '2026-11-23'; ok(w.tick().length === 0, '내일 0시 5분 약속은 오늘 밤에 알리지 않음(그날의 것만)');
+    at(23, 23, 54, 0); w.rules.state.evening = '2026-11-23'; ok(w.tick().length === 0, '내일 0시 5분 약속: 11분 전에는 조용');
+    at(23, 23, 55, 10); ok(w.tick()[0] === '오전 12시 5분 「자정 넘어」가 10분 남았어요.', '내일 0시 5분 약속의 10분 전은 오늘 밤 — 자정 전에 알림');
     at(24, 0, 0, 10); w.rules.state.morning = '2026-11-24';
-    ok(w.tick()[0] === '오전 12시 5분 「자정 넘어」가 5분 남았어요.', '자정 직후의 약속');
+    ok(w.tick().length === 0, '자정을 넘겨도 같은 약속을 다시 알리지 않음');
     ok(!w.logs.some((m) => /점심 약속|자정 넘어/.test(m)), '로그에 일정 내용 없음'); }
+
+  // ---- 9. 받는 창 · 자정 · 시계 · 적기 실패 · 시각 변경 · 항목마다 다른 알림(2026-11-23 검토 반영) ----
+  at(23, 15, 20, 0);
+  { const w = world(BOOK); w.gate.ready = false;
+    ok(w.tick().length === 0 && w.sent.length === 0 && !fs.existsSync(path.join(w.dir, 'planner-rules.json')) && !w.pl.store.get(w.ids.meet.id).alerted, '받을 창이 없으면(데몬이 창보다 먼저 뜸) 말하지 않고 아무것도 소비하지 않음');
+    step(30); w.tick(); step(30); w.tick(); at(23, 15, 22, 0); w.gate.ready = true;
+    const t = w.tick();
+    ok(t.length === 2 && t[0] === '오후 3시 「협의회」 시간이 지났어요.' && t[1].startsWith('안녕하세요. 오늘 할 것이') && w.sent.length === 2, `창이 붙으면 그때 지나간 약속과 첫 인사를 말함 — ${t.join(' / ')}`); }
+  at(23, 23, 39, 0);
+  { const w = world((add) => ({ a: add({ title: '밤 회의', start: '2026-11-23', time: '23:50' }) })); w.rules.state.morning = '2026-11-23'; w.rules.state.evening = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    ok(w.tick().length === 0, '10분보다 멀면 조용');
+    at(24, 0, 10, 0); w.rules.state.morning = '2026-11-24'; // 23:40 에 잠들어 자정 넘어 깨어남
+    const t = w.rules.tick();
+    ok(t.length === 1 && t[0].text === '오후 11시 50분 「밤 회의」 시간이 지났어요.' && w.pl.store.get(w.ids.a.id).alerted['start:2026-11-23T23:50'], '자정을 넘겨 깨어나도 어젯밤 지나간 약속을 말함');
+    step(30); ok(w.tick().length === 0, '한 번만'); }
+  at(23, 14, 58, 50);
+  { const w = world((add) => ({ a: add({ title: '바로 전 알림', start: '2026-11-23', time: '15:00', alerts: { leadMin: 1 } }) })); w.rules.state.morning = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    ok(w.tick().length === 0, '이 일만 1분 전에 알리게 해 두면 2분 전에는 조용');
+    at(23, 15, 1, 10); // 시계가 2분 남짓 건너뜀(3분 안 — "잠들었다 깨어남"으로 보지 않는 틈)
+    ok(w.tick()[0] === '오후 3시 「바로 전 알림」 시간이 지났어요.', '시계가 조금 건너뛰어 시작 시각을 지나쳐도 말없이 넘기지 않음'); }
+  at(23, 14, 30, 0);
+  { const w = world((add) => ({ a: add({ title: '멀리서 오는 손님', start: '2026-11-23', time: '15:00', alerts: { leadMin: 30 } }), b: add({ title: '보통 약속', start: '2026-11-23', time: '15:00' }) })); w.rules.state.morning = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    ok(w.tick().join() === '오후 3시 「멀리서 오는 손님」이 30분 남았어요.', '항목마다 다른 알림: 이 일만 30분 전(다른 약속은 기본 10분 전)');
+    at(23, 14, 50, 0); w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    ok(w.tick().join() === '오후 3시 「보통 약속」이 10분 남았어요.', '다른 약속은 기본값대로 따로'); }
+  at(23, 8, 50, 0);
+  { const w = world((add) => ({ a: add({ title: '옮길 약속', start: '2026-11-23', time: '09:00' }) })); w.rules.state.morning = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    ok(w.tick().length === 1, '9시 약속의 10분 전 알림');
+    w.pl.store.apply([{ op: 'update', id: w.ids.a.id, patch: { time: '15:00' } }], U);
+    at(23, 14, 50, 0); w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    ok(w.tick().join() === '오후 3시 「옮길 약속」이 10분 남았어요.', '알린 뒤 시각을 바꾸면 새 시각에 다시 알림'); }
+  at(23, 14, 50, 0);
+  { const w = world(BOOK); w.rules.state.morning = '2026-11-23'; w.rules.first = false; w.rules.state.seenAt = new Date(clock.getTime() - 30000).toISOString();
+    w.pl.store.markAlerted = () => 0; // 장부에 적지 못하는 상황(읽기 전용 · 디스크 오류)
+    ok(w.tick().length === 1, '적지 못해도 한 번은 말함');
+    step(30); const again1 = w.tick().length; step(30);
+    ok(again1 === 0 && w.tick().length === 0, '장부에 적지 못해도 30초마다 되풀이하지 않음(이번 실행의 기억)'); }
+  at(23, 7, 30);
+  { const w = world((add) => { add({ title: '멀리 보는 일', start: '2026-11-20', end: '2026-11-30', alerts: { dueDays: [7, 1, 0] } }); add({ title: '보통 기간', start: '2026-11-20', end: '2026-11-30' }); });
+    ok(w.tick()[0] === '좋은 아침이에요. 오늘 할 것이 2개 있어요. 「멀리 보는 일」이 11월 30일까지예요.', '항목마다 다른 마감 알림("이건 일주일 전에도 알려 줘") — 다른 일은 기본(3일 전 · 하루 전 · 당일)'); }
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }
 finally { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} }
 console.log(`${pass} PASS / ${fail} FAIL`);

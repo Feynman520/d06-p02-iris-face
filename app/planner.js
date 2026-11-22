@@ -16,6 +16,7 @@ window.Planner = (() => {
   const HEX = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9Z" style="stroke:var(--iris)" stroke-width="1.3"/><path d="M12 3v9m0 0l7.8 4.5M12 12l-7.8 4.5" style="stroke:var(--iris-2)" stroke-width="1" opacity=".7"/></svg>';
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
   const TTL = 8000, MAX_LINES = 4;
+  const early = [];   // init 앞에 온 말(준비되면 차례로 말한다)
   const PRI = { sched: 0, attention: 1, done: 2, exited: 2, info: 2, proposal: 3, greet: 4 }; // 겹칠 때의 차례(작을수록 먼저)
 
   // ---- 날짜(그리는 데 필요한 만큼만) ----
@@ -231,8 +232,13 @@ window.Planner = (() => {
     if (sw - 44 - shift < 300) shift = 0;                     // 서랍 옆에 판이 설 자리가 없으면 비켜나지 않는다
     host.style.setProperty('--pl-shift', `${shift}px`);
     host.style.setProperty('--pl-w', `${Math.max(260, Math.min(384, sw - 44 - shift))}px`);
-    const avail = sh - bottom - 76;
-    host.style.setProperty('--pl-h', `${Math.max(240, avail)}px`);
+    let avail = sh - bottom - 76;
+    if (avail < 240) {                                         // 확인 카드가 커서 그 위에 판이 설 자리가 없다 — 판은 입력창 위(카드를 덮는 자리)로 내려오고 화면 높이 안에 맞춘다
+      const base = (dock ? dock.offsetHeight : 76) + 8;
+      if (open) host.style.setProperty('--pl-bottom', `${base}px`);
+      avail = sh - (open ? base : bottom) - 76;
+    }
+    host.style.setProperty('--pl-h', `${Math.max(160, Math.min(avail, sh - 24))}px`);
     const was = compact; compact = avail < 440;               // 낮은 창에서는 달 대신 그 주만 보인다(입력칸이 잘리지 않게)
     if (was !== compact && open) renderPanel();
   }
@@ -256,7 +262,11 @@ window.Planner = (() => {
    * @returns {object|null} 닫을 수 있는 손잡이({ close() }) — 꺼져 있어 안 띄웠으면 null
    */
   function say(b) {
-    if (!host || !b || !b.text) return null;
+    if (!b || !b.text) return null;
+    if (!host) { if (early.length < 20) early.push(b); return { close() {} }; }   // 아직 준비 전(init 앞) — 모아 두었다가 준비되면 말한다
+    if (b.force && cur) {                                                        // 설정의 미리보기: 떠 있는 말풍선 뒤에서 기다리지 않는다(떠 있던 것은 차례의 맨 앞으로)
+      const old = cur; for (const l of old.lines) clearTimeout(l.timer); cur = null; queue.unshift(old);
+    }
     const group = b.group || 'info';
     const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, meta: b.meta || null, ttl: b.ttl === 0 ? 0 : (b.ttl || TTL), timer: 0, closed: false };
     line.close = () => closeLine(line);
@@ -276,7 +286,10 @@ window.Planner = (() => {
     return line;
   }
   function show(b) { cur = b; sayNew = true; hovering = false; for (const l of b.lines) arm(l); renderRow(); }
-  function arm(l) { clearTimeout(l.timer); if (l.ttl) l.timer = setTimeout(() => closeLine(l), l.ttl); }
+  // 창이 뒤에 있거나 가려진 동안에는 사라지지 않는다 — 돌아왔을 때 그때부터 시간을 센다(안 보는 사이 지나간 알림을 놓치지 않게)
+  const away = () => document.hidden || document.visibilityState !== 'visible' || !document.hasFocus();
+  function arm(l) { clearTimeout(l.timer); l.waiting = false; if (!l.ttl) return; if (away()) { l.waiting = true; return; } l.timer = setTimeout(() => (away() ? (l.waiting = true) : closeLine(l)), l.ttl); }
+  function back() { if (cur && !hovering && !away()) for (const l of cur.lines) if (l.waiting) arm(l); }
   function dropLine(l) { clearTimeout(l.timer); l.closed = true; if (cur) cur.lines = cur.lines.filter((x) => x !== l); for (const q of queue) q.lines = q.lines.filter((x) => x !== l); }
   function closeLine(l) {
     if (l.closed) return;
@@ -299,11 +312,13 @@ window.Planner = (() => {
       if (a.kind === 'open') return { label: a.label || '오늘 보기', icon: 'today', main: true, run: () => openPanel(a.day || null) };
       if (a.kind === 'folder') return { label: '폴더 열기', icon: 'folder', main: true, run: () => opts.openFolder(a.path) };
       if (a.kind === 'chat') return { icon: 'chat', tip: '이 폴더에서 대화 시작', run: () => opts.chatIn(a.path, a.prompt || '') };
-      if (a.kind === 'move') return { label: '내일로 옮기기', icon: 'arrow-right', main: true, run: () => talkSend('오늘 남은 일을 내일로 옮겨 줘', { quick: 'move-rest' }) };
+      if (a.kind === 'move') return { label: '내일로 옮기기', icon: 'arrow-right', main: true, run: () => talkSend('오늘 남은 일을 내일로 옮겨 줘', { quick: 'move-rest', day: a.day || null }) };
       if (a.kind === 'proposals') return { label: '제안 보기', icon: 'bulb', main: true, run: () => { strip = true; openPanel(null); } };
       return null;
     }).filter(Boolean);
     say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : undefined });
+    // 약속 알림(os 표시가 붙은 것)은 창이 뒤에 있으면 윈도우 알림으로도 — 설정의 「윈도우 알림」을 따른다(app/notify.js 의 같은 길)
+    if (s.os && away()) { try { window.Notify?.os?.({ title: s.text, sub: s.tip || '', onClick: () => openPanel(null) }); } catch { /* 알림 실패는 넘어간다 */ } }
   }
 
   // ---- 하는 일 ----
@@ -389,6 +404,7 @@ window.Planner = (() => {
   }
 
   function init(o) {
+    if (host) return;
     opts = { ...opts, ...o };
     const stage = $('#stage') || document.body;
     host = document.createElement('div'); host.id = 'pl'; host.className = 'pl'; stage.appendChild(host);
@@ -419,6 +435,8 @@ window.Planner = (() => {
     document.addEventListener('focusin', overTip);
     document.addEventListener('scroll', hideTip, true);
     window.addEventListener('resize', () => { place(); });
+    window.addEventListener('focus', back); document.addEventListener('visibilitychange', back);
+    for (const b of early.splice(0)) say(b);   // 준비 전에 온 말
     try {
       const ro = new ResizeObserver(() => place());
       for (const id of ['#dock', '#sub', '#stage', '#approval', '#dead-bar']) { const el = $(id); if (el) ro.observe(el); }
