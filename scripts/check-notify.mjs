@@ -41,8 +41,8 @@ ${VIEW.extraHtml}
   window.Notification = function (title, o) { window.__os.push({ title, body: (o && o.body) || '', tag: (o && o.tag) || '' }); this.close = () => {}; };
   window.Notification.permission = 'granted';
   document.hasFocus = () => window.__focus;
-  Object.defineProperty(document, 'hidden', { get: () => window.__hidden });
-  Object.defineProperty(document, 'visibilityState', { get: () => (window.__hidden ? 'hidden' : 'visible') });
+  Object.defineProperty(document, 'hidden', { get: () => window.__hidden, configurable: true });
+  Object.defineProperty(document, 'visibilityState', { get: () => (window.__hidden ? 'hidden' : 'visible'), configurable: true });
 })();
 </script>
 ${VIEW.extraScripts.map((s) => `<script src="/${s}"></script>`).join('\n')}
@@ -182,6 +182,56 @@ try {
     await t.set({ __focus: false });
     await t.ev(`Notify.external({ id: 'mod:x:2', title: '둘째', sub: '' })`);
     ok((await t.os()).length === 1, '모듈 알림: 창이 뒤면 윈도 알림도');
+    await t.page.close(); }
+
+  // 6. 코덱스 검토(걸음 1)에서 나온 빠진 규칙
+  { const t = await fresh(); // 보조가 끝났다가 다시 살아나면 3초를 처음부터 다시 센다
+    await t.status('a', 'busy'); await t.status('a', 'idle', true, 1);
+    await t.subs('a', 0, 1); await t.adv(1000);
+    await t.subs('a', 1, 2); await t.adv(5000);
+    ok((await t.list()).length === 0, '보조가 다시 살아나면 기다리던 3초를 취소');
+    await t.subs('a', 0, 2); await t.adv(2900);
+    ok((await t.list()).length === 0, '다시 끝난 뒤 새로 3초');
+    await t.adv(200);
+    ok((await t.list()).length === 1 && (await t.list())[0].sub.includes('보조 2개 포함'), '새 3초 뒤 알림');
+    await t.page.close(); }
+  { const t = await fresh(); // 보류하는 사이 보고 있던 세션이 되면(창이 앞) 알리지 않는다 — 띄우는 그때의 상태로 판단
+    await t.status('a', 'busy'); await t.status('a', 'idle', true, 1);
+    await t.set({ __cur: 'a' });
+    await t.subs('a', 0, 1); await t.adv(3100);
+    ok((await t.list()).length === 0, '보류가 풀릴 때 보고 있는 세션이면 생략');
+    await t.page.close(); }
+  { const t = await fresh(); // 윈도 알림: 권한 · 누르기
+    await t.ev(`window.__made = []; window.__refocus = 0; window.irisHost = { refocus: () => { window.__refocus++; return Promise.resolve(); } };
+      window.Notification = function (title, o) { window.__os.push({ title, body: (o && o.body) || '', tag: (o && o.tag) || '' }); window.__made.push(this); this.close = () => { this.closed = true; }; };
+      window.Notification.permission = 'default'; window.__ask = 0;
+      window.Notification.requestPermission = () => { window.__ask++; window.Notification.permission = window.__grant; return Promise.resolve(window.__grant); };`);
+    await t.set({ __focus: false, __grant: 'denied' });
+    await t.status('a', 'busy'); await t.status('a', 'idle', true);
+    await t.page.waitForTimeout(50);
+    ok((await t.ev('window.__ask')) === 1 && (await t.os()).length === 0 && (await t.list()).length === 1, '윈도 알림 권한을 거절하면 화면 알림만');
+    await t.ev(`window.Notification.permission = 'default'`); await t.set({ __grant: 'granted' });
+    await t.status('b', 'busy'); await t.status('b', 'idle', true);
+    await t.page.waitForTimeout(50);
+    ok((await t.os()).length === 1, '권한을 받으면 그때 윈도 알림');
+    await t.ev(`window.__made[0].onclick()`);
+    ok((await t.ev('window.__made[0].closed')) === true && (await t.ev('window.__refocus')) === 1 && JSON.stringify(await t.ev('window.__picked')) === '["b"]', '윈도 알림을 누르면 창을 앞으로 + 그 세션');
+    await t.ev(`delete window.Notification`);
+    await t.status('c', 'busy'); await t.status('c', 'dead', true);
+    const l = await t.list();
+    ok(l.length === 3 && l[2].sub.includes('세션이 종료됐습니다'), '윈도 알림을 못 쓰는 환경에서도 화면 알림은 뜸 · dead 도 종료로 알림');
+    await t.page.close(); }
+  { const t = await fresh(); // 글자는 글자로만
+    await t.ev(`Notify.push({ id: 'x', title: '<img src=x onerror="window.__xss=1">제목', sub: '<b>굵게</b>' })`);
+    const l = await t.list();
+    ok(l[0].title === '<img src=x onerror="window.__xss=1">제목' && l[0].sub === '<b>굵게</b>' && (await t.ev('window.__xss')) === undefined && (await t.ev(`${VIEW.item(0)}.querySelector('img,b')`)) === null, '제목 · 아랫줄의 꺾쇠는 글자 그대로(태그로 그리지 않음)');
+    await t.ev(`Notify.onStatus({ id: 'zz', status: 'idle', done: true }, null, 0)`);
+    ok((await t.list())[1].title === 'zz', '세션 정보가 없으면 번호를 제목으로');
+    await t.set({ __focus: true, __hidden: false });
+    await t.ev(`Object.defineProperty(document, 'visibilityState', { get: () => 'prerender', configurable: true })`);
+    await t.set({ __cur: 'a' });
+    await t.status('a', 'busy'); await t.status('a', 'idle', true);
+    ok((await t.list()).length === 3, '창이 보이지 않는 상태(visibilityState)면 보고 있던 세션도 알림');
     await t.page.close(); }
 
   ok(errors.length === 0, `화면 오류 없음${errors.length ? ' — ' + errors[0] : ''}`);

@@ -16,7 +16,8 @@ import { SubagentWatcher } from './subagents.mjs';
 import { listFolders, checkFresh, RecentFolders } from './folders.mjs';
 import { readLimits } from './limits.mjs';
 import { findRoot, rootName, Settings } from './workspace.mjs';
-import { dashDir, dashPort, sweeperPath, pythonExe } from './paths.mjs';
+import { dashDir, dashPort, sweeperPath, pythonExe, plannerDir } from './paths.mjs';
+import { Planner } from './planner.mjs';
 import { MemoryMonitor } from './memory.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
@@ -67,6 +68,8 @@ const sm = new SessionManager(STATE, {
 });
 const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
+// 플래너(설계 docs\설계-플래너-2026-11-13.md): 장부는 앱 폴더 밖(영혼 폴더 _agent\planner, 시험 데몬은 STATE\planner). 쓰기 전에는 폴더를 만들지 않는다.
+const planner = new Planner({ dir: plannerDir(), stateDir: STATE, settings, broadcast: (o) => broadcast(o), log: (m) => log(m) });
 // 도구 설치·제거(판 B, 2026-11-10 — docs\설계-도구화면-2026-11-10.md): 엄선 목록만, 세션과 같은 환경으로 공식 CLI 실행.
 // 살아 있는 세션 수 = 파일 삭제를 미루는 기준(세션이 지운 파일을 나중에 부르지 않게).
 const tools = new ToolManager({
@@ -299,6 +302,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features(), autoResume: autoResumeState(settings.get()) });
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
     if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
+    // ---- 플래너: 달력 보기 · 끝냄 · 되돌리기 · 제안에 답하기(daemon/planner.mjs 가 전부 맡는다) ----
+    if (p.startsWith('/api/planner/')) return await planner.route(req, res, { url, json, readBody, sameOrigin });
     if (req.method === 'GET' && p === '/api/agents') return json(res, 200, activeAgentsMap(AGENTS));
     // 잠든 에이전트 목록(2026-09-23 다른 선생님 PC: Codex 버튼이 없어 고장으로 보였다) — /api/agents 모양은 그대로 두고 따로 준다.
     if (req.method === 'GET' && p === '/api/agents/sleeping') return json(res, 200, { sleeping: sleepingAgents() });
@@ -589,7 +594,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public(), planner: planner.hello() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
@@ -647,6 +652,9 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
   const sweepUp = () => { try { const r = sweepUploads(path.join(STATE, 'uploads')); if (r.removed) log(`uploads: removed ${r.removed} file(s) older than ${UPLOAD_KEEP_DAYS} days (${Math.round(r.bytes / 1024)}KB), kept ${r.kept}`); } catch (e) { log(`uploads sweep error: ${e?.message || e}`); } };
   sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();
+  // 플래너: 휴지통 30일 · 사본 30장 정리(시작할 때와 하루 한 번). 장부가 없으면 아무것도 하지 않는다.
+  planner.sweep(); setInterval(() => planner.sweep(), 24 * 60 * 60 * 1000).unref();
+  log(`planner: ${planner.enabled ? 'on' : 'off'} rev=${planner.store.rev}${planner.store.readOnly ? ' (read-only)' : ''}${planner.store.recovered ? ' (recovered)' : ''}`);
   // 도구(판 B): 중간에 끊긴 설치·제거를 실제 상태와 맞추고(같은 잠금 아래), 세션이 0 일 때 「제거 대기」를 처리한다(1분마다 확인 — 세션이 있으면 아무것도 안 함).
   tools.reconcile().then((r) => { if (r?.changed) log('tools: reconciled ledger'); }).catch((e) => log(`tools reconcile error: ${e?.message || e}`));
   setInterval(() => { tools.processPending().catch((e) => log(`tools pending error: ${e?.message || e}`)); }, 60 * 1000).unref();

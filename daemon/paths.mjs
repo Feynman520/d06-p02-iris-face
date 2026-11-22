@@ -17,11 +17,12 @@ export const toolsDir = () => path.join(soulRoot(), '_agent', 'shared', 'tools')
 
 /**
  * 플래너 장부 폴더(설계 조각 ③, 2026-11-22). 앱 폴더 밖에 둔다 — 앱을 지우거나 다시 깔아도 일정은 남는다.
- * IRIS_PLANNER_DIR → (시험 데몬) IRIS_FACE_STATE\planner → <영혼>\_agent\planner. 시험 데몬은 진짜 장부를 건드리지 않는다.
+ * (시험 데몬) IRIS_FACE_STATE\planner → IRIS_PLANNER_DIR → <영혼>\_agent\planner.
+ * 시험 데몬은 진짜 장부를 건드리지 않는다 — 시험 상태 폴더가 정해져 있으면 다른 지정보다 그것이 먼저다.
  */
 export function plannerDir(env = process.env) {
-  if (env.IRIS_PLANNER_DIR) return env.IRIS_PLANNER_DIR;
   if (env.IRIS_FACE_STATE) return path.join(env.IRIS_FACE_STATE, 'planner');
+  if (env.IRIS_PLANNER_DIR) return env.IRIS_PLANNER_DIR;
   return path.join(soulRoot(), '_agent', 'planner');
 }
 

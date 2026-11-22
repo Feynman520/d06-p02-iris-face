@@ -58,8 +58,10 @@ const byTitle = (a, b) => (a.no || 0) - (b.no || 0);
 
 /**
  * 고른 날의 목록(화면이 그대로 그리는 줄들). 순서 = 밀린 일 → 약속(시각순) → 마감이 가까운 순 → 나머지 (조각 ⑥ "오늘 순서").
- * 밀린 일 = 시각 없는 하루짜리·기간인 일 가운데 끝 날이 오늘보다 앞이고 안 끝낸 것 — 오늘 목록에만 따라온다.
+ * 밀린 일 = 끝 날이 오늘보다 앞이고 안 끝낸 것 가운데 기간인 일(시각이 있든 없든)과 시각 없는 하루짜리 — 오늘 목록에만 따라온다.
+ * 시각이 있는 하루짜리(지나간 약속)와 반복하는 일은 밀린 일로 따라오지 않는다.
  */
+export const isLate = (it, today) => !it.repeat && (isPeriod(it) || !it.time) && endOf(it) < today && !itemDone(it);
 export function dayRows(items, date, today) {
   const rows = [];
   const push = (it, late) => {
@@ -74,7 +76,7 @@ export function dayRows(items, date, today) {
     });
   };
   const list = active(items);
-  if (date === today) for (const it of list.filter((x) => !x.repeat && !x.time && endOf(x) < today && !itemDone(x)).sort((a, b) => (endOf(a) < endOf(b) ? -1 : endOf(a) > endOf(b) ? 1 : byTitle(a, b)))) push(it, true);
+  if (date === today) for (const it of list.filter((x) => isLate(x, today)).sort((a, b) => (endOf(a) < endOf(b) ? -1 : endOf(a) > endOf(b) ? 1 : byTitle(a, b)))) push(it, true);
   const on = list.filter((it) => occursOn(it, date));
   const timed = on.filter((it) => it.time && (!isPeriod(it) || date === it.start)).sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : byTitle(a, b)));
   const rest = on.filter((it) => !timed.includes(it));
@@ -97,14 +99,49 @@ export function monthDots(items, ym) {
   return out;
 }
 
-/** 시각이 있는 약속끼리 겹치는가 — 끝 시각이 없으면 1시간으로 본다(조각 ⑤). cand 와 겹치는 일들을 돌려준다. */
+const DAY_MIN = 1440;
+export const OVERLAP_LOOKAHEAD_DAYS = 56; // 반복하는 일을 넣을 때 앞으로 이만큼의 회차까지 겹침을 본다
+/**
+ * 그 날짜의 것이 차지하는 시간 [시작, 끝) — 달력 전체에서 견줄 수 있게 "날 번호 × 1440 + 분"으로.
+ * 끝 시각이 없으면 1시간(조각 ⑤). 시각이 있는 기간은 첫날 시작 시각부터 끝 날 끝 시각까지(끝 시각이 없으면 첫날의 1시간).
+ */
+function spanOf(it, date) {
+  if (isPeriod(it) && !it.repeat) {
+    const a = dayNo(it.start) * DAY_MIN + minutesOf(it.time);
+    return [a, it.timeEnd ? Math.max(a + 1, dayNo(it.end) * DAY_MIN + minutesOf(it.timeEnd)) : a + 60];
+  }
+  const a = dayNo(date) * DAY_MIN + minutesOf(it.time);
+  return [a, it.timeEnd && minutesOf(it.timeEnd) > minutesOf(it.time) ? dayNo(date) * DAY_MIN + minutesOf(it.timeEnd) : a + 60];
+}
+/** 그 일이 from~to 사이에 있는 날짜들(기간은 첫날 하나로 센다 — 차지하는 시간은 spanOf 가 통째로 준다) */
+function datesOf(it, from, to) {
+  if (!it.repeat) return isPeriod(it) ? (it.start <= to && it.end >= from ? [it.start] : []) : (it.start >= from && it.start <= to ? [it.start] : []);
+  const out = [];
+  for (let d = from < it.start ? it.start : from; d <= to; d = addDays(d, 1)) if (occursOn(it, d)) out.push(d);
+  return out;
+}
+/**
+ * 시각이 있는 약속끼리 겹치는가. cand(넣거나 고친 일)와 겹치는 일들을 돌려준다: [{ id, no, title, time, timeEnd, date }] (date = 겹치는 날).
+ * 자정을 넘는 것 · 여러 날에 걸친 것 · 반복하는 일의 뒤 회차(앞으로 56일)까지 본다.
+ */
 export function overlapsWith(items, cand) {
   if (!cand.time || !isDate(cand.start)) return [];
-  const span = (it) => { const a = minutesOf(it.time); const b = it.timeEnd && minutesOf(it.timeEnd) > a ? minutesOf(it.timeEnd) : a + 60; return [a, b]; };
-  const [a1, b1] = span(cand);
-  return active(items).filter((it) => it.id !== cand.id && it.time && occursOn(it, cand.start) && (!isPeriod(it) || cand.start === it.start))
-    .filter((it) => { const [a2, b2] = span(it); return a1 < b2 && a2 < b1; })
-    .map((it) => ({ id: it.id, no: it.no, title: it.title, time: it.time, timeEnd: it.timeEnd || null }));
+  const lastDay = cand.repeat ? addDays(cand.start, OVERLAP_LOOKAHEAD_DAYS) : endOf(cand);
+  const mine = datesOf(cand, cand.start, lastDay).map((d) => ({ d, s: spanOf(cand, d) }));
+  if (!mine.length) return [];
+  const from = addDays(cand.start, -1), to = addDays(lastDay, 1);
+  const out = [];
+  for (const it of active(items)) {
+    if (it.id === cand.id || !it.time) continue;
+    let hit = null;
+    for (const d of datesOf(it, from, to)) {
+      const [a2, b2] = spanOf(it, d);
+      const m = mine.find(({ s }) => s[0] < b2 && a2 < s[1]);
+      if (m) { hit = m.d > d ? m.d : d; break; }
+    }
+    if (hit) out.push({ id: it.id, no: it.no, title: it.title, time: it.time, timeEnd: it.timeEnd || null, date: hit });
+  }
+  return out;
 }
 
 /** 그 날짜가 든 주(월~일)에 마감이 몇 개인가(안 끝낸 기간의 마지막 날) */
