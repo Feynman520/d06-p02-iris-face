@@ -58,6 +58,7 @@ export class Planner {
     this.rules = null;    // 규칙 알림(planner-rules.mjs) — server.mjs 가 꽂는다
     this.talkSvc = null;  // 아이리스에게 말하기(planner-talk.mjs) — server.mjs 가 꽂는다
     this.cliSvc = null;   // 세션용 명령의 창구(planner-cli.mjs) — server.mjs 가 꽂는다
+    this.checkSvc = null; // 준비 점검(planner-check.mjs) — server.mjs 가 꽂는다
   }
   /** 장부를 연다. 실패해도 던지지 않는다(플래너만 쉰다). */
   start() {

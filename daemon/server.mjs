@@ -21,6 +21,7 @@ import { Planner } from './planner.mjs';
 import { PlannerRules } from './planner-rules.mjs';
 import { PlannerTalk } from './planner-talk.mjs';
 import { PlannerCli } from './planner-cli.mjs';
+import { PlannerCheck } from './planner-check.mjs';
 import { MemoryMonitor } from './memory.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
@@ -85,6 +86,9 @@ planner.talkSvc = plannerTalk;
 // 세션용 명령 iris-planner 의 창구: 다른 세션이 플래너에 넣는 길(사용자가 시킨 것 = 바로 + 되돌리기, 세션의 판단 = 제안). 숨은 AI 를 부르지 않는다.
 const plannerCli = new PlannerCli({ planner, port: PORT, session: (id) => sm.get(id) || null, log: (m) => log(m) });
 planner.cliSvc = plannerCli;
+// 준비 점검: 아이리스가 먼저 AI 를 부르는 유일한 기능(처음 값 꺼짐). 하루 한 번, 첫 인사 뒤, 대상(폴더가 붙고 마감이 3일 안인 일)이 있을 때만.
+const plannerCheck = new PlannerCheck({ planner, stateDir: STATE, log: (m) => log(m) });
+planner.checkSvc = plannerCheck;
 let plannerDrainTimer = null;
 // 도구 설치·제거(판 B, 2026-11-10 — docs\설계-도구화면-2026-11-10.md): 엄선 목록만, 세션과 같은 환경으로 공식 CLI 실행.
 // 살아 있는 세션 수 = 파일 삭제를 미루는 기준(세션이 지운 파일을 나중에 부르지 않게).
@@ -673,7 +677,7 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 휴지통 30일 · 사본 30장 정리는 시작할 때와 하루 한 번(꺼져 있으면 안 함). 장부가 없으면 아무것도 만들지 않는다.
   try { planner.start(); planner.sweep(); plannerRules.start(); setInterval(() => planner.sweep(), 24 * 60 * 60 * 1000).unref();
     // 받아 둔 말(아이리스를 부를 수 없었을 때 적어 둔 것)이 있으면 5분마다 정리를 시도한다. 없으면 아무것도 부르지 않는다.
-    plannerDrainTimer = setInterval(() => { plannerTalk.drain().catch((e) => log(`planner-talk drain error: ${e?.code || e?.name || 'error'}`)); }, 5 * 60 * 1000); plannerDrainTimer.unref(); log(`planner: ${planner.failed ? 'failed' : planner.enabled ? 'on' : 'off'} rev=${planner.store.rev}${planner.store.readOnly ? ' (read-only)' : ''}${planner.store.recovered ? ' (recovered)' : ''}`); }
+    plannerDrainTimer = setInterval(() => { plannerTalk.drain().catch((e) => log(`planner-talk drain error: ${e?.code || e?.name || 'error'}`)).then(() => plannerCheck.tick()).catch((e) => log(`planner-check error: ${e?.code || e?.name || 'error'}`)); }, 5 * 60 * 1000); plannerDrainTimer.unref(); log(`planner: ${planner.failed ? 'failed' : planner.enabled ? 'on' : 'off'} rev=${planner.store.rev}${planner.store.readOnly ? ' (read-only)' : ''}${planner.store.recovered ? ' (recovered)' : ''}`); }
   catch (e) { log(`planner init error: ${e?.code || e?.name || 'error'}`); }
   // 도구(판 B): 중간에 끊긴 설치·제거를 실제 상태와 맞추고(같은 잠금 아래), 세션이 0 일 때 「제거 대기」를 처리한다(1분마다 확인 — 세션이 있으면 아무것도 안 함).
   tools.reconcile().then((r) => { if (r?.changed) log('tools: reconciled ledger'); }).catch((e) => log(`tools reconcile error: ${e?.message || e}`));
