@@ -351,9 +351,11 @@ window.Settings = (() => {
     return `<section class="st-grp auth-card" data-kind="antigravity"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">로그인</span><small>중계기를 거치지 않는 구글 로그인</small></h3>`
       + `<div class="st-opt auth-row ${W[1]}"><span class="st-opt-text">${esc(W[0])}<small>${esc(how)}${agyInfo.at ? ` · 확인 ${esc(fmtWhen(agyInfo.at))}` : ''}</small></span></div></section>`;
   }
-  async function loadAgy() { try { agyInfo = await (await fetch('/api/antigravity/status')).json(); } catch { agyInfo = null; } }
+  let agyAt = 0;
+  async function loadAgy() { agyAt = Date.now(); try { const r = await fetch('/api/antigravity/status'); agyInfo = r.ok ? await r.json() : null; } catch { agyInfo = null; } }
   function renderAuth() {
-    if (agyInfo === null && !renderAuth.agyAsked) { renderAuth.agyAsked = true; loadAgy().then(() => { if (open) renderAuth(); }); }
+    // 패널을 그릴 때마다 30초가 지났으면 다시 묻는다(로그인 · 로그아웃 뒤에도 따라오게 — 코덱스 코드 검토 B)
+    if (Date.now() - agyAt > 30000) { const was = JSON.stringify(agyInfo); loadAgy().then(() => { if (open && JSON.stringify(agyInfo) !== was) renderAuth(); }); }
     const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
     renderNav();
     // v2.97.2(2026-11-02 사용자 신고 "복구 문구만 있고 로그인 열쇠가 없다"): 도구(iris-auth)가 없는 PC 도 절을 숨기지 않고 이유를 한 줄 보인다.
@@ -363,13 +365,13 @@ window.Settings = (() => {
     if (head && !head.dataset.iced) { head.innerHTML = Icons.svg('shield', 15) + '<span>로그인 열쇠</span>'; head.dataset.iced = '1'; }
     const hasTool = !!(auth?.available || health?.features?.auth);
     btn.hidden = !hasTool;
-    if (!hasTool) { host.innerHTML = '<section class="st-grp"><div class="upd-line st-sub auth-missing">이 컴퓨터에는 열쇠 만료를 살피는 도구가 아직 없습니다. 만료일·미리 알림·「1년 열쇠 받기」는 IRIS 업데이트(설정 → 업데이트·정보)를 받으면 생깁니다. 그 전에 「Login expired」가 뜨면 다시 로그인하면 그대로 이어서 쓸 수 있습니다.</div></section>'; return; }
+    if (!hasTool) { host.innerHTML = '<section class="st-grp"><div class="upd-line st-sub auth-missing">이 컴퓨터에는 열쇠 만료를 살피는 도구가 아직 없습니다. 만료일·미리 알림·「1년 열쇠 받기」는 IRIS 업데이트(설정 → 업데이트·정보)를 받으면 생깁니다. 그 전에 「Login expired」가 뜨면 다시 로그인하면 그대로 이어서 쓸 수 있습니다.</div></section>' + agyCard(); return; }
     btn.disabled = authBusy;
     // 급한 열쇠가 맨 위(v2.87): 만료 → 곧 만료 → 모름 → 정상, 같은 단계면 남은 날 적은 순, 선택 항목(optional)은 맨 아래
     const RANK = { expired: 0, soon: 1, unknown: 2, ok: 3 };
     const items = (auth?.info?.items || []).slice().sort((a, b) => (!!a.optional - !!b.optional) || ((RANK[a.level] ?? 2) - (RANK[b.level] ?? 2)) || ((a.daysLeft ?? 9999) - (b.daysLeft ?? 9999)));
     const job = auth?.job;
-    if (!items.length) { host.innerHTML = '<section class="st-grp"><div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div></section>'; return; }
+    if (!items.length) { host.innerHTML = '<section class="st-grp"><div class="upd-line st-sub">열쇠 상태를 아직 읽지 못했습니다 — 「다시 확인」을 눌러 보세요.</div></section>' + agyCard(); return; }
     const row = (i) => {
       const when = i.expiresAt ? fmtWhen(new Date(i.expiresAt).toISOString()) : '';
       const [kind, kcls] = i.longKey ? ['1년 열쇠', 'long'] : i.provider === 'codex' ? ['ChatGPT 로그인', ''] : ['30일 로그인', 'short'];

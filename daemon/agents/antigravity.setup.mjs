@@ -55,13 +55,26 @@ export function trustFolder(cwd) {
 // ───────── ② 전역 지침 ─────────
 /** 루트 지침의 🔴 절 제목(손으로 옮겨 적지 않는다 — 루트가 바뀌면 다음 세션에 따라 바뀐다) */
 export function redHeadings(rootText) {
-  return String(rootText || '').split(/\r?\n/).filter((l) => /^##\s+🔴/.test(l)).map((l) => l.replace(/^##\s+/, '').replace(/\s*\((?:20\d\d-\d\d-\d\d)[^)]*\)\s*$/, '').trim());
+  return redSections(rootText).map((s) => s.title);
 }
+/** 🔴 절마다 제목 + 본문 앞 몇 줄(목록 줄 · 문장 줄, 줄마다 최대 260자). 코덱스 설계 검토: 제목만으로는 규칙이 안 선다 → 핵심 본문을 직접 싣는다. */
+export function redSections(rootText, maxLines = 2) {
+  const out = []; let cur = null;
+  for (const l of String(rootText || '').split(/\r?\n/)) {
+    if (/^##\s/.test(l)) { cur = /^##\s+🔴/.test(l) ? { title: l.replace(/^##\s+/, '').replace(/\s*\((?:20\d\d-\d\d-\d\d)[^)]*\)\s*$/, '').trim(), body: [] } : null; if (cur) out.push(cur); continue; }
+    if (!cur || cur.body.length >= maxLines) continue;
+    const t = l.trim(); if (!t || /^(#|```|\|)/.test(t)) continue;
+    const s = t.replace(/^[-*]\s+/, ''); cur.body.push(s.length > 260 ? s.slice(0, 259) + '…' : s);
+  }
+  return out;
+}
+/** 지침 글. 루트 지침을 읽지 못하면 null(빈 안내로 만들지 않는다 — 세션을 막는다). */
 export function rulesText(root = soulRoot()) {
   const rootFile = path.join(root, 'AGENTS.md');
-  let rootText = ''; try { rootText = fs.readFileSync(rootFile, 'utf8'); } catch {}
+  let rootText; try { rootText = fs.readFileSync(rootFile, 'utf8'); } catch { return null; }
   const size = Buffer.byteLength(rootText, 'utf8');
-  const heads = redHeadings(rootText);
+  const secs = redSections(rootText);
+  if (!secs.length) return null;
   const lines = [
     RULES_MARK,
     '# IRIS 안에서 일하는 안티그래비티에게 (IRIS 창이 만든 파일)',
@@ -72,23 +85,26 @@ export function rulesText(root = soulRoot()) {
     '- 사용자에게 보이는 답은 한국어로 쓴다.',
     '- 이 세션은 IRIS 창 안에서 돈다. 사용자에게 고르게 할 때는 묻는 도구(ask_question) 대신 답 본문에 번호 선택지를 글로 적는다.',
     '',
-    '## 루트 지침의 🔴(반드시 지킬) 절 — 제목만. 내용은 루트 지침에서 읽는다',
-    ...heads.map((h) => `- ${h}`),
-    '',
+    '## 루트 지침의 🔴(반드시 지킬) 절 — 제목과 앞 문장. 전체는 루트 지침에서 읽는다',
   ];
-  let text = lines.join('\n');
-  while (Buffer.byteLength(text, 'utf8') > RULES_MAX_BYTES && lines.length > 12) { lines.splice(lines.length - 2, 1); text = lines.join('\n'); }
+  const head = lines.join('\n') + '\n';
+  // 크기 상한 안에서: 먼저 모든 절의 제목 + 본문, 넘치면 뒤 절부터 본문을 한 줄씩 줄인다(제목은 끝까지 남긴다)
+  const build = (bodyN) => head + secs.map((s, i) => [`- **${s.title}**`, ...s.body.slice(0, bodyN[i]).map((b) => `  - ${b}`)].join('\n')).join('\n') + '\n';
+  const n = secs.map((s) => s.body.length);
+  let text = build(n);
+  for (let i = secs.length - 1; Buffer.byteLength(text, 'utf8') > RULES_MAX_BYTES && i >= 0; ) { if (n[i] > 0) { n[i]--; text = build(n); } else i--; }
   return text;
 }
 export function ensureRules(root = soulRoot()) {
   try {
     const file = path.join(geminiDir(), 'AGENTS.md');
     const want = rulesText(root);
+    if (want == null) return 'skipped:no-root';
     if (fs.existsSync(file)) {
       let have; try { have = fs.readFileSync(file, 'utf8'); } catch { return 'skipped:unreadable'; }
       if (!have.startsWith(RULES_MARK)) return 'skipped:user-file';
       if (have === want) return 'unchanged';
-      writeAtomic(file, want); return 'updated';
+      backupOnce(file); writeAtomic(file, want); return 'updated';
     }
     writeAtomic(file, want); return 'created';
   } catch (e) { return `skipped:${String(e?.message || e)}`; }
@@ -128,9 +144,24 @@ export function ensureHooks(root = soulRoot(), python) {
   } catch (e) { return `skipped:${String(e?.message || e)}`; }
 }
 
-/** 세션을 띄우기 직전 한 번에: 결과 글자 셋을 한 줄로(로그용). 모두 바뀐 것이 없으면 'unchanged'. */
-export function prepare(cwd) {
-  const r = { trust: trustFolder(cwd), rules: ensureRules(), hooks: ensureHooks() };
-  const changed = Object.entries(r).filter(([, v]) => v !== 'unchanged');
-  return changed.length ? changed.map(([k, v]) => `${k}=${v}`).join(' ') : 'unchanged';
+/** 안전 가드 셋(다리 · 경로 가드 · 일괄 종료 가드)이 제자리에 있는가 */
+export function guardsPresent(root = soulRoot()) {
+  const dir = path.join(root, '_agent', 'claude', 'scripts');
+  return ['agy-hook-bridge.py', 'guard-iris-path.py', 'block-blanket-kill.ps1'].filter((f) => !fs.existsSync(path.join(dir, f)));
+}
+/**
+ * 세션을 띄우기 직전 한 번에. { ok, line, results } — ok=false 면 부르는 쪽이 세션을 띄우지 않는다(코덱스 코드 검토 2번:
+ * 안티그래비티 세션은 권한을 묻지 않으므로 안전 훅 · 핵심 지침이 준비되지 않은 채 열면 안 된다).
+ * 막는 경우 = 가드 파일이 없음 · 훅을 넣지 못함(skipped:*) · 지침을 만들지 못함(루트를 못 읽음 등 — 사용자가 직접 쓴 전역 지침 파일은 존중해 막지 않음).
+ * 폴더 신뢰를 못 적은 것은 막지 않는다(그러면 agy 가 화면에서 묻고 창은 노란불로 보인다).
+ */
+export function prepare(cwd, root = soulRoot()) {
+  const results = { trust: trustFolder(cwd), rules: ensureRules(root), hooks: ensureHooks(root) };
+  const missing = guardsPresent(root);
+  const why = [];
+  if (missing.length) why.push(`가드 파일 없음(${missing.join(', ')})`);
+  if (String(results.hooks).startsWith('skipped:')) why.push(`안전 훅을 넣지 못함(${results.hooks})`);
+  if (String(results.rules).startsWith('skipped:') && results.rules !== 'skipped:user-file') why.push(`전역 지침을 만들지 못함(${results.rules})`);
+  const changed = Object.entries(results).filter(([, v]) => v !== 'unchanged');
+  return { ok: !why.length, why: why.join(' · '), results, line: changed.length ? changed.map(([k, v]) => `${k}=${v}`).join(' ') : 'unchanged' };
 }

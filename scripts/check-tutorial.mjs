@@ -327,7 +327,8 @@ else {
       { id: 'c2', group: 'relay', label: 'claude-b', name: 'b', provider: 'claude', level: 'ok', daysLeft: 20 }] } }));
     await p.evaluate(() => Settings.show('account')); await sleep(300);
     const cards = await p.evaluate(() => [...document.querySelectorAll('#st-auth .auth-card')].map(c => `${c.dataset.kind}:${c.querySelectorAll('.auth-row').length}:${c.querySelector('.auth-empty') ? 'empty' : ''}`).join(','));
-    ok(cards === 'iris:1:,claude:2:,codex:0:empty', `7 계정·보안 = 열쇠 카드 세 장, 빈 카드는 안내 (${cards})`);
+    // 2026-11-23: 이 PC 에 agy 가 있으면 넷째 카드 「Antigravity 로그인」(줄 하나)이 맨 뒤에 붙는다 — 그 밖의 세 장은 그대로여야 한다
+    ok(cards.replace(/,antigravity:1:$/, '') === 'iris:1:,claude:2:,codex:0:empty', `7 계정·보안 = 열쇠 카드 세 장(+ 안티그래비티 카드), 빈 카드는 안내 (${cards})`);
     ok(/대시보드에서 추가/.test(await p.locator('#st-auth .auth-card[data-kind="codex"]').textContent()), '7 Codex 0개 = "계정 없음 — 대시보드에서 추가"');
     await p.locator('#st-auth-act').isVisible().then(v => ok(v, '7 머리 「다시 확인」은 카드 밖에 그대로'));
     await shot('s-account');

@@ -25,7 +25,7 @@
     return v === 'waiting' ? `${STATUS_KO[v]} ⁺${SubPanel.alive(s.id)}` : (STATUS_KO[v] || v);
   };
   const AGENT_KO = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
-  let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null, ACCT = null;
+  let sessions = [], current = null, ws = null, term = null, fit = null, mode = 'chat', AGENTS = null, ACCT = null, AGY = null;
   let folder = null;                 // 새 요청 모드에서 고른 폴더
   let setupMode = 'new';             // 'new' = 새 세션 조합 / 'switch' = 열린 세션의 조합 바꾸기
   let renaming = null;               // 이름 바꾸는 중 { id, cancel } — 그동안 render()가 목록·머리 제목을 다시 그리지 않는다(v2.85)
@@ -87,6 +87,8 @@
     for (const k of ACCT?.missing || []) if (AGENTS[k]) off[k] = 'missing';
     const acc = ACCT?.accounts;
     if (acc) for (const k of Object.keys(AGENTS)) if (!off[k] && acc[k] === 0) off[k] = 'account';
+    // 안티그래비티(중계기 밖)는 위 상태 객체에 없다 — 데몬이 따로 보내는 판정(AGY)으로만 끈다. 모름(unknown)이면 끄지 않는다.
+    if (AGENTS.antigravity && !off.antigravity) { if (AGY?.state === 'missing') off.antigravity = 'missing'; else if (AGY?.state === 'auth') off.antigravity = 'account'; }
     return Object.keys(off).length >= Object.keys(AGENTS).length ? {} : off;
   }
   function renderSetup() {
@@ -174,6 +176,7 @@
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
       else if (m.type === 'activity') { if (m.id === current) { const s = cur(); if (s?.status === 'busy') Transcript.setBusy(true, m.text); } }
       else if (m.type === 'prompt') { const s = sessions.find(x => x.id === m.id); if (s) { s.prompt = m.prompt; if (m.id === current) Approval.render(s); } } // 확인 카드(v2.43): 노란불의 질문·선택지
+      else if (m.type === 'agy') { AGY = m.status || null; renderSetup(); } // 안티그래비티 로그인 판정(2026-11-23 — 클로드 · 코덱스 상태와 따로)
       else if (m.type === 'agents') { AGENTS = m.agents; if (m.status) ACCT = m.status; renderSetup(); flushLead(); } // v2.76: 계정 수·프로그램 없음이 바뀜 → 버튼 옆 안내 다시 그림
     };
   }
@@ -779,6 +782,7 @@
 
   fetch('/api/agents').then(r => r.json()).then((a) => { AGENTS = a; renderSetup(); flushLead(); });
   fetch('/api/agents/status').then(r => r.json()).then((j) => { ACCT = j || null; renderSetup(); }).catch(() => {});
+  fetch('/api/antigravity/status').then(r => (r.ok ? r.json() : null)).then((j) => { if (j) { AGY = j; renderSetup(); } }).catch(() => {});
   connect(); autoGrow();
 
   // ---------- 키 입력 자가 복구(2026-09-10) ----------

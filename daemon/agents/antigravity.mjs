@@ -79,17 +79,22 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
   const args = ['--model', s.modelActual || s.model, '--dangerously-skip-permissions', '--log-file', log, ...(resumeId ? ['--conversation', resumeId] : [])];
   const exe = agyExe();
   const cmdline = ['agy', ...args].join(' ');
-  LOG_OF.set(cmdline, log);
+  if (!resumeId) { LOG_OF.set(cmdline, log); while (LOG_OF.size > 200) LOG_OF.delete(LOG_OF.keys().next().value); } // 재개는 id 를 이미 안다 · 띄우지 못한 명령이 쌓이지 않게 200개까지
   const base = { sessionId: resumeId, recordPath: resumeId ? transcriptOf(resumeId) : undefined, resumeCmd: resumeId ? `agy --conversation ${resumeId}` : '', cmdline };
   return exe ? { file: exe, args, ...base } : { file: 'cmd.exe', args: ['/c', 'agy', ...args], ...base };
 }
 
 // ───────────────────────── 세션을 띄우기 직전 ─────────────────────────
-/** 폴더 신뢰 · 전역 지침 · 안전 훅(antigravity.setup.mjs). 기록 폴더도 여기서 만든다. 절대 던지지 않는다. */
+/**
+ * 폴더 신뢰 · 전역 지침 · 안전 훅(antigravity.setup.mjs). 기록 폴더도 여기서 만든다.
+ * 🔴 클로드 · 코덱스의 preTrust 와 달리 **안전 준비가 안 되면 던진다** → sessions.mjs spawn() 이 CLI 를 띄우기 전에 멈추고 화면에 이유가 보인다
+ * (권한을 묻지 않는 세션을 안전 훅 없이 열지 않는다 — 코덱스 코드 검토 2번).
+ */
 export function preTrust(cwd) {
   try { fs.mkdirSync(logDir(), { recursive: true }); } catch {}
-  let result; try { result = prepare(cwd); } catch (e) { result = `skipped:${String(e?.message || e)}`; }
-  return { agent: id, result };
+  let r; try { r = prepare(cwd); } catch (e) { r = { ok: false, why: `준비 중 오류(${String(e?.message || e)})`, line: 'error' }; }
+  if (!r.ok) { const e = new Error(`안티그래비티 안전 준비가 안 되어 세션을 열지 않았습니다 — ${r.why}`); e.code = 'AGY_NOT_READY'; throw e; }
+  return { agent: id, result: r.line };
 }
 
 // ───────────────────────── 화면 신호(에이전트별 — 클로드 · 코덱스의 공용 식은 그대로) ─────────────────────────
@@ -138,21 +143,25 @@ export function watchRecord(sm, cid, rec) {
     if (!rec.recordPath) { rec.recordPath = transcriptOf(rec.sessionId); sm.save(); sm.hooks.onList?.(); }
     return;
   }
-  const log = LOG_OF.get(rec.cmdline);
+  const cmdline = rec.cmdline;
+  const log = LOG_OF.get(cmdline);
   if (!log) { sm.hooks.onLog?.(`${cid} antigravity: 이 카드의 기록 파일을 모름 — 대화 기록을 잇지 않음`); return; }
+  // 이 감시가 맡은 프로세스 = 지금 살아 있는 그 하나(같은 카드에서 다시 띄우면 새 감시가 맡는다 — 코덱스 코드 검토 B)
+  const mine = sm.live.get(cid);
+  const stop = () => LOG_OF.delete(cmdline);
+  const tryPair = () => {
+    let text; try { text = fs.readFileSync(log, 'utf8'); } catch { return false; }
+    const m = text.match(/Created conversation ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+    if (!m) return false;
+    const conv = m[1];
+    if ([...sm.sessions.values()].some((r) => r !== rec && r.sessionId === conv)) { sm.hooks.onLog?.(`${cid} antigravity: 대화 ${conv} 는 다른 카드가 이미 가짐 — 잇지 않음`); return true; }
+    rec.sessionId = conv; rec.recordPath = transcriptOf(conv); rec.resumeCmd = `agy --conversation ${conv}`;
+    sm.save(); sm.hooks.onList?.(); return true;
+  };
   const tick = () => {
-    if (!sm.sessions.has(cid) || rec.sessionId || !sm.live.has(cid)) return;
-    try {
-      const text = fs.readFileSync(log, 'utf8');
-      const m = text.match(/Created conversation ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-      if (m) {
-        const conv = m[1];
-        const taken = [...sm.sessions.values()].some((r) => r !== rec && r.sessionId === conv);
-        if (taken) { sm.hooks.onLog?.(`${cid} antigravity: 대화 ${conv} 는 다른 카드가 이미 가짐 — 잇지 않음`); return; }
-        rec.sessionId = conv; rec.recordPath = transcriptOf(conv); rec.resumeCmd = `agy --conversation ${conv}`;
-        sm.save(); sm.hooks.onList?.(); return;
-      }
-    } catch { /* 아직 파일 없음 — 다시 */ }
+    if (!sm.sessions.has(cid) || sm.sessions.get(cid) !== rec || rec.sessionId || rec.cmdline !== cmdline) return stop();
+    if (sm.live.get(cid) !== mine) { tryPair(); return stop(); } // 끝났거나 바뀜 — 마지막으로 한 번 읽고 멈춘다(곧바로 끝난 CLI 의 id 도 놓치지 않게)
+    if (tryPair()) return stop();
     setTimeout(tick, 2000);
   };
   setTimeout(tick, 2000);
