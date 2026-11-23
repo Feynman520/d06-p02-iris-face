@@ -81,7 +81,27 @@ process.env.IRIS_AGY_GATE_URL = GATE;
 // 데몬이 15초마다 미리 읽는다(세션 시작 때 기다리지 않게)
 const srv = fs.readFileSync(path.join(ROOT, 'daemon/server.mjs'), 'utf8');
 ok(/agyGateFirst = agyGate\.refresh\(\)/.test(srv) && /agyGate\.current\(\)\?\.ok \? 15_000 : 5_000/.test(srv) && /AGENTS\.antigravity && agyConnection === 'gate'/.test(srv), '데몬: gate 일 때 시작 즉시 + 통과 15초 · 막힘 5초마다 중계기 판정을 미리 읽음');
-ok(/const waitGate = ar\.enabled && agyConnection === 'gate' && sm\.lost\(\)\.some\(\(r\) => r\.agent === 'antigravity'\)/.test(srv) && /if \(waitGate\) agyGateFirst\.then\(/.test(srv), '데몬: 끊긴 안티그래비티 세션이 있을 때만 첫 판정 뒤 자동 재개(없으면 예전처럼 곧바로)');
+ok(/const waitGate = ar\.enabled && agyConnection === 'gate' && sm\.lost\(\)\.some\(\(r\) => r\.agent === 'antigravity'\)/.test(srv)
+  && /const ids = waitGate \? sm\.resumeLost\(\{ enabled: ar\.enabled, filter: \(r\) => r\.agent !== 'antigravity' \}\) : sm\.resumeLost\(\{ enabled: ar\.enabled \}\);/.test(srv)
+  && /agyGateFirst\.then\(agyLost, agyLost\)/.test(srv), '데몬: 자동 재개 — 클로드 · 코덱스 카드는 곧바로(예전과 같음), 안티그래비티 카드만 첫 판정 뒤');
+ok(/await agyGateReady\(body\.agent\);\s*const rec = sm\.create\(body\);/.test(srv) && /const toOtherAgent = sm\.checkSwitch\(id, b\.agent\);[\s\S]{0,200}const before = sm\.get\(id\);[^\n]*\n\s*await agyGateReady\(b\.agent \|\| before\.agent\);/.test(srv) && /await agyGateReady\(sm\.get\(id\)\?\.agent\); const rec = sm\.resume\(id,/.test(srv), '데몬: 새로 열기 · 바꾸기 · 재개 전에 (안티그래비티만) 판정이 낡았으면 그 자리에서 다시 묻는다');
+// resumeLost(filter) — 실제로 돌려 본다(가짜 세션 관리자)
+{
+  const { SessionManager } = await imp('daemon/sessions.mjs');
+  const smd = path.join(TMP, 'sm'); fs.mkdirSync(smd, { recursive: true });
+  fs.writeFileSync(path.join(smd, 'sessions.json'), JSON.stringify([
+    { id: 's1', agent: 'claude', status: 'busy', pid: 999999, sessionId: 'a', cwd: TMP },
+    { id: 's2', agent: 'antigravity', status: 'busy', pid: 999998, sessionId: 'b', cwd: TMP },
+    { id: 's3', agent: 'codex', status: 'busy', pid: 999997, sessionId: 'c', cwd: TMP },
+  ]));
+  const sm = new SessionManager(smd, {});
+  const resumed = []; sm.resume = (id) => { resumed.push(id); return {}; };
+  const all = sm.resumeLost({ enabled: true, gapMs: 0, note: '' });
+  ok(JSON.stringify(all) === JSON.stringify(['s1', 's2', 's3']), 'resumeLost: filter 없으면 예전과 같이 전부', JSON.stringify(all));
+  const some = sm.resumeLost({ enabled: true, gapMs: 0, note: '', filter: (r) => r.agent !== 'antigravity' });
+  ok(JSON.stringify(some) === JSON.stringify(['s1', 's3']), 'resumeLost: filter 로 안티그래비티 카드만 뒤로', JSON.stringify(some));
+  await new Promise((r) => setTimeout(r, 30));
+}
 
 // 4. 어댑터
 ok(ad.connection === 'gate', '어댑터 연결 방식 = gate(되돌리기 = 이 한 줄)');
@@ -114,7 +134,11 @@ await st.refreshModels(tbl);
 ok(JSON.stringify(tbl) === before, '모델 목록(막힘): 목록을 바꾸지 않는다(이 PC 로그인으로 묻지 않음)');
 delete process.env.IRIS_AGY_EXE;
 
+// 끝내기: 열린 연결을 먼저 닫고 잠깐 뒤에 나간다 — 연결이 닫히는 중에 바로 process.exit 하면 윈도우의 Node 가
+// "UV_HANDLE_CLOSING" 내부 오류로 죽는다(2026-11-23 전체 검사에서 한 번 실측).
+fake.closeAllConnections?.();
 fake.close();
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 console.log(`${pass} PASS / ${fail} FAIL`);
-process.exit(fail ? 1 : 0);
+process.exitCode = fail ? 1 : 0;
+setTimeout(() => process.exit(fail ? 1 : 0), 300);

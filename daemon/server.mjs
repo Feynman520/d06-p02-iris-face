@@ -120,6 +120,13 @@ const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeA
 // 시작 때 한 번 + 5분마다 로그인 · 한도를 읽고, 판정이 바뀌면 { type: 'agy' } 로 알린다(세션 시작은 기다리지 않는다).
 // 중계기 길(gate)의 첫 판정 — 끊긴 안티그래비티 세션의 자동 재개는 이것을 기다린다(아래 auto-resume). 그 밖에는 기다리는 곳이 없다.
 let agyGateFirst = Promise.resolve();
+// 사용자가 안티그래비티 세션을 열 · 바꿀 · 재개할 때: 미리 읽어 둔 판정이 '통과 · 1분 안'이 아니면 그 자리에서 한 번 다시 묻는다(비동기, 최대 약 3초 —
+// 그 요청만 기다리고 데몬은 멈추지 않는다). 중계기를 막 다시 켠 직후에도 옛 실패 판정으로 거절하지 않게(코덱스 재검토 F-2). 다른 에이전트는 기다리지 않는다.
+const agyGateReady = async (agent) => {
+  if (agent !== 'antigravity' || agyConnection !== 'gate') return;
+  if (agyGate.current()?.ok && agyGate.fresh()) return;
+  await agyGate.refresh().catch(() => {});
+};
 {
   let prevState = null;
   const tickAgy = () => {
@@ -510,6 +517,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/sessions') return json(res, 200, publicList());
     if (req.method === 'POST' && p === '/api/sessions') {
       const body = await readBody(req);
+      await agyGateReady(body.agent);
       const rec = sm.create(body);
       recent.touch(rec.cwd);
       log(`create ${rec.id} pid=${rec.pid} ${rec.cmdline} cwd=${rec.cwd}`);
@@ -615,6 +623,7 @@ const server = http.createServer(async (req, res) => {
         // 맨 먼저: 열 수 없는 카드 · 명부에 없는 에이전트 값(0 · false · 목록 · 모르는 이름)은 아무 일도 하기 전에 거절(400). 값이 비었으면 지금 에이전트 그대로.
         const toOtherAgent = sm.checkSwitch(id, b.agent);
         const before = sm.get(id); const beforeCmd = before.cmdline;
+        await agyGateReady(b.agent || before.agent); // 거절 검사(checkSwitch) 뒤 · 지금 세션을 끄기 전(2026-11-23)
         let rec;
         if (toOtherAgent) {
           // 다른 에이전트로: 이전 대화를 글로 묶어 새 CLI의 첫 요청으로 넘긴다(맥락 이어받기)
@@ -632,7 +641,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ...rec });
       }
       // 죽은 카드 그 자리에서 재개(화면 "여기서 재개" 버튼, 2026-09-11 v2.42). 살아 있는 세션이면 400.
-      if (req.method === 'POST' && action === 'resume') { const b = await readBody(req); const rec = sm.resume(id, { prompt: String(b.text || '') }); log(`resume ${id} pid=${rec.pid} [${rec.cmdline}]`); broadcast({ type: 'sessions', list: publicList() }); return json(res, 200, { ...rec }); }
+      if (req.method === 'POST' && action === 'resume') { const b = await readBody(req); await agyGateReady(sm.get(id)?.agent); const rec = sm.resume(id, { prompt: String(b.text || '') }); log(`resume ${id} pid=${rec.pid} [${rec.cmdline}]`); broadcast({ type: 'sessions', list: publicList() }); return json(res, 200, { ...rec }); }
       if (req.method === 'POST' && action === 'forget') { sm.forget(id); log(`forget ${id}`); return json(res, 200, { ok: true }); }
       if (req.method === 'DELETE' && !action) { const rec = sm.close(id); log(`close ${id} pid=${rec.pid}`); return json(res, 200, { ok: true }); }
     }
@@ -709,7 +718,7 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   try { memory.start(); log(`memory: commit=${memory.features().commit} sweep=${memory.features().sweep ? 'on' : 'off'}`); } catch (e) { log(`memory init error: ${e?.message || e}`); }
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
-  try { const ar = autoResumeState(settings.get()); const waitGate = ar.enabled && agyConnection === 'gate' && sm.lost().some((r) => r.agent === 'antigravity'); const ids = waitGate ? sm.lost().map((r) => r.id) : sm.resumeLost({ enabled: ar.enabled }); if (waitGate) agyGateFirst.then(() => sm.resumeLost({ enabled: ar.enabled }), () => sm.resumeLost({ enabled: ar.enabled })); if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
+  try { const ar = autoResumeState(settings.get()); const waitGate = ar.enabled && agyConnection === 'gate' && sm.lost().some((r) => r.agent === 'antigravity'); const ids = waitGate ? sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent !== 'antigravity' }) : sm.resumeLost({ enabled: ar.enabled }); if (waitGate) { const agyLost = () => sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent === 'antigravity' }); agyGateFirst.then(agyLost, agyLost); ids.push(...sm.lost().filter((r) => r.agent === 'antigravity').map((r) => r.id)); } if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
   try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).

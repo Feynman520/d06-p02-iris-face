@@ -136,8 +136,9 @@ export class SessionManager {
   /** 잃은 세션(lost) 목록 */
   lost() { return this.list().filter(r => r.lost && r.status === 'dead'); }
   /** 시작 직후: 잃은 세션을 하나씩 간격을 두고 자동 재개한다. 돌려주는 값 = 재개 대상 id 목록(비동기로 진행). */
-  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE, enabled = AUTO_RESUME } = {}) {
-    const ids = this.lost().map(r => r.id);
+  resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE, enabled = AUTO_RESUME, filter = null } = {}) {
+    // filter(2026-11-23): 일부 카드만 — 안티그래비티 카드는 중계기 첫 판정 뒤에 따로 재개한다(server.mjs). 없으면 예전과 같이 전부.
+    const ids = this.lost().filter(r => !filter || filter(r)).map(r => r.id);
     if (!enabled || !ids.length) return [];
     ids.forEach((id, i) => setTimeout(() => {
       const rec = this.sessions.get(id); if (!rec || rec.status !== 'dead') return; // 그 사이 사용자가 지웠거나 손으로 재개함
