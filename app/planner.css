@@ -26,17 +26,23 @@
 /* ---- 말풍선: 내용 하나에 말풍선 하나(2026-11-23). 같은 종류는 위로 쌓이고, 꼬리는 단추와 가장 가까운 맨 아래 것(.tail)만 단추를 가리킨다. 폭은 가장 긴 줄에 맞춘다(planner.js fit) ----
    말풍선 안의 글 자리(.pl-line)에는 테두리 · 바탕을 두지 않는다. 누를 수 있는 표시는 pl-pick — 본체의 .pick(선택 상자)과 이름이 겹치면 그 상자 모양이 안으로 묻어 들어온다(verify:planner-ui 가 본다). */
 .pl-says { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
-.pl-say { position: relative; width: max-content; max-width: 330px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--bd); border-radius: 18px; box-shadow: 0 16px 48px rgba(0,0,0,.55); cursor: default; --bg: var(--overlay); --bd: color-mix(in srgb, var(--tone) 50%, transparent); }
+/* 가로 길이(2026-11-23 사용자 신고 "가로 길이가 고정이라 글자가 이상하게 줄바뀜"): 글 길이만큼 늘어나고(최대 560px — 창이 좁으면 planner.js place 가 남은 너비로 줄인다 --pl-say-max),
+   그보다 길 때만 줄을 바꾼다. 두 줄을 같은 길이로 나누지 않고(balance 아님) 앞줄부터 채운다. */
+.pl-say { position: relative; width: max-content; max-width: var(--pl-say-max, 560px); padding: 10px 12px; background: var(--bg); border: 1px solid var(--bd); border-radius: 18px; box-shadow: 0 16px 48px rgba(0,0,0,.55); cursor: default; --bg: var(--overlay); --bd: color-mix(in srgb, var(--tone) 50%, transparent); }
 .pl-say.in { animation: pl-pop .26s cubic-bezier(.2,.9,.3,1.2) both; transform-origin: 100% 85%; }
 .pl-say.tail::after { content: ''; position: absolute; right: -6.5px; bottom: 18px; width: 12px; height: 12px; background: var(--bg); border-top: 1px solid var(--bd); border-right: 1px solid var(--bd); border-radius: 0 3px 0 0; transform: rotate(45deg); }
 .pl-over .pl-say::after { display: none; }
 .pl-say.pl-pick { cursor: pointer; }
 .pl-say.pl-pick:hover { --bg: color-mix(in srgb, var(--tone) 10%, var(--overlay)); }
 .pl-line { display: flex; align-items: flex-start; gap: 6px; }
-.pl-line p { margin: 0; flex: 1; min-width: 0; font-size: 14px; line-height: 1.55; color: var(--ink); word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; }
+.pl-line p { margin: 0; flex: 1; min-width: 0; font-size: 14px; line-height: 1.55; color: var(--ink); word-break: keep-all; overflow-wrap: anywhere; text-wrap: pretty; }
+.pl-over .pl-say { max-width: min(560px, calc(100vw - 40px)); }
 .pl-line small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--ink-3); }
 .pl-x { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 6px; color: var(--ink-3); display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
 .pl-say:hover .pl-x, .pl-x:focus-visible { opacity: 1; }
+/* 누를 때까지 남는 말(.keep): 닫기 × 가 늘 보인다 — 눌러야 사라진다는 표시 */
+.pl-say.keep .pl-x { opacity: .75; }
+.pl-say.keep:hover .pl-x { opacity: 1; }
 .pl-x:hover { background: var(--raised); color: var(--ink); }
 .pl-x svg { width: 12px; height: 12px; }
 .pl-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
@@ -56,6 +62,19 @@
 /* ---- 펼친 판: 한 화면. 다른 화면으로 넘어가지 않는다 ---- */
 .pl-panel { width: var(--pl-w, 384px); height: min(580px, var(--pl-h, 580px)); display: flex; flex-direction: column; background: var(--overlay); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,.6); overflow: hidden; color: var(--ink); }
 .pl-panel.in { animation: pl-rise .24s ease both; }
+/* ---- 오른쪽 칸으로 붙이기(2026-11-23 사용자 요청): 머리의 단추를 누르면 판이 무대 오른쪽에 위아래로 꽉 차게 붙고, 대화 · 입력창은 그만큼 왼쪽으로 줄어든다(가리지 않는다).
+   너비 --pl-dock-w 는 planner.js 가 무대(#stage)에 넣는다(왼쪽 가장자리를 끌어 조절). 육각 단추 · 말풍선은 칸의 왼쪽으로 비켜난다. ---- */
+#stage.pl-docked { padding-right: var(--pl-dock-w, 420px); }
+.pl.docked { top: 0; left: 0; right: 0; bottom: 0; display: block; transition: none; }
+.pl.docked > #pl-panel { position: absolute; top: 0; right: 0; bottom: 0; width: var(--pl-dock-w, 420px); }
+.pl.docked > .pl-row { position: absolute; right: calc(22px + var(--pl-dock-w, 420px) + var(--pl-shift, 0px)); bottom: var(--pl-bottom, 84px); }
+.pl.docked .pl-panel { width: 100%; height: 100%; border-radius: 0; border-width: 0 0 0 1px; box-shadow: -16px 0 40px rgba(0,0,0,.35); }
+.pl.docked .pl-panel.in { animation: pl-slide .2s ease both; }
+.pl.docked .pl-thread { max-height: 38vh; }
+.pl.docked .pl-head { padding-top: 14px; }
+.pl-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; }
+.pl-grip:hover, .pl.resizing .pl-grip { background: color-mix(in srgb, var(--iris) 30%, transparent); }
+.pl.resizing { user-select: none; }
 .pl-list, .pl-thread { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
 .pl-sp { flex: 1; }
 .pl-head { flex: none; display: flex; align-items: center; gap: 2px; padding: 12px 8px 10px 16px; }
@@ -81,6 +100,10 @@
 .pl-strip-h em { font-style: normal; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--iris); color: var(--base); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
 .pl-strip-b { border-top: 1px solid var(--line); padding: 2px 4px; max-height: 168px; overflow: auto; }
 .pl-strip-b .pl-r + .pl-r { border-top: 1px solid var(--line); }
+/* 제안 줄: 이름이 단추들에 밀려 잘리지 않게 이름을 윗줄에 통째로, 날짜 · 단추는 아랫줄에(2026-11-23) */
+.pl-strip-b .pl-r { flex-wrap: wrap; row-gap: 4px; padding-top: 7px; padding-bottom: 7px; }
+.pl-strip-b .pl-r .tx { flex: 1 1 100%; }
+.pl-strip-b .pl-r .pl-pill { margin-right: auto; }
 
 /* 달력: 표시는 점뿐 (파란 점 = 할 것, 그 옆 노란 점 = 마감) */
 .pl-cal { flex: none; display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin: 0 12px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
@@ -110,15 +133,17 @@
 .pl-ck.on { background: var(--ok); border-color: var(--ok); }
 .pl-ck.on::after { content: ''; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; border: solid var(--base); border-width: 0 2px 2px 0; transform: rotate(40deg); }
 .pl-ck[disabled] { opacity: .5; pointer-events: none; }
-.pl-r .tx { flex: 1; min-width: 0; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 이름(2026-11-23 사용자 신고 "뱃지 · 아이콘 때문에 이름이 잘림"): 한 줄에 안 들어가면 두 줄까지 보이고 그래도 넘치면 … (올리면 전체가 풍선으로 뜬다).
+   줄 끝의 숨은 단추(.hid)는 올리기 전에는 자리를 차지하지 않는다 — 안 보이는 단추가 이름의 자리를 먹지 않게. */
+.pl-r .tx { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere; }
 .pl-r .tx.done { color: var(--ink-3); text-decoration: line-through; }
 .pl-r.end .tx:not(.done) { color: var(--bad); }
 /* 이름 고치기(두 번 클릭): 이름 자리에 그대로 서는 입력칸 */
 .pl-r .tx[data-edit] { cursor: text; }
 .pl-r .pl-edit { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: inherit; font-size: 13.5px; color: var(--ink); background: var(--base); border: 1px solid var(--iris); border-radius: 7px; outline: none; }
 .pl-ib.del:hover { color: var(--bad); }
-.pl-r .hid { display: inline-flex; opacity: 0; transition: opacity .12s; }
-.pl-r:hover .hid, .pl-r:focus-within .hid { opacity: 1; }
+.pl-r .hid { display: inline-flex; flex: none; width: 0; margin-left: -10px; overflow: hidden; opacity: 0; transition: opacity .12s; }   /* 너비 0(= 자리 없음)이어도 Tab 으로는 닿는다 → focus-within 으로 펴진다 */
+.pl-r:hover .hid, .pl-r:focus-within .hid { width: auto; margin-left: 0; overflow: visible; opacity: 1; }
 /* 단계: 번호 = 순서 */
 .pl-steps { position: relative; padding-bottom: 4px; }
 .pl-steps::before { content: ''; position: absolute; left: 41.5px; top: 10px; bottom: 14px; width: 1px; background: var(--line-2); }
@@ -175,6 +200,7 @@
 #st-pl-usage { white-space: pre-line; }
 @keyframes pl-pop { from { opacity: 0; transform: scale(.86); } to { opacity: 1; transform: none; } }
 @keyframes pl-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pl-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @keyframes pl-spin { to { transform: rotate(360deg); } }
 @keyframes pl-blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .pl-say.in, .pl-panel.in, .pl-talk.in { animation: none; } .pl-hex svg, .pl-wait i { animation: none; } }

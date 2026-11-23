@@ -37,6 +37,8 @@
     target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>', // 오늘로
     'chev-left': '<path d="m15 6-6 6 6 6"/>', 'chev-right': '<path d="m9 6 6 6-6 6"/>', 'chev-down': '<path d="m6 9 6 6 6-6"/>', 'chev-up': '<path d="m6 15 6-6 6 6"/>',
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    'dock-right': '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M14.5 5v14"/>', // 플래너를 오른쪽 칸으로 붙이기
+    'dock-float': '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><rect x="11.5" y="11" width="6.5" height="5.5" rx="1.2" fill="currentColor" stroke="none"/>', // 다시 작게 띄우기
     'arrow-right': '<path d="M5 12h14m0 0-5-5m5 5-5 5"/>', // 세션 열기 · 결과 보기
     send: '<path d="M12 19V5m0 0-6 6m6-6 6 6"/>', // 아이리스에게 보내기
     undo: '<path d="M8 6 3.5 10.5 8 15"/><path d="M3.5 10.5H14a5.5 5.5 0 0 1 0 11h-3"/>', // 되돌리기

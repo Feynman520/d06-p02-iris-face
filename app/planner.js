@@ -4,7 +4,10 @@
    · 셈은 하지 않는다 — 데몬이 준 한 장(GET /api/planner/view)을 그대로 그린다.
    · 손으로 하는 것은 「끝냄」 체크와 제안에 대한 답뿐. 넣기 · 고치기 · 지우기는 아래 칸에서 아이리스에게 말로(POST /api/planner/talk).
    · 내용 하나에 말풍선 하나(2026-11-23). 같은 종류는 말풍선을 위로 쌓고(최대 4개), 다른 종류는 차례로(약속 직전 → 세션 확인 → 작업 완료 → 제안 → 인사).
-   · 말풍선은 초점을 뺏지 않는다(입력 중인 글 유지). 폭은 가장 긴 줄에 맞춘다.
+   · 머무는 시간(2026-11-23): 중요한 말(약속 직전 · 지나감, 세션의 확인 · 물음)은 누를 때까지 남고(닫기 × 가 늘 보임), 나머지는 6초(단추 · 실패 알림은 10초) 뒤 사라진다.
+     남는 말은 사라지는 말의 차례를 막지 않는다 — 단추 쪽(아래)에 남아 있고, 사라지는 말은 그 위에 함께 떴다가 간다.
+   · 말풍선은 초점을 뺏지 않는다(입력 중인 글 유지). 폭은 글 길이만큼 늘어나고(최대 560px, 좁은 창에서는 남은 너비), 줄이 바뀌면 가장 긴 줄에 맞춘다.
+   · 판은 두 모양(2026-11-23): 단추 위에 작게 뜨거나, 머리의 닫기 옆 단추로 무대 오른쪽 칸에 붙는다(대화 · 입력창이 그만큼 줄어 가려지지 않는다 · 왼쪽 가장자리를 끌어 너비 조절 · 고른 모양은 이 컴퓨터에 기억).
    · 화면에 이모지를 쓰지 않는다. 아이콘은 app/icons.js 이름으로만. 모든 글자는 esc() 를 거친다.
    사용: Planner.init({ openFolder, chatIn, openSession, drawerOpen }) · Planner.onHello(p) · Planner.onMessage(m) · Planner.onEscape() → bool
          Planner.say({ group, tone, text, sub?, tip?, id?, pick?, actions?, ttl?, force? }) · Planner.applySettings(cfg) */
@@ -15,7 +18,11 @@ window.Planner = (() => {
   const I = (name) => window.Icons.svg(name, 16);
   const HEX = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9Z" style="stroke:var(--iris)" stroke-width="1.3"/><path d="M12 3v9m0 0l7.8 4.5M12 12l-7.8 4.5" style="stroke:var(--iris-2)" stroke-width="1" opacity=".7"/></svg>';
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
-  const TTL = 8000, MAX_LINES = 4;
+  /* 머무는 시간(2026-11-23 사용자 결정): 중요한 말(약속 직전 · 지나감, 세션의 확인 · 물음)은 누를 때까지 남고, 나머지는 몇 초 뒤 사라진다.
+     글만 있는 말 6초 · 단추가 붙었거나 실패를 알리는 말 10초 · 처음 한 번 소개 20초. 부르는 쪽이 ttl 을 주면 그 값(0 = 남음)이 먼저다. */
+  const TTL = 6000, TTL_ACT = 10000, TTL_INTRO = 20000, MAX_LINES = 4, PIN_MAX = 3;
+  const KEEP = new Set(['sched', 'attention']);   // 누를 때까지 남는 종류
+  const ttlOf = (b) => (b.ttl === 0 ? 0 : b.ttl ? b.ttl : KEEP.has(b.group || 'info') ? 0 : (b.actions && b.actions.length) || b.tone === 'warn' ? TTL_ACT : TTL);
   const early = [];   // init 앞에 온 말(준비되면 차례로 말한다)
   const PRI = { sched: 0, attention: 1, done: 2, exited: 2, info: 2, proposal: 3, greet: 4 }; // 겹칠 때의 차례(작을수록 먼저)
 
@@ -42,12 +49,26 @@ window.Planner = (() => {
   let host = null, over = null, tipEl = null, panelEl = null, rowEl = null;
   let open = false, talk = false, strip = false, fresh = false, talkFresh = false, focusIn = false;
   let composing = false, panelDirty = false, compact = false, threadLen = 0;
+  // 오른쪽 칸으로 붙이기(2026-11-23 사용자 요청): docked = 사용자가 고른 모양(다음에 열 때도 그대로 — 이 컴퓨터의 화면 기억), dockW = 칸 너비, tall = 칸이 길어 대화 중에도 달 전체를 보일 수 있다
+  const DOCK_W = 420, DOCK_MIN = 340, DOCK_MAX = 720, STAGE_KEEP = 360;   // STAGE_KEEP = 칸 옆에 대화가 설 최소 너비
+  let docked = false, dockW = DOCK_W, tall = false, sizing = null, wasOn = false;
+  const mem = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* 기억하지 못해도 화면은 그대로 */ } } };
+  const stageW = () => { const s = $('#stage'); return s ? s.clientWidth : 1000; };
+  /** 칸으로 붙일 자리가 있는가(좁은 창에서는 붙이지 않고 작게 띄운다) */
+  const canDock = () => stageW() >= DOCK_MIN + STAGE_KEEP;
+  /** 지금 실제로 칸으로 붙어 있는가 */
+  const dockOn = () => docked && open && canDock();
+  const dockWidth = () => Math.round(Math.max(DOCK_MIN, Math.min(dockW, DOCK_MAX, stageW() - STAGE_KEEP)));
   let sel = null, month = null, view = null, count = 0, busy = false, loadSeq = 0;
   const folded = new Set();
   let thread = [];            // { who:'me'|'ai', text, cards?, undo?, warn?, confirm?, wait? }
   let talkCtx = null;         // 「말로 고치기」로 연 대화의 대상(제안) — 판이나 대화를 닫으면 지운다
-  let cur = null;             // 떠 있는 말풍선 { group, tone, lines:[…], actions, where }
+  let cur = null;             // 떠 있는 말풍선(몇 초 뒤 사라지는 것) { group, tone, lines:[…], actions }
+  const pins = [];            // 누를 때까지 남는 말풍선들(최대 PIN_MAX 묶음) — cur 아래(단추 쪽)에 함께 뜬다. 남는 말이 사라지는 말의 자리를 막지 않게 따로 둔다
   const queue = [];
+  /** 화면에 떠 있는 묶음들, 위 → 아래(단추 쪽). 사라지는 말이 위, 남는 말이 아래 */
+  const vis = () => [...(cur ? [cur] : []), ...pins];
+  const keeps = (b) => b.lines.length > 0 && b.lines.every((l) => !l.ttl);
 
   // ---- 데몬과 ----
   async function api(path, body) {
@@ -166,22 +187,31 @@ window.Planner = (() => {
     return '';
   }
   function panelHtml() {
-    if (!view) return `<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너"><div class="pl-head"><strong>플래너</strong><span class="pl-sp"></span>${ib('close', '닫기', '', 'data-close')}</div>${noteHtml()}<div class="pl-list"></div></div>`;
+    const on = dockOn();
+    // 닫기 옆 단추: 오른쪽 칸으로 붙이기 ↔ 다시 작게 띄우기. 붙일 자리가 없는 좁은 창에서는 두지 않는다
+    const dockBtn = on ? ib('dock-float', '작게 띄우기', '', 'data-dock aria-pressed="true"') : canDock() ? ib('dock-right', '오른쪽 칸으로 붙이기', '', 'data-dock aria-pressed="false"') : '';
+    const grip = on ? '<div class="pl-grip" id="pl-grip" data-tip="끌어서 너비 조절 · 두 번 클릭 = 기본 너비"></div>' : '';
+    if (!view) return `${grip}<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너"><div class="pl-head"><strong>플래너</strong><span class="pl-sp"></span>${dockBtn}${ib('close', '닫기', '', 'data-close')}</div>${noteHtml()}<div class="pl-list"></div></div>`;
     const rows = view.rows.map(rowHtml).join('') || '<div class="pl-empty">할 것이 없어요</div>';
-    const head = `<div class="pl-head"><strong>${esc(longDay(view.day))}</strong>${view.day === view.today ? '<span class="pl-pill now">오늘</span>' : ''}<span class="pl-sp"></span>${ib('chev-left', '이전 달', '', 'data-month="-1"')}${ib('target', '오늘로', '', 'data-today')}${ib('chev-right', '다음 달', '', 'data-month="1"')}${ib('close', '닫기', '', 'data-close')}</div>`;
+    const head = `<div class="pl-head"><strong>${esc(longDay(view.day))}</strong>${view.day === view.today ? '<span class="pl-pill now">오늘</span>' : ''}<span class="pl-sp"></span>${ib('chev-left', '이전 달', '', 'data-month="-1"')}${ib('target', '오늘로', '', 'data-today')}${ib('chev-right', '다음 달', '', 'data-month="1"')}${dockBtn}${ib('close', '닫기', '', 'data-close')}</div>`;
     const talkPart = talk ? `<div class="pl-talk${talkFresh ? ' in' : ''}"><button type="button" class="pl-talk-x" data-talk-x data-tip="대화 접기" aria-label="대화 접기">${I('chev-down')}</button><div class="pl-thread" id="pl-thread" aria-live="polite">${threadHtml()}</div></div>` : '';
-    return `<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너">${head}${noteHtml()}${stripHtml()}${talk || compact ? week() : grid()}<div class="pl-list">${rows}</div>${talkPart}${footHtml()}</div>`;
+    const small = compact || (talk && !(on && tall));   // 달 대신 그 주만: 낮은 창이거나 대화가 열렸을 때(길게 붙은 칸에서는 대화 중에도 달 전체)
+    return `${grip}<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너">${head}${noteHtml()}${stripHtml()}${small ? week() : grid()}<div class="pl-list">${rows}</div>${talkPart}${footHtml()}</div>`;
   }
   /**
    * 말풍선들. 내용 하나에 말풍선 하나(2026-11-23 사용자 결정) — 같은 종류가 여럿이면 말풍선이 위로 쌓이고, 꼬리는 단추와 가장 가까운 맨 아래 것에만 둔다.
    * 누를 수 있는 것의 표시는 pl-pick 이다. 본체의 .pick(선택 상자 모양)과 이름이 겹치면 그 테두리 · 바탕이 말풍선 안으로 묻어 들어온다(같은 날 신고의 원인).
    */
-  function sayHtml(b, isNew) {
-    const acts = (b.actions || []).map((a, i) => (a.label ? `<button type="button" class="pl-tb${a.main ? ' main' : ''}" data-act="${i}"${a.tip ? ` data-tip="${esc(a.tip)}"` : ''}>${a.icon ? I(a.icon) : ''}${esc(a.label)}</button>` : `<button type="button" class="pl-ib line" data-act="${i}" data-tip="${esc(a.tip || '')}" aria-label="${esc(a.tip || '')}">${I(a.icon)}</button>`)).join('');
-    const last = b.lines.length - 1;
-    const says = b.lines.map((l, i) => {
-      const pop = isNew || l.fresh; l.fresh = false;
-      return `<div class="pl-say${pop ? ' in' : ''}${i === last ? ' tail' : ''}${l.pick ? ' pl-pick' : ''}" data-tone="${esc(l.tone || b.tone)}" data-line="${i}"${l.tip ? ` data-tip="${esc(l.tip)}"` : ''} role="status"><div class="pl-line"><p>${esc(l.text)}${l.sub ? `<small>${esc(l.sub)}</small>` : ''}</p><button type="button" class="pl-x" data-line-x="${i}" tabindex="-1" aria-label="닫기">${I('close')}</button></div>${acts && i === last ? `<div class="pl-acts">${acts}</div>` : ''}</div>`;
+  function sayHtml(blocks, isNew) {
+    const says = blocks.map((b, bi) => {
+      const acts = (b.actions || []).map((a, i) => (a.label ? `<button type="button" class="pl-tb${a.main ? ' main' : ''}" data-act="${i}"${a.tip ? ` data-tip="${esc(a.tip)}"` : ''}>${a.icon ? I(a.icon) : ''}${esc(a.label)}</button>` : `<button type="button" class="pl-ib line" data-act="${i}" data-tip="${esc(a.tip || '')}" aria-label="${esc(a.tip || '')}">${I(a.icon)}</button>`)).join('');
+      const last = b.lines.length - 1;
+      return b.lines.map((l, i) => {
+        const pop = (isNew && b === cur) || l.fresh; l.fresh = false;
+        const tail = bi === blocks.length - 1 && i === last;   // 꼬리는 단추와 가장 가까운 맨 아래 것 하나에만
+        // keep = 누를 때까지 남는 말(닫기 × 가 늘 보인다 — 눌러야 사라진다는 표시)
+        return `<div class="pl-say${pop ? ' in' : ''}${tail ? ' tail' : ''}${l.pick ? ' pl-pick' : ''}${l.ttl ? '' : ' keep'}" data-tone="${esc(l.tone || b.tone)}" data-b="${bi}" data-line="${i}"${l.tip ? ` data-tip="${esc(l.tip)}"` : ''} role="status"><div class="pl-line"><p>${esc(l.text)}${l.sub ? `<small>${esc(l.sub)}</small>` : ''}</p><button type="button" class="pl-x" data-line-x="${i}" tabindex="-1" aria-label="닫기">${I('close')}</button></div>${acts && i === last ? `<div class="pl-acts">${acts}</div>` : ''}</div>`;
+      }).join('');
     }).join('');
     return `<div class="pl-says">${says}</div>`;
   }
@@ -192,14 +222,18 @@ window.Planner = (() => {
     hideTip();
     const hidden = cfg.plannerEnabled === false && cfg.notifyDone === false; // 플래너도 작업 알림도 끈 사람에게는 단추를 두지 않는다
     const covered = !!opts.drawerOpen();                                    // 설정·대시보드 서랍이 무대를 덮고 있다
-    host.hidden = (hidden && !cur) || covered;                              // 다만 말하는 동안(설정의 알림 미리보기 등)은 보인다
-    const say = cur ? sayHtml(cur, sayNew) : '';
+    const blocks = vis(); const front = blocks[blocks.length - 1] || null;   // front = 단추와 가장 가까운 묶음(단추의 색을 정한다)
+    host.hidden = (hidden && !front) || covered;                            // 다만 말하는 동안(설정의 알림 미리보기 등)은 보인다
+    const say = front ? sayHtml(blocks, sayNew) : '';
     sayNew = false;
-    const tone = cur ? cur.tone : 'rest';
-    rowEl.innerHTML = `${covered ? '' : say}<button type="button" class="pl-hex${cur ? ' speak' : ''}" id="pl-hex" data-tone="${esc(tone)}"${open ? '' : ' data-tip="플래너 열기"'} aria-label="플래너" aria-expanded="${open}">${HEX}${count ? `<span class="pl-cnt">${count}</span>` : ''}</button>`;
-    over.hidden = !(covered && cur);          // 서랍이 덮고 있으면 말풍선만 구석에(지금의 알림과 같은 자리)
-    over.innerHTML = covered && cur ? say : '';
+    const tone = front ? front.tone : 'rest';
+    rowEl.innerHTML = `${covered ? '' : say}<button type="button" class="pl-hex${front ? ' speak' : ''}" id="pl-hex" data-tone="${esc(tone)}"${open ? '' : ' data-tip="플래너 열기"'} aria-label="플래너" aria-expanded="${open}">${HEX}${count ? `<span class="pl-cnt">${count}</span>` : ''}</button>`;
+    over.hidden = !(covered && front);        // 서랍이 덮고 있으면 말풍선만 구석에(지금의 알림과 같은 자리)
+    over.innerHTML = covered && front ? say : '';
     fit(over.hidden ? rowEl : over);
+    // 다시 그리면 마우스 아래의 말풍선이 새것으로 바뀌어 "떠났다"는 신호가 오지 않는다(2026-11-23 고장: 하나를 닫으면 나머지 · 새로 오는 것이 영영 남았다).
+    // 그래서 다시 그린 뒤에는 멈춤을 풀고 시간을 다시 센다 — 마우스가 여전히 말풍선 위에 있으면 브라우저가 곧 다시 알려 주고, 사라질 때에도 한 번 더 본다(arm).
+    if (hovering) resume();
   }
   /** 판을 다시 그린다. 입력칸에 적던 글 · 커서 · 초점, 목록 · 대화의 스크롤을 지킨다. 한글을 조합하는 중이면 조합이 끝난 뒤에 그린다. */
   function renderPanel() {
@@ -257,18 +291,32 @@ window.Planner = (() => {
     } catch { /* 재지 못하면 CSS 폭 그대로 */ }
   }
   /** 입력창 높이 · 보조 작업 서랍 너비 · 무대 높이에 맞춰 자리를 잡는다. */
-  function place() {
+  function place(redraw = true) {   // redraw = false: 부른 쪽이 바로 뒤에 다시 그린다(열기 · 닫기 · 붙이기)
     if (!host) return;
     const stage = $('#stage'), dock = $('#dock'), sub = $('#sub');
-    const tall = (id) => { const el = $(id); return el && !el.hidden ? el.offsetHeight : 0; };
+    const high = (id) => { const el = $(id); return el && !el.hidden ? el.offsetHeight : 0; };
     // 본체의 확인 카드 · 끝난 세션 띠가 떠 있으면 그 위로 올라간다(그 단추를 가리지 않게)
-    const bottom = (dock ? dock.offsetHeight : 76) + tall('#approval') + tall('#dead-bar') + 8;
+    const bottom = (dock ? dock.offsetHeight : 76) + high('#approval') + high('#dead-bar') + 8;
     host.style.setProperty('--pl-bottom', `${bottom}px`);
     const sw = stage ? stage.clientWidth : 1000, sh = stage ? stage.clientHeight : 800;
+    // 오른쪽 칸으로 붙은 모양: 무대가 칸 너비만큼 안쪽으로 줄고(대화 · 입력창이 가려지지 않는다), 단추 · 말풍선은 칸의 왼쪽에 선다
+    const on = dockOn(); const dw = on ? dockWidth() : 0;
+    const flipped = on !== wasOn; wasOn = on;                  // 창 크기가 바뀌어 붙일 자리가 생기거나 없어졌다 — 머리의 단추 · 모양이 달라지므로 다시 그린다
+    host.classList.toggle('docked', on);
+    if (stage) { stage.classList.toggle('pl-docked', on); if (on) stage.style.setProperty('--pl-dock-w', `${dw}px`); else stage.style.removeProperty('--pl-dock-w'); }
     let shift = sub && !sub.hidden ? sub.offsetWidth : 0;
-    if (sw - 44 - shift < 300) shift = 0;                     // 서랍 옆에 판이 설 자리가 없으면 비켜나지 않는다
+    if (sw - dw - 44 - shift < 300) shift = 0;                // 서랍 옆에 판이 설 자리가 없으면 비켜나지 않는다
     host.style.setProperty('--pl-shift', `${shift}px`);
-    host.style.setProperty('--pl-w', `${Math.max(260, Math.min(384, sw - 44 - shift))}px`);
+    host.style.setProperty('--pl-w', `${Math.max(260, Math.min(440, sw - 44 - shift))}px`);   // 떠 있는 판의 너비(2026-11-23: 384 → 440 — 이름이 덜 잘리게)
+    // 말풍선의 최대 폭: 560px, 창이 좁으면 남은 너비까지(화면 밖으로 나가지 않게)
+    host.style.setProperty('--pl-say-max', `${Math.max(200, Math.min(560, sw - dw - shift - 22 - 48 - 14 - 16))}px`);
+    if (on) {
+      const was = compact, wasTall = tall; compact = sh < 520; tall = sh >= 760;
+      if (redraw && open && (flipped || was !== compact || wasTall !== tall)) renderPanel();
+      return;
+    }
+    tall = false;
+    if (redraw && open && flipped) renderPanel();
     let avail = sh - bottom - 76;
     if (avail < 240) {                                         // 확인 카드가 커서 그 위에 판이 설 자리가 없다 — 판은 입력창 위(카드를 덮는 자리)로 내려오고 화면 높이 안에 맞춘다
       const base = (dock ? dock.offsetHeight : 76) + 8;
@@ -277,7 +325,7 @@ window.Planner = (() => {
     }
     host.style.setProperty('--pl-h', `${Math.max(160, Math.min(avail, sh - 24))}px`);
     const was = compact; compact = avail < 440;               // 낮은 창에서는 달 대신 그 주만 보인다(입력칸이 잘리지 않게)
-    if (was !== compact && open) renderPanel();
+    if (redraw && was !== compact && open) renderPanel();
   }
 
   // ---- 설명 풍선 ----
@@ -286,7 +334,7 @@ window.Planner = (() => {
     const full = el.dataset.full, more = el.dataset.tip || '';
     if (full !== undefined) {
       // 이름 자리: 이름 전체(굵게) + 메모 등. 덧붙일 것이 없고 이름이 잘리지도 않았으면 띄우지 않는다
-      if (!more && !(el.scrollWidth > el.clientWidth + 1)) return hideTip();
+      if (!more && !(el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1)) return hideTip();   // 이름은 두 줄까지 보이므로(2026-11-23) 높이로도 잘렸는지 본다
       tipEl.textContent = '';
       const head = document.createElement('b'); head.textContent = full; tipEl.appendChild(head);
       if (more) { const body = document.createElement('span'); body.textContent = more.length > TIP_MAX ? `${more.slice(0, TIP_MAX)}…` : more; tipEl.appendChild(body); }
@@ -316,9 +364,10 @@ window.Planner = (() => {
       const old = cur; for (const l of old.lines) clearTimeout(l.timer); cur = null; queue.unshift(old);
     }
     const group = b.group || 'info';
-    const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, meta: b.meta || null, ttl: b.ttl === 0 ? 0 : (b.ttl || TTL), timer: 0, closed: false, tone: b.tone || 'iris', fresh: false };
+    const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, meta: b.meta || null, ttl: ttlOf(b), timer: 0, closed: false, tone: b.tone || 'iris', fresh: false };
     line.close = () => closeLine(line);
     const one = { group, tone: b.tone || 'iris', lines: [line], actions: b.actions || null };
+    if (!line.ttl) return pin(one, line);                                        // 누를 때까지 남는 말: 사라지는 말의 차례와 따로, 단추 쪽에 함께 뜬다
     if (cur && cur.group === group && !cur.actions && !one.actions) {            // 같은 종류: 말풍선을 위로 쌓는다(최대 4개, 오래된 것부터 빠짐)
       while (cur.lines.length >= MAX_LINES) dropLine(cur.lines[0]);
       cur.lines.push(line); cur.tone = one.tone; line.fresh = true; if (!hovering) arm(line); renderRow();
@@ -331,7 +380,7 @@ window.Planner = (() => {
       return line;
     }
     if (cur) {
-      const same = one.actions ? null : queue.find((q) => q.group === group && !q.actions); // 차례를 기다리는 것끼리도 같은 종류는 한 말풍선으로(최대 4줄)
+      const same = one.actions ? null : queue.find((q) => q.group === group && !q.actions && !keeps(q)); // 차례를 기다리는 것끼리도 같은 종류는 한 말풍선으로(최대 4줄)
       if (same) { while (same.lines.length >= MAX_LINES) dropLine(same.lines[0]); same.lines.push(line); same.tone = one.tone; return line; }
       queue.push(one); queue.sort((x, y) => (PRI[x.group] ?? 2) - (PRI[y.group] ?? 2));
       return line;
@@ -339,15 +388,33 @@ window.Planner = (() => {
     show(one);
     return line;
   }
+  /**
+   * 누를 때까지 남는 말을 세운다. 같은 종류(단추 없는 것끼리)는 한 묶음에 위로 쌓고(최대 4개), 묶음은 급한 것이 단추 쪽(아래)에 오게 놓는다.
+   * 묶음이 PIN_MAX 를 넘으면 차례를 기다렸다가 자리가 나면 올라온다(closeLine).
+   */
+  function pin(one, line) {
+    const same = one.actions ? null : pins.find((p) => p.group === one.group && !p.actions);
+    if (same) { while (same.lines.length >= MAX_LINES) dropLine(same.lines[0]); same.lines.push(line); same.tone = one.tone; line.fresh = true; renderRow(); return line; }
+    if (pins.length >= PIN_MAX) { queue.push(one); queue.sort((x, y) => (PRI[x.group] ?? 2) - (PRI[y.group] ?? 2)); return line; }
+    line.fresh = true; pins.push(one); pins.sort((x, y) => (PRI[y.group] ?? 2) - (PRI[x.group] ?? 2));
+    renderRow();
+    return line;
+  }
   function show(b) { cur = b; sayNew = true; hovering = false; for (const l of b.lines) arm(l); renderRow(); }
   // 창이 뒤에 있거나 가려진 동안에는 사라지지 않는다 — 돌아왔을 때 그때부터 시간을 센다(안 보는 사이 지나간 알림을 놓치지 않게)
   const away = () => document.hidden || document.visibilityState !== 'visible' || !document.hasFocus();
+  /** 지금 마우스가 정말 말풍선 더미 위에 있는가 — 기억해 둔 표시(hovering)가 아니라 화면에 직접 묻는다 */
+  const overSays = () => { try { return !!document.querySelector('.pl-says:hover'); } catch { return false; } };
   function arm(l) {
     clearTimeout(l.timer); l.waiting = false;
     if (away()) { if (l.ttl || (l.meta && l.meta.intro)) l.waiting = true; return; }
     seen(l);
     if (!l.ttl) return;
-    l.timer = setTimeout(() => (away() ? (l.waiting = true) : closeLine(l)), l.ttl);
+    l.timer = setTimeout(() => {
+      if (away()) { l.waiting = true; return; }
+      if (overSays()) { pause(); return; }      // 사라질 때가 됐는데 마우스가 올라가 있다 — 멈췄다가, 떠나면 그때부터 다시 센다
+      closeLine(l);
+    }, l.ttl);
   }
   /** 처음 한 번 소개가 실제로 화면에 보였다(창이 앞에 있고 말풍선이 떴다) — 데몬에 알려 "소개했다"고 적게 한다. 알리지 못하면 데몬이 나중에 다시 보낸다. */
   function seen(l) {
@@ -356,19 +423,23 @@ window.Planner = (() => {
     try { fetch('/api/planner/intro-seen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => { l.acked = false; }); } catch { l.acked = false; }
   }
   function back() { if (cur && !hovering && !away()) for (const l of cur.lines) if (l.waiting) arm(l); }
-  function dropLine(l) { clearTimeout(l.timer); l.closed = true; if (cur) cur.lines = cur.lines.filter((x) => x !== l); for (const q of queue) q.lines = q.lines.filter((x) => x !== l); }
+  function dropLine(l) { clearTimeout(l.timer); l.closed = true; if (cur) cur.lines = cur.lines.filter((x) => x !== l); for (const q of [...pins, ...queue]) q.lines = q.lines.filter((x) => x !== l); }
   function closeLine(l) {
     if (l.closed) return;
     dropLine(l);
-    for (let i = queue.length - 1; i >= 0; i--) if (!queue[i].lines.length) queue.splice(i, 1);
-    if (cur && !cur.lines.length) { cur = null; const next = queue.shift(); if (next) return show(next); }
+    for (const list of [queue, pins]) for (let i = list.length - 1; i >= 0; i--) if (!list[i].lines.length) list.splice(i, 1);
+    // 남는 말의 자리가 났으면 기다리던 남는 말을 올린다
+    for (let i = 0; i < queue.length && pins.length < PIN_MAX;) { if (keeps(queue[i])) { const b = queue.splice(i, 1)[0]; for (const x of b.lines) x.fresh = true; pins.push(b); } else i++; }
+    pins.sort((x, y) => (PRI[y.group] ?? 2) - (PRI[x.group] ?? 2));
+    if (cur && !cur.lines.length) cur = null;
+    if (!cur) { const i = queue.findIndex((q) => !keeps(q)); if (i >= 0) return show(queue.splice(i, 1)[0]); }
     renderRow();
   }
   let hovering = false; // 말풍선 위에 마우스가 있는 동안은 사라지지 않는다(그사이 쌓인 줄도)
   const pause = () => { hovering = true; if (cur) for (const l of cur.lines) clearTimeout(l.timer); };
   const resume = () => { hovering = false; if (cur) for (const l of cur.lines) arm(l); };
   /** 떠 있는 것 + 차례를 기다리는 것(검사 · 설정 미리보기용) */
-  const bubbles = () => [...(cur ? [cur] : []), ...queue].flatMap((b, bi) => b.lines.map((l) => ({ group: b.group, tone: b.tone, text: l.text, sub: l.sub, tip: l.tip, id: l.id, meta: l.meta, shown: bi === 0 && !!cur })));
+  const bubbles = () => { const up = vis(); return [...up, ...queue].flatMap((b) => b.lines.map((l) => ({ group: b.group, tone: b.tone, text: l.text, sub: l.sub, tip: l.tip, id: l.id, meta: l.meta, keep: !l.ttl, ttl: l.ttl, shown: up.includes(b) }))); };
 
   // ---- 데몬이 시킨 한마디(planner 방송의 say) ----
   /** 지금 「잠시 조용히」인가(설정의 끝나는 시각이 아직 안 지났다) */
@@ -391,7 +462,7 @@ window.Planner = (() => {
     clearInterval(introWait); introWait = 0;
     const mine = (b) => b.lines.length > 0 && b.lines.every((l) => l.meta && l.meta.src === 'planner' && !(keepAsk && l.meta.ask));
     for (let i = queue.length - 1; i >= 0; i--) if (mine(queue[i])) queue.splice(i, 1);
-    if (cur && mine(cur)) for (const l of [...cur.lines]) closeLine(l);
+    for (const b of vis()) if (mine(b)) for (const l of [...b.lines]) closeLine(l);
   }
   function sayFromDaemon(s) {
     if (!s || typeof s.text !== 'string') return;
@@ -417,14 +488,31 @@ window.Planner = (() => {
       // 첫 실행 튜토리얼이 덮고 있는 동안 띄우지 않는다(뒤에서 떴다 사라지면 아무도 못 본다) — 닫힐 때까지 기다렸다가, 조금 더 오래 보인다
       if (tutorialOpen()) { introWait = setInterval(() => { if (!tutorialOpen()) { clearInterval(introWait); introWait = 0; sayFromDaemon(s); } }, 2000); return; }
     }
-    say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : s.intro ? TTL * 2.5 : undefined, meta: { src: 'planner', intro: !!s.intro, ask, token } });
+    say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : s.intro ? TTL_INTRO : undefined, meta: { src: 'planner', intro: !!s.intro, ask, token } });
     // 약속 알림(os 표시가 붙은 것)은 창이 뒤에 있으면 윈도우 알림으로도 — 설정의 「윈도우 알림」을 따른다(app/notify.js 의 같은 길)
     if (s.os && away()) { try { window.Notify?.os?.({ title: s.text, sub: s.tip || '', onClick: () => openPanel(null) }); } catch { /* 알림 실패는 넘어간다 */ } }
   }
 
   // ---- 하는 일 ----
-  function openPanel(day) { open = true; fresh = true; if (day) { sel = day; month = day.slice(0, 7); } else if (!sel && view) sel = view.today; render(); load(); }
-  function closePanel() { open = false; talk = false; talkCtx = null; render(); }
+  function openPanel(day) { open = true; fresh = true; if (day) { sel = day; month = day.slice(0, 7); } else if (!sel && view) sel = view.today; place(false); render(); load(); }
+  function closePanel() { open = false; talk = false; talkCtx = null; place(false); render(); }
+  /** 닫기 옆 단추: 오른쪽 칸으로 붙이기 ↔ 작게 띄우기. 고른 모양은 이 컴퓨터에 기억해 다음에 열 때도 그대로다. */
+  function toggleDock() {
+    docked = !dockOn(); mem.set('iris.planner.dock', docked ? '1' : '0');
+    fresh = true; place(false); render();
+  }
+  /** 칸의 왼쪽 가장자리를 끌어 너비를 바꾼다(두 번 클릭 = 기본 너비). */
+  function gripDown(e) {
+    if (!e.target.closest || !e.target.closest('.pl-grip') || !dockOn()) return;
+    e.preventDefault();
+    const stage = $('#stage'); if (!stage) return;
+    sizing = { right: stage.getBoundingClientRect().right };
+    host.classList.add('resizing');
+    try { e.target.setPointerCapture(e.pointerId); } catch { /* 잡지 못해도 창의 움직임으로 따라간다 */ }
+    const move = (ev) => { if (!sizing) return; dockW = sizing.right - ev.clientX; place(); };
+    const up = () => { sizing = null; host.classList.remove('resizing'); dockW = dockWidth(); mem.set('iris.planner.dockW', String(dockW)); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  }
   /** 대화를 접는다. 입력칸의 초점을 먼저 놓는다 — 다시 그리며 초점을 돌려주면 그 초점이 대화를 다시 열기 때문이다. */
   function foldTalk() { const inp = $('#pl-in', panelEl); if (inp) inp.blur(); talk = false; talkCtx = null; renderPanel(); }
   function openTalk() {
@@ -521,10 +609,12 @@ window.Planner = (() => {
     const q = (s) => e.target.closest(s);
     let el;
     if (edit && !q('#pl-edit')) commitEdit();   // 이름을 고치다 다른 곳을 눌렀다 = 저장(단추는 초점을 뺏지 않으므로 여기서 닫는다) — 누른 것은 이어서 그대로 한다
-    if ((el = q('[data-line-x]'))) { const l = cur && cur.lines[Number(el.dataset.lineX)]; if (l) closeLine(l); return; }
-    if ((el = q('[data-act]'))) { const a = cur && cur.actions && cur.actions[Number(el.dataset.act)]; const b = cur; if (a) { for (const l of [...b.lines]) closeLine(l); a.run(); } return; }
-    if ((el = q('[data-line]'))) { const l = cur && cur.lines[Number(el.dataset.line)]; if (l && l.pick) { closeLine(l); l.pick(l.id); } return; }
+    const blk = (x) => { const s = x.closest('.pl-say'); return (s && vis()[Number(s.dataset.b)]) || null; };   // 누른 말풍선이 든 묶음
+    if ((el = q('[data-line-x]'))) { const b = blk(el); const l = b && b.lines[Number(el.dataset.lineX)]; if (l) closeLine(l); return; }
+    if ((el = q('.pl-say [data-act]'))) { const b = blk(el); const a = b && b.actions && b.actions[Number(el.dataset.act)]; if (a) { for (const l of [...b.lines]) closeLine(l); a.run(); } return; }
+    if ((el = q('[data-line]'))) { const b = blk(el); const l = b && b.lines[Number(el.dataset.line)]; if (l && l.pick) { closeLine(l); l.pick(l.id); } return; }
     if (q('[data-close]')) return closePanel();
+    if (q('[data-dock]')) return toggleDock();
     if (q('#pl-hex')) { if (open) closePanel(); else openPanel(null); return; }
     if (!open || !view) return;
     if ((el = q('[data-undo]'))) { const m = thread[Number(el.dataset.undo)]; if (m && m.undo) undoChange(m.undo); return; }
@@ -547,6 +637,7 @@ window.Planner = (() => {
   }
   /** 이름을 두 번 클릭 = 그 자리에서 고치기(단계 이름 · 제안은 아님) */
   function onDblClick(e) {
+    if (e.target.closest('.pl-grip')) { dockW = DOCK_W; mem.set('iris.planner.dockW', String(DOCK_W)); place(); return; }   // 칸의 가장자리를 두 번 클릭 = 기본 너비
     const el = e.target.closest('[data-edit]');
     if (!el || !open || !view) return;
     e.preventDefault();
@@ -571,6 +662,10 @@ window.Planner = (() => {
       h.addEventListener('mouseover', (e) => { if (e.target.closest('.pl-says')) pause(); });
       h.addEventListener('mouseout', (e) => { if (e.target.closest('.pl-says') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.pl-says'))) resume(); });
     }
+    // 지난번에 고른 모양(오른쪽 칸 · 그 너비)을 되살린다 — 이 컴퓨터의 화면 기억일 뿐이라, 읽지 못하면 작게 띄운 모양으로 시작한다
+    docked = mem.get('iris.planner.dock') === '1';
+    { const w = Number(mem.get('iris.planner.dockW')); if (Number.isFinite(w) && w >= DOCK_MIN && w <= DOCK_MAX) dockW = w; }
+    host.addEventListener('pointerdown', gripDown);
     host.addEventListener('focusin', (e) => { if (e.target.id === 'pl-in' && !talk) { openTalk(); renderPanel(); } });
     host.addEventListener('dblclick', onDblClick);
     // 이름 입력칸이 초점을 잃으면 저장한다(판을 다시 그리느라 입력칸이 바뀌는 순간은 빼고)

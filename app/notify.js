@@ -19,6 +19,9 @@ window.Notify = (() => {
   const busyAt = new Map(); // 세션별 '작업 중' 시작 시각(걸린 시간 표시용)
   const pending = new Map(); // 세션별 보류한 완료 알림 { m, s, started, timer } — 보조가 아직 실행 중일 때
   const SUBS_GRACE_MS = 3000; // 마지막 보조가 끝난 뒤 메인이 깨어나길 기다리는 시간
+  // 세션별 떠 있는 「확인을 기다려요」 말풍선(2026-11-23): 이 말풍선은 누를 때까지 남으므로, 그 세션의 확인이 끝나면(상태가 바뀌면) 스스로 거둔다
+  const asking = new Map();
+  function dropAsking(id) { const h = asking.get(id); if (!h) return; asking.delete(id); try { if (typeof h.close === 'function') h.close(); } catch { /* 이미 닫힘 */ } }
 
   function box() {
     let el = $('#toasts');
@@ -88,6 +91,7 @@ window.Notify = (() => {
   /** 데몬 status 방송 → 알림 판단. m = { id, status, done }, s = 세션 레코드(상태 갱신 전·후 무관: 제목·폴더·조합만 쓴다).
    *  subsAlive = 그 세션에서 살아 있는 보조 수(running + quiet; 있으면 알림 보류 — 조용한 것도 끝난 게 아니다, v2.40.1). */
   function onStatus(m, s, subsAlive = 0) {
+    if (m.status !== 'attention') dropAsking(m.id);   // 확인이 끝났다(다시 일함 · 끝남 · 종료): 남아 있던 「확인을 기다려요」를 거둔다
     if (m.status === 'busy') {
       // 보류 중이던 세션이 다시 일한다(보조가 끝나 메인이 깨어남): 보류를 지우되 시작 시각은 이어 간다(보조 시간까지 걸린 시간에 포함)
       const p = pending.get(m.id); dropPending(m.id);
@@ -113,7 +117,8 @@ window.Notify = (() => {
     const took = fmtDur(started ? Date.now() - started : 0);
     const combo = s ? `${AGENT_KO[s.agent] || s.agent || ''} ${s.modelLabel || s.model || ''}`.trim() : '';
     const sub = [STATUS_KO[m.status] || m.status, subsTotal > 0 && `보조 ${subsTotal}개 포함`, took && `${took} 걸림`, combo].filter(Boolean).join(' · ');
-    push({ id: m.id, title, sub, status: m.status, session: true });
+    const h = push({ id: m.id, title, sub, status: m.status, session: true });
+    if (m.status === 'attention' && h && typeof h.close === 'function') { dropAsking(m.id); asking.set(m.id, h); }   // 같은 세션의 물음은 하나만 남긴다
     if (away && opts.osEnabled()) osNotify({ id: m.id, title, sub });
   }
 

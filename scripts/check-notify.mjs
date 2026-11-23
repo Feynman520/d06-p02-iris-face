@@ -21,7 +21,10 @@ if (!pw) { console.log('SKIP: playwright 없음'); process.exit(0); }
 //   · 무엇이 달라지나: 같은 종류(끝남끼리 등)는 함께 뜨고(2026-11-23 부터 한 말풍선 안의 줄이 아니라 말풍선 하나씩 위로 쌓인다), 다른 종류는 앞의 말풍선이 닫힌 뒤 차례로 뜬다(전에는 종류와 상관없이 4장까지 함께 떴다).
 //     그래서 list 는 "떠 있는 줄 + 차례를 기다리는 줄"을 함께 센다 — 알림이 만들어졌는가(규칙)는 그대로 검사하고, 한꺼번에 보이는가는 더 묻지 않는다.
 //   · 세션의 상태 알림은 문장으로 말하고(「…」 작업이 끝났어요.) 걸린 시간 · 조합은 올렸을 때 설명으로 간다. 제목 · 아랫줄 자료는 그대로 따라온다(meta).
-//   · 그 밖의 규칙(언제 알리는가 · 보류 · 4개까지 · 8초 · 올리면 멈춤 · 누르면 그 세션 · × 는 닫기만 · 초점 · 윈도 알림)은 하나도 바뀌지 않았다 — 아래 시험이 그대로다.
+//   · 그 밖의 규칙(언제 알리는가 · 보류 · 4개까지 · 올리면 멈춤 · 누르면 그 세션 · × 는 닫기만 · 초점 · 윈도 알림)은 하나도 바뀌지 않았다 — 아래 시험이 그대로다.
+// 2026-11-23 바뀐 것(사용자 결정 — 머무는 시간): 말풍선은 8초가 아니라 6초 뒤 사라지고, 「확인을 기다려요」는 누를 때까지(또는 그 세션의 확인이 끝날 때까지) 남는다.
+//   언제 알리는가 · 설정 값은 그대로다. 달라진 것은 떠 있는 시간뿐이다.
+const TTL = 6000; // 글만 있는 말풍선이 떠 있는 시간(app/planner.js TTL)
 const VIEW = {
   extraCss: ['planner.css'],
   extraScripts: ['icons.js', 'planner.js'],
@@ -109,7 +112,7 @@ try {
     const l = await t.list();
     ok(l.length === 1 && l[0].title === '채점' && l[0].sub.includes('확인이 필요합니다') && l[0].status === 'attention', '확인 필요도 알림 · 이름이 없으면 폴더 이름');
     await t.status('c', 'busy'); await t.status('c', 'exited', true);
-    ok((await t.list())[1].sub.includes('세션이 종료됐습니다'), '종료도 알림');
+    ok(((await t.list()).find((x) => x.status === 'exited')?.sub || '').includes('세션이 종료됐습니다'), '종료도 알림');
     await t.page.close(); }
 
   // 2. 보고 있는 세션 · 창이 뒤일 때 · 설정
@@ -169,16 +172,16 @@ try {
     for (let i = 0; i < 5; i++) await t.ev(`Notify.push({ id: 's${i}', title: '알림 ${i}', sub: '' })`);
     const l = await t.list();
     ok(l.length === 4 && l[0].title === '알림 1' && l[3].title === '알림 4', '최대 4개(가장 오래된 것부터 빠짐)');
-    await t.adv(7900); ok((await t.list()).length === 4, '8초 전에는 그대로');
-    await t.adv(200); ok((await t.list()).length === 0, '8초 뒤 사라짐');
+    await t.adv(TTL - 100); ok((await t.list()).length === 4, `${TTL / 1000}초 전에는 그대로`);
+    await t.adv(200); ok((await t.list()).length === 0, `${TTL / 1000}초 뒤 사라짐`);
     await t.page.close(); }
   { const t = await fresh();
     await t.ev(`Notify.push({ id: 'a', title: '하나', sub: '' })`);
     await t.ev(VIEW.hoverIn());
     await t.adv(20000); ok((await t.list()).length === 1, '마우스를 올리면 사라지지 않음');
     await t.ev(VIEW.hoverOut());
-    await t.adv(7900); ok((await t.list()).length === 1, '마우스를 떼면 다시 8초');
-    await t.adv(200); ok((await t.list()).length === 0, '뗀 뒤 8초에 사라짐');
+    await t.adv(TTL - 100); ok((await t.list()).length === 1, `마우스를 떼면 다시 ${TTL / 1000}초`);
+    await t.adv(200); ok((await t.list()).length === 0, `뗀 뒤 ${TTL / 1000}초에 사라짐`);
     await t.page.close(); }
   { const t = await fresh();
     await t.ev(`document.getElementById('typing').focus()`);
@@ -271,12 +274,19 @@ try {
     await t.status('c', 'busy'); await t.status('c', 'idle', true);
     await t.status('b', 'busy'); await t.status('b', 'attention', true);
     const two = await t.ev(`({ lines: [...document.querySelectorAll('.pl-say .pl-line p')].map((p) => p.textContent), all: Planner.bubbles().map((b) => b.group + (b.shown ? '*' : '')) })`);
-    ok(two.lines.length === 2 && two.lines[1] === '「가정통신문」 작업이 끝났어요.' && two.all.join() === 'done*,done*,attention' && (await t.ev(`document.querySelectorAll('.pl-says > .pl-say').length`)) === 2, '같은 종류는 말풍선이 하나씩 함께 뜸(내용 하나에 말풍선 하나, 2026-11-23) · 다른 종류(확인 필요)는 차례를 기다림');
-    await t.adv(8100);
-    const next = await t.ev(`({ tone: document.querySelector('.pl-say')?.dataset.tone, text: document.querySelector('.pl-say .pl-line p')?.textContent })`);
-    ok(next.tone === 'warn' && next.text === '「채점」에서 확인을 기다려요.', '앞의 말풍선이 사라지면 다음 것(확인 필요 = 노랑)');
-    await t.adv(7800); ok((await t.list()).length === 1, '차례를 기다린 알림의 8초는 뜬 때부터(앞의 것이 사라진 8초 시점부터 다시 8초)');
-    await t.adv(300); ok((await t.list()).length === 0, '그 뒤 사라짐');
+    // 2026-11-23 사용자 결정(머무는 시간): 「확인을 기다려요」는 누를 때까지 남는 말이라 차례를 기다리지 않고 단추 쪽(맨 아래)에 함께 뜬다. 끝난 작업은 6초 뒤 사라진다.
+    ok(two.lines.length === 3 && two.lines[1] === '「가정통신문」 작업이 끝났어요.' && two.lines[2] === '「채점」에서 확인을 기다려요.' && two.all.join() === 'done*,done*,attention*' && (await t.ev(`document.querySelectorAll('.pl-says > .pl-say').length`)) === 3, '같은 종류는 말풍선이 하나씩 함께 뜸(내용 하나에 말풍선 하나, 2026-11-23) · 확인 필요는 단추 쪽에 함께 뜸');
+    await t.adv(TTL + 100);
+    const next = await t.ev(`({ n: document.querySelectorAll('.pl-say').length, tone: document.querySelector('.pl-say')?.dataset.tone, text: document.querySelector('.pl-say .pl-line p')?.textContent, keep: document.querySelector('.pl-say')?.classList.contains('keep') })`);
+    ok(next.n === 1 && next.tone === 'warn' && next.text === '「채점」에서 확인을 기다려요.' && next.keep, '끝난 작업은 6초 뒤 사라지고 확인 필요(노랑)만 남음');
+    await t.adv(600000); ok((await t.list()).length === 1, '확인 필요는 시간이 지나도 남음(누를 때까지)');
+    await t.status('b', 'attention', true);
+    ok((await t.list()).length === 1, '같은 세션의 확인 필요가 또 와도 말풍선은 하나');
+    await t.status('b', 'busy');
+    ok((await t.list()).length === 0, '그 세션의 확인이 끝나면(다시 일함) 스스로 거둠');
+    await t.status('b', 'attention', true); await t.status('b', 'exited', true);
+    ok((await t.list()).map((x) => x.status).join() === 'exited', '확인을 기다리던 세션이 끝나도 거둠(끝났다는 알림만 남음)');
+    await t.adv(TTL + 100); ok((await t.list()).length === 0, '그 뒤 사라짐');
     await t.ev(`Notify.push({ title: '세팅 마무리 완료', sub: '세션을 이어 열었습니다.', status: 'idle', force: true })`);
     const gen = await t.ev(`({ text: document.querySelector('.pl-say .pl-line p').childNodes[0].textContent, small: document.querySelector('.pl-say .pl-line small').textContent })`);
     ok(gen.text === '세팅 마무리 완료' && gen.small === '세션을 이어 열었습니다.', '그 밖의 알림(세팅 · 모듈 등)은 제목 + 아랫줄 그대로');
