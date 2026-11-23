@@ -1,5 +1,6 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-// 안티그래비티 준비 상태 · 한도 · 모델 목록 — 중계기를 거치지 않으므로(direct) 대시보드 계정 수 대신 agy 에게 직접 묻는다.
+// 안티그래비티 준비 상태 · 한도 · 모델 목록 — agy 에게 묻는다. 연결 방식이 gate(2026-11-23~)면 agy 를 중계기로 띄워 묻고(그 무료 계정의 한도 · 목록),
+// 중계기를 못 쓰면 agy 를 띄우지 않고 state = gate + 이유를 낸다(이 PC 로그인으로 묻지 않음 — antigravity.gate.mjs).
 //   agy --print /usage --output-format json  (약 5초 · 토큰 0, 1.5.14 실측) → command.data.groups[].buckets[] { id, name, window, remaining_fraction, reset_time }
 // 로그인 판정은 세 갈래(코덱스 설계 검토): ok = 답을 받음 / auth = 로그인하라는 글 / unknown = 시간 초과 · 실행 실패 · 모르는 모양(로그아웃으로 보지 않는다).
 // + missing = 실행 파일 없음. 한 번에 하나만 돈다 · 5분 캐시 · 세션을 띄울 때 기다리지 않는다.
@@ -10,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { agyExe } from './antigravity.mjs';
+import { agyExe, connection } from './antigravity.mjs';
+import * as gate from './antigravity.gate.mjs';
 import { soulRoot } from '../paths.mjs';
 import { cliHome } from './antigravity.setup.mjs';
 import { groupModels, fitDefault } from './antigravity.models.mjs';
@@ -24,11 +26,11 @@ const TIMEOUT_MS = 25_000;
 const now = () => new Date().toISOString();
 
 // ───────── 자식 실행(공용) — 출력은 'close'(표준 출력 · 오류가 다 닫힌 뒤)에서 확정한다 ─────────
-function run(exe, args, { cwd = os.tmpdir(), timeoutMs = TIMEOUT_MS } = {}) {
+function run(exe, args, { cwd = os.tmpdir(), timeoutMs = TIMEOUT_MS, env = undefined } = {}) {
   return new Promise((resolve) => {
     let out = '', err = '', done = false, timer = null, p;
     const fin = (r) => { if (done) return; done = true; if (timer) clearTimeout(timer); resolve(r); };
-    try { p = spawn(exe, args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { p = spawn(exe, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { return fin({ code: null, out, err, error: `spawn failed: ${e.message}` }); }
     timer = setTimeout(() => { try { p.kill(); } catch {} fin({ code: null, out, err, error: 'timeout' }); }, timeoutMs);
     p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { err += d; });
@@ -73,7 +75,7 @@ function writeStatus(r) {
     fs.mkdirSync(path.dirname(STATUS_FILE), { recursive: true });
     const tmp = `${STATUS_FILE}.${process.pid}.tmp`;
     let tokens = null; try { tokens = tokenTotals(); } catch {}
-    fs.writeFileSync(tmp, JSON.stringify({ schema: 1, agent: 'antigravity', connection: 'direct', writtenAt: now(), ...r, tokens }, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(tmp, JSON.stringify({ schema: 1, agent: 'antigravity', connection, writtenAt: now(), ...r, tokens }, null, 2) + '\n', 'utf8');
     fs.renameSync(tmp, STATUS_FILE);
   } catch {}
 }
@@ -82,19 +84,32 @@ function writeStatus(r) {
 export function refresh({ force = false } = {}) {
   const exe = agyExe();
   if (!exe) { const was = last?.state; last = { state: 'missing', groups: [], at: now(), detail: 'agy.exe not found' }; if (was !== 'missing') writeStatus(last); return Promise.resolve(last); }
-  if (!force && last && last.state !== 'missing' && Date.now() - Date.parse(last.at) < MAX_AGE_MS) return Promise.resolve(last);
+  // 중계기를 못 쓰는 판정(state = gate)은 50초만 믿는다 — 사용자가 중계기를 다시 켜면 1분 안에 단추가 살아나게(데몬이 1분마다 부른다).
+  const maxAge = last?.state === 'gate' ? 50_000 : MAX_AGE_MS;
+  if (!force && last && last.state !== 'missing' && Date.now() - Date.parse(last.at) < maxAge) return Promise.resolve(last);
   if (running) return running;
   const cwd = path.join(os.tmpdir(), 'iris-agy-usage'); try { fs.mkdirSync(cwd, { recursive: true }); } catch {}
-  running = run(exe, ['--print', '/usage', '--output-format', 'json'], { cwd }).then((x) => {
+  running = (async () => {
+    await null; // running 이 먼저 정해지도록(아래에서 running = null 로 비우는 것이 그 뒤가 되게)
+    // 길(2026-11-23): gate 면 중계기 판정이 통과할 때만 agy 를 중계기로 띄워 묻는다(그 무료 계정의 한도가 온다).
+    // 통과 못 하면 agy 를 이 PC 로그인으로 띄우지 않는다 — state = gate + 이유(화면이 단추를 끄고 이유를 보인다).
+    const env = { ...process.env };
+    if (connection === 'gate') {
+      const j = await gate.refresh();
+      if (!j.ok) { const r = { state: 'gate', groups: [], at: now(), detail: j.why }; last = r; running = null; writeStatus(r); return r; }
+    }
+    try { gate.applyRoute(env, connection, { sync: false }); }
+    catch (e) { const r = { state: 'gate', groups: [], at: now(), detail: String(e?.message || e) }; last = r; running = null; writeStatus(r); return r; }
+    const x = await run(exe, ['--print', '/usage', '--output-format', 'json'], { cwd, env });
     const r = x.error ? { state: 'unknown', groups: [], at: now(), detail: x.error } : parseUsage(x.out, { code: x.code, stderr: x.err });
     last = r; running = null; writeStatus(r); return r;
-  });
+  })();
   return running;
 }
 /** 지금 아는 값(기다리지 않음) */
 export const current = () => last;
 /** 화면에 보낼 짧은 값 */
-export const brief = () => (last ? { state: last.state, at: last.at, headline: headline(last) } : { state: 'unknown', at: null, headline: null });
+export const brief = () => (last ? { state: last.state, at: last.at, headline: headline(last), connection, ...(last.state === 'gate' ? { detail: last.detail } : {}) } : { state: 'unknown', at: null, headline: null, connection });
 
 // ───────── 토큰 수(보여 주기 전용) — ~/.gemini 의 기록 전체(IRIS 창 + 직접 띄운 agy), 한도가 계정 전체 기준이라서 ─────────
 // 파일마다 (크기 · 수정 시각)이 같으면 다시 읽지 않는다 · 없어진 파일은 캐시에서 뺀다. 5분에 한 번(상태를 적을 때)만 돈다.
@@ -161,7 +176,8 @@ let modelsAt = 0, modelsKey = '', modelsRun = null, cacheTried = false;
 /** @returns {Promise<boolean>} 목록이 바뀌었으면 true(저장한 목록을 처음 입힌 것도 포함) */
 export function refreshModels(table, { log = () => {} } = {}) {
   const exe = agyExe(); if (!exe) return Promise.resolve(false);
-  let key = ''; try { const st = fs.statSync(exe); key = `${st.size}|${Math.round(st.mtimeMs)}`; } catch {}
+  // 저장 열쇠에 길을 넣는다(2026-11-23) — 중계기 길의 목록(무료 계정 = Flash 뿐)과 직결 목록(이 PC 계정)은 다르다.
+  let key = ''; try { const st = fs.statSync(exe); key = `${st.size}|${Math.round(st.mtimeMs)}|${connection}`; } catch {}
   let fromCache = false;
   if (!cacheTried) {
     cacheTried = true;
@@ -169,7 +185,10 @@ export function refreshModels(table, { log = () => {} } = {}) {
   }
   if (key === modelsKey && Date.now() - modelsAt < 6 * 3600_000) return Promise.resolve(fromCache);
   if (modelsRun) return modelsRun.then((ch) => ch || fromCache);
-  modelsRun = run(exe, ['models']).then((x) => {
+  // gate 면 중계기를 쓸 수 있을 때만 묻는다(못 쓰면 목록을 바꾸지 않는다 — 이 PC 로그인으로 묻지 않는다)
+  const env = { ...process.env };
+  try { gate.applyRoute(env, connection, { sync: false }); } catch { return Promise.resolve(fromCache); }
+  modelsRun = run(exe, ['models'], { env }).then((x) => {
     modelsRun = null;
     const list = parseModels(x.out);
     if (x.error || x.code !== 0 || !list.length) { log(`models: antigravity 목록 못 읽음(${x.error || `exit ${x.code}`}) — 목록 그대로`); return fromCache; }

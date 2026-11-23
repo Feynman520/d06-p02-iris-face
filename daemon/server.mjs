@@ -119,11 +119,14 @@ const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeA
 {
   let prevState = null;
   const tickAgy = () => {
-    agyStatus.refresh().then((r) => { if (r?.state !== prevState) { prevState = r?.state; log(`antigravity status: ${r?.state}${r?.detail ? ` (${r.detail})` : ''}`); } broadcast({ type: 'agy', status: agyStatus.brief() }); }).catch(() => {});
-    agyStatus.refreshModels(AGENTS.antigravity, { log }).then((ch) => { if (ch) broadcast(agentsMsg()); }).catch(() => {});
+    // 모델 목록은 상태(중계기 판정 포함)를 읽은 뒤에 묻는다 — 중계기 길의 판정이 먼저 있어야 목록도 그 길로 묻는다(2026-11-23)
+    agyStatus.refresh().then((r) => { if (r?.state !== prevState) { prevState = r?.state; log(`antigravity status: ${r?.state}${r?.detail ? ` (${r.detail})` : ''}`); } broadcast({ type: 'agy', status: agyStatus.brief() }); }).catch(() => {})
+      .then(() => agyStatus.refreshModels(AGENTS.antigravity, { log })).then((ch) => { if (ch) broadcast(agentsMsg()); }).catch(() => {});
   };
   setTimeout(tickAgy, 3000).unref?.();
-  setInterval(tickAgy, 5 * 60_000).unref();
+  // 1분마다 부른다(2026-11-23 중계기 길) — 한도 · 모델은 각자의 저장 시간(5분 · 6시간) 안이면 다시 묻지 않으므로 agy 를 더 자주 띄우지 않는다.
+  // 중계기를 못 쓰는 판정만 50초 뒤 다시 보아, 중계기를 다시 켜면 1분 안에 단추가 살아난다.
+  setInterval(tickAgy, 60_000).unref();
 }
 const sleepWatcher = new SleepWatcher({
   log: (m) => log(`wake: ${m}`),

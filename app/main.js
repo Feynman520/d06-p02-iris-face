@@ -84,7 +84,7 @@
   // 에이전트 버튼은 **비활성**(누를 수 없음) + 마우스를 올리면 짧은 말풍선. 고른 쪽이 꺼지면 켜진 쪽으로 옮긴다. 둘 다 꺼지면 막지 않는다(할 수 있는 게 없어짐).
   const OFF_TIP = { missing: '프로그램 없음 — IRIS 설치 파일을 다시 실행하면 받습니다', account: '계정 연결 안 됨 — 대시보드에서 계정을 추가하면 켜집니다' };
   // 안티그래비티는 중계기 밖이라 대시보드에서 계정을 더하지 않는다(2026-11-23) — 안내만 다르다.
-  const OFF_TIP_AGENT = { antigravity: { missing: '프로그램 없음 — 공식 설치(antigravity.google/cli) 뒤 IRIS 창을 다시 켜면 켜집니다', account: '로그인 안 됨 — 터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하면 켜집니다' } };
+  const OFF_TIP_AGENT = { antigravity: { missing: '프로그램 없음 — 공식 설치(antigravity.google/cli) 뒤 IRIS 창을 다시 켜면 켜집니다', account: '로그인 안 됨 — 터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하면 켜집니다', gate: '중계기(IRIS Gate)를 쓸 수 없음 — 사용량 대시보드에서 구글 계정 · 재시작을 확인하면 1분 안에 켜집니다' } };
   function agentOff() {
     const off = {};
     for (const k of ACCT?.missing || []) if (AGENTS[k]) off[k] = 'missing';
@@ -94,7 +94,7 @@
     if (acc) for (const k of relayKeys) if (!off[k] && acc[k] === 0) off[k] = 'account';
     const base = Object.keys(off).length >= relayKeys.length ? {} : off;
     // 안티그래비티(중계기 밖)는 위 상태 객체에 없다 — 데몬이 따로 보내는 판정(AGY)으로만 끈다. 모름(unknown)이면 끄지 않는다.
-    if (AGENTS.antigravity) { if (AGY?.state === 'missing') return { ...base, antigravity: 'missing' }; if (AGY?.state === 'auth') return { ...base, antigravity: 'account' }; }
+    if (AGENTS.antigravity) { if (AGY?.state === 'missing') return { ...base, antigravity: 'missing' }; if (AGY?.state === 'auth') return { ...base, antigravity: 'account' }; if (AGY?.state === 'gate') return { ...base, antigravity: 'gate' }; }
     return base;
   }
   function renderSetup() {

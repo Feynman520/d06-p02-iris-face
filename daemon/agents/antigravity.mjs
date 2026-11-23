@@ -7,17 +7,19 @@
 //   · 권한 = 늘 묻지 않음(IRIS 기준선 bypass). 안전은 ~/.gemini/config/hooks.json 의 iris-safety 훅(경로 · 일괄 종료 가드)이 지킨다.
 //   · 대화 짝짓기 = 이 카드의 --log-file 에 agy 가 적는 "Created conversation <id>" 만 근거로 한다(폴더의 '마지막 대화' 캐시는 쓰지 않는다 —
 //     같은 폴더의 다른 카드 · 사용자가 직접 띄운 agy 와 섞일 수 있다는 코덱스 설계 검토 지적). 근거가 없으면 잇지 않는다.
-// 중계기(IRIS Gate)를 거치지 않는다(연결 방식 direct, 조각 ⑥ 확정). 나중에 중계기로 바꿀 자리 = 이 파일의 buildCommand 환경(CLOUD_CODE_URL).
+// 중계기(IRIS Gate)를 거친다(연결 방식 gate, 2026-11-23 사용자 "중계기 방식으로 가자"). 판정 · 환경 = antigravity.gate.mjs —
+//   중계기를 못 쓰면 세션을 열지 않는다(이 PC 로그인으로 몰래 돌리지 않음). 직결로 되돌리기 = 아래 connection 한 줄을 'direct' 로.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { prepare, cliHome } from './antigravity.setup.mjs';
+import { applyRoute } from './antigravity.gate.mjs';
 import { groupModels, mapLegacySel, actualOf as rowActual, EFFORT_ORDER, HAND_LIST } from './antigravity.models.mjs';
 
 export const id = 'antigravity';
-export const connection = 'direct';
+export const connection = 'gate';
 const FACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STATE = process.env.IRIS_FACE_STATE || path.join(FACE_ROOT, 'state');
 
@@ -78,11 +80,14 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
  * 🔴 클로드 · 코덱스의 preTrust 와 달리 **안전 준비가 안 되면 던진다** → sessions.mjs spawn() 이 CLI 를 띄우기 전에 멈추고 화면에 이유가 보인다
  * (권한을 묻지 않는 세션을 안전 훅 없이 열지 않는다 — 코덱스 코드 검토 2번).
  */
-export function preTrust(cwd) {
+export function preTrust(cwd, env) {
   try { fs.mkdirSync(logDir(), { recursive: true }); } catch {}
   let r; try { r = prepare(cwd); } catch (e) { r = { ok: false, why: `준비 중 오류(${String(e?.message || e)})`, line: 'error' }; }
   if (!r.ok) { const e = new Error(`안티그래비티 안전 준비가 안 되어 세션을 열지 않았습니다 — ${r.why}`); e.code = 'AGY_NOT_READY'; throw e; }
-  return { agent: id, result: r.line };
+  // 길(2026-11-23): gate 면 중계기 판정이 통과할 때만 CLOUD_CODE_URL 을 넣고, 아니면 던진다 — 세션을 띄우기 전에 멈추고 화면에 이유가 보인다.
+  // env 가 없으면(readyCheck — 바꾸기 · 재개에서 지금 프로세스를 끄기 전) 판정만 한다.
+  const { route } = applyRoute(env, connection);
+  return { agent: id, result: r.line, route };
 }
 /** 바꾸기 · 재개에서 지금 프로세스를 끄기 전에 부른다 — 준비가 안 되면 던진다(끈 뒤에 실패해 세션을 잃지 않게). 결과는 preTrust 와 같다. */
 export const readyCheck = (cwd) => { preTrust(cwd); };

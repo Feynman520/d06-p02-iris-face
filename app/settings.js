@@ -74,7 +74,8 @@ window.Settings = (() => {
         ? battery('Claude', a?.account, a?.d7, `왕관 계정 ${a?.account || '?'} — 남은 잔량: 주간 ${L(a?.d7)} · Fable 주간 ${L(a?.d7Fable)} · 5시간 ${L(a?.h5)}  (누르면 사용량 대시보드)`) + battery('Codex', c?.account, c?.d7, `왕관 계정 ${c?.account || '?'} — 남은 잔량: 주간 ${L(c?.d7)} · 5시간 ${L(c?.h5)}  (누르면 사용량 대시보드)`)
         : '<span class="batt-off">대시보드</span>';
     } catch { $('#limits').innerHTML = '<span class="batt-off">대시보드</span>'; }
-    // 셋째 배터리 = 안티그래비티(중계기 밖 — 데몬이 agy 에게 직접 물은 남은 한도, 2026-11-23). 못 읽었으면 그리지 않는다(클로드 · 코덱스 배터리는 위 그대로).
+    // 셋째 배터리 = 안티그래비티(데몬이 agy 에게 물은 남은 한도, 2026-11-23). 중계기 길(gate)이면 agy 가 중계기를 거쳐 물으므로 지금 그 구글 계정의 한도다.
+    // 못 읽었으면 그리지 않는다(클로드 · 코덱스 배터리는 위 그대로).
     try {
       const g = await (await fetch('/api/antigravity/status')).json();
       if (g?.state === 'ok' && Array.isArray(g.groups)) {
@@ -423,9 +424,13 @@ window.Settings = (() => {
   let agyInfo = null;
   function agyCard() {
     if (!agyInfo || agyInfo.state === 'missing') return '';
-    const W = { ok: ['로그인됨', 'ok'], auth: ['로그인 안 됨', 'expired'], unknown: ['확인 못 함', 'unknown'] }[agyInfo.state] || ['확인 못 함', 'unknown'];
-    const how = agyInfo.state === 'auth' ? '터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하세요(앱 · 확장과 함께 쓰는 로그인).' : agyInfo.state === 'ok' ? '이 PC 의 구글 계정 하나로 씁니다(돌려 쓰기 없음). 로그아웃은 agy 화면의 /logout — Antigravity 앱 로그인도 함께 풀립니다.' : '데몬이 아직 확인하지 못했습니다(네트워크 · 시간 초과). 로그아웃으로 보지 않습니다.';
-    return `<section class="st-grp auth-card" data-kind="antigravity"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">로그인</span><small>중계기를 거치지 않는 구글 로그인</small></h3>`
+    const viaGate = agyInfo.connection === 'gate'; // 2026-11-23: 중계기(IRIS Gate)의 구글 계정을 돌려 쓴다
+    const W = { ok: [viaGate ? '중계기로 연결됨' : '로그인됨', 'ok'], auth: ['로그인 안 됨', 'expired'], gate: ['중계기 못 씀', 'expired'], unknown: ['확인 못 함', 'unknown'] }[agyInfo.state] || ['확인 못 함', 'unknown'];
+    const how = agyInfo.state === 'gate' ? `${agyInfo.detail || '중계기 상태를 읽지 못했습니다.'} — 이 PC 의 구글 로그인으로 몰래 돌리지 않습니다.`
+      : agyInfo.state === 'auth' ? '터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하세요(앱 · 확장과 함께 쓰는 로그인).'
+      : agyInfo.state === 'ok' ? (viaGate ? '중계기(IRIS Gate)에 등록한 구글 계정으로 돌려 씁니다. 계정 추가 · 한도는 사용량 대시보드에서 봅니다.' : '이 PC 의 구글 계정 하나로 씁니다(돌려 쓰기 없음). 로그아웃은 agy 화면의 /logout — Antigravity 앱 로그인도 함께 풀립니다.')
+      : '데몬이 아직 확인하지 못했습니다(네트워크 · 시간 초과). 로그아웃으로 보지 않습니다.';
+    return `<section class="st-grp auth-card" data-kind="antigravity"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">로그인</span><small>${viaGate ? '중계기(IRIS Gate)를 거치는 구글 계정' : '중계기를 거치지 않는 구글 로그인'}</small></h3>`
       + `<div class="st-opt auth-row ${W[1]}"><span class="st-opt-text">${esc(W[0])}<small>${esc(how)}${agyInfo.at ? ` · 확인 ${esc(fmtWhen(agyInfo.at))}` : ''}</small></span></div></section>`;
   }
   let agyAt = 0;
