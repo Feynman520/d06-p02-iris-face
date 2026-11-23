@@ -80,7 +80,8 @@ ok(!cs.ok && /닿지 않습니다/.test(cs.why) && Date.now() - t0 < 8000, 'refr
 process.env.IRIS_AGY_GATE_URL = GATE;
 // 데몬이 15초마다 미리 읽는다(세션 시작 때 기다리지 않게)
 const srv = fs.readFileSync(path.join(ROOT, 'daemon/server.mjs'), 'utf8');
-ok(/setInterval\(\(\) => \{ agyGate\.refresh\(\)\.catch\(\(\) => \{\}\); \}, 15_000\)/.test(srv) && /agyConnection === 'gate'/.test(srv), '데몬: gate 일 때 15초마다 중계기 판정을 미리 읽음');
+ok(/agyGateFirst = agyGate\.refresh\(\)/.test(srv) && /agyGate\.current\(\)\?\.ok \? 15_000 : 5_000/.test(srv) && /AGENTS\.antigravity && agyConnection === 'gate'/.test(srv), '데몬: gate 일 때 시작 즉시 + 통과 15초 · 막힘 5초마다 중계기 판정을 미리 읽음');
+ok(/const waitGate = ar\.enabled && agyConnection === 'gate' && sm\.lost\(\)\.some\(\(r\) => r\.agent === 'antigravity'\)/.test(srv) && /if \(waitGate\) agyGateFirst\.then\(/.test(srv), '데몬: 끊긴 안티그래비티 세션이 있을 때만 첫 판정 뒤 자동 재개(없으면 예전처럼 곧바로)');
 
 // 4. 어댑터
 ok(ad.connection === 'gate', '어댑터 연결 방식 = gate(되돌리기 = 이 한 줄)');

@@ -118,6 +118,8 @@ const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커
 const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeAgentsMap(AGENTS), sleeping: status.sleeping, status });
 // 안티그래비티(중계기 밖) 상태는 위 상태 객체에 섞지 않고 따로 보낸다(클로드 · 코덱스가 받는 모양 그대로 — 코덱스 코드 검토 1번, 2026-11-23).
 // 시작 때 한 번 + 5분마다 로그인 · 한도를 읽고, 판정이 바뀌면 { type: 'agy' } 로 알린다(세션 시작은 기다리지 않는다).
+// 중계기 길(gate)의 첫 판정 — 끊긴 안티그래비티 세션의 자동 재개는 이것을 기다린다(아래 auto-resume). 그 밖에는 기다리는 곳이 없다.
+let agyGateFirst = Promise.resolve();
 {
   let prevState = null;
   const tickAgy = () => {
@@ -129,8 +131,10 @@ const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeA
   // 중계기 판정(2026-11-23 코덱스 코드 검토 F-1 · F-2): 세션을 띄울 때 기다리지 않도록 15초마다 미리 읽어 둔다(127.0.0.1 짧은 요청 하나) —
   // 중계기가 꺼졌다 켜져도 15초 안에 따라온다. 시작 직후 한 번 바로.
   if (AGENTS.antigravity && agyConnection === 'gate') {
-    agyGate.refresh().catch(() => {});
-    setInterval(() => { agyGate.refresh().catch(() => {}); }, 15_000).unref();
+    agyGateFirst = agyGate.refresh().catch(() => {});
+    // 통과면 15초, 막힘 · 모름이면 5초 뒤 다시(중계기를 다시 켜면 몇 초 안에 따라오게 — 코덱스 재검토 F-2). 127.0.0.1 짧은 요청 하나.
+    const loop = () => setTimeout(() => { agyGate.refresh().catch(() => {}).finally(loop); }, agyGate.current()?.ok ? 15_000 : 5_000).unref();
+    agyGateFirst.finally(loop);
   }
   // 1분마다 부른다(2026-11-23 중계기 길) — 한도 · 모델은 각자의 저장 시간(5분 · 6시간) 안이면 다시 묻지 않으므로 agy 를 더 자주 띄우지 않는다.
   // 중계기를 못 쓰는 판정만 50초 뒤 다시 보아, 중계기를 다시 켜면 1분 안에 단추가 살아난다.
@@ -705,7 +709,7 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   try { memory.start(); log(`memory: commit=${memory.features().commit} sweep=${memory.features().sweep ? 'on' : 'off'}`); } catch (e) { log(`memory init error: ${e?.message || e}`); }
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
-  try { const ar = autoResumeState(settings.get()); const ids = sm.resumeLost({ enabled: ar.enabled }); if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
+  try { const ar = autoResumeState(settings.get()); const waitGate = ar.enabled && agyConnection === 'gate' && sm.lost().some((r) => r.agent === 'antigravity'); const ids = waitGate ? sm.lost().map((r) => r.id) : sm.resumeLost({ enabled: ar.enabled }); if (waitGate) agyGateFirst.then(() => sm.resumeLost({ enabled: ar.enabled }), () => sm.resumeLost({ enabled: ar.enabled })); if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
   try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
