@@ -16,7 +16,7 @@ let clock = new Date(2026, 10, 23, 7, 30, 0); // 2026-11-23 월요일
 const at = (d, h, m, s = 0) => { clock = new Date(2026, 10, d, h, m, s); };
 const step = (sec) => { clock = new Date(clock.getTime() + sec * 1000); };
 /** 새 세상: 임시 장부 + 창구 + 규칙. seed(pl) 로 일정을 넣는다. */
-function world(seed, cfg = {}) {
+function world(seed, cfg = {}, { intro = false } = {}) {
   const dir = path.join(base, `w${++n}`); const sent = []; const logs = [];
   const pl = new Planner({ dir: path.join(dir, 'planner'), stateDir: dir, settings: { get: () => cfg }, broadcast: (o) => sent.push(o), log: (m) => logs.push(m), now: () => new Date(clock) });
   pl.start();
@@ -24,8 +24,9 @@ function world(seed, cfg = {}) {
   const ids = seed ? seed(add, pl) || {} : {};
   const gate = { ready: true };
   const rules = new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m), ready: () => gate.ready });
+  if (!intro) rules.state.intro = 'seen'; // 처음 한 번 소개는 10절에서만 본다 — 다른 절은 이미 소개를 받은 사람으로
   const tick = () => rules.tick().map((s) => s.text);
-  const again = () => new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m) });
+  const again = () => { const r = new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m) }); if (!intro) r.state.intro = 'seen'; return r; };
   return { pl, rules, tick, sent, logs, cfg, ids, dir, again, add, gate };
 }
 const BOOK = (add) => ({
@@ -246,6 +247,48 @@ try {
   at(23, 7, 30);
   { const w = world((add) => { add({ title: '멀리 보는 일', start: '2026-11-20', end: '2026-11-30', alerts: { dueDays: [7, 1, 0] } }); add({ title: '보통 기간', start: '2026-11-20', end: '2026-11-30' }); });
     ok(w.tick()[0] === '좋은 아침이에요. 오늘 할 것이 2개 있어요. 「멀리 보는 일」이 11월 30일까지예요.', '항목마다 다른 마감 알림("이건 일주일 전에도 알려 줘") — 다른 일은 기본(3일 전 · 하루 전 · 당일)'); }
+
+  // ---- 10. 처음 한 번 소개 · 잠시 조용히의 공통 출구(설계 조각 ⑧, 2026-11-23) ----
+  at(23, 9, 0);
+  { const w = world(null, {}, { intro: true });
+    const t = w.tick();
+    ok(t.length === 1 && t[0].startsWith('일정은 저한테 말해 주세요') && w.sent[0].say.intro === true && w.sent[0].say.actions[0].label === '열어 보기', `수첩이 비어 있어도 처음 한 번은 소개함 — ${t.join(' / ')}`);
+    step(30); ok(w.tick().length === 0, '소개는 한 번뿐');
+    const st = JSON.parse(fs.readFileSync(path.join(w.dir, 'planner-rules.json'), 'utf8'));
+    ok(st.intro === '2026-11-23', '소개한 날을 적어 둠(다시 켜도 또 하지 않게)');
+    const r2 = new PlannerRules({ planner: w.pl, stateDir: w.dir, now: () => new Date(clock), log: () => {} });
+    ok(r2.tick().length === 0, '다시 켜도 소개하지 않음'); }
+  { const w = world(null, {}, { intro: true }); w.gate.ready = false;
+    ok(w.tick().length === 0 && w.rules.state.intro === null, '받을 창이 없으면 소개도 하지 않고 남겨 둠');
+    w.gate.ready = true; ok(w.tick().length === 1, '창이 붙으면 그때 소개'); }
+  { const w = world(null, { plannerEnabled: false }, { intro: true });
+    ok(w.tick().length === 0 && w.rules.state.intro === null, '플래너를 꺼 둔 사람에게는 소개하지 않음'); }
+  { const cfg = { plannerQuietUntil: new Date(2026, 10, 23, 10, 0, 0).toISOString() };
+    const w = world(null, cfg, { intro: true });
+    ok(w.tick().length === 0 && w.rules.state.intro === null, '조용히 하는 동안에는 소개도 미룸');
+    // 조용히 하는 동안 세션이 넣은 것 · 제안의 말풍선은 하지 않고 세기만 한다(달력 · 제안 숫자는 방송으로 그대로 바뀐다)
+    const before = w.sent.length;
+    w.pl.say({ group: 'info', tone: 'iris', text: '세션에서 추가했어요.' }); w.pl.say({ group: 'proposal', tone: 'iris', text: '제안했어요.' });
+    ok(w.sent.length === before + 2 && w.sent.slice(before).every((m) => m.type === 'planner' && !m.say) && w.pl.muted === 2, '조용히 하는 동안: 말풍선 없이 방송만 · 하지 않은 말의 수를 셈');
+    ok(w.pl.quietNow() === true && w.rules.quiet(clock.getTime()) === true, '조용히 판정은 창구 한 곳(quietNow)');
+    at(23, 10, 0, 30);
+    const t = w.tick();
+    ok(t.some((x) => x === '조용히 하는 동안 플래너 소식이 2개 있었어요.') && t.some((x) => x.startsWith('일정은 저한테')) && w.pl.muted === 0, `조용히가 끝나면 그사이 소식을 한 번에 + 미룬 소개 — ${t.join(' / ')}`);
+    step(30); ok(w.tick().length === 0, '그 뒤로는 되풀이하지 않음'); }
+  // 말로 시킨 조용히(setQuiet): 설정에 적고 화면의 설정 사본을 맞추는 방송(cfg)을 보낸다
+  at(23, 13, 20);
+  { const store = { v: {} }; const sent = [];
+    const pl = new Planner({ dir: path.join(base, 'q1', 'planner'), stateDir: path.join(base, 'q1'), settings: { get: () => store.v, set: (p) => { store.v = { ...store.v, ...p }; return store.v; } }, broadcast: (o) => sent.push(o), now: () => new Date(clock) });
+    pl.start();
+    const r = pl.setQuiet({ minutes: 60 });
+    ok(r.ok && r.say.startsWith('오후 2시 20분까지 조용히') && store.v.plannerQuietUntil === new Date(2026, 10, 23, 14, 20, 0).toISOString() && sent.at(-1).cfg.plannerQuietUntil === store.v.plannerQuietUntil && pl.quietNow(), `말로 1시간 조용히 — ${r.say}`);
+    const r2 = pl.setQuiet({ until: 'today' });
+    ok(r2.ok && r2.say.startsWith('오늘은 조용히') && store.v.plannerQuietUntil === new Date(2026, 10, 24, 0, 0, 0).toISOString(), '오늘 하루 = 내일 0시까지');
+    const r3 = pl.setQuiet({ off: true });
+    ok(r3.ok && store.v.plannerQuietUntil === null && sent.at(-1).cfg.plannerQuietUntil === null && !pl.quietNow(), '다시 알리기 = 조용히 풂');
+    ok(!pl.setQuiet({ minutes: 0 }).ok && !pl.setQuiet({ minutes: 5000 }).ok && !pl.setQuiet({}).ok && store.v.plannerQuietUntil === null, '말이 안 되는 길이(0분 · 하루 넘게 · 없음)는 받지 않음');
+    const ro = new Planner({ dir: path.join(base, 'q2', 'planner'), stateDir: path.join(base, 'q2'), settings: { get: () => ({}) }, now: () => new Date(clock) }); ro.start();
+    ok(ro.setQuiet({ minutes: 30 }).ok === false, '설정을 적을 길이 없으면 했다고 하지 않음'); }
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }
 finally { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} }
 console.log(`${pass} PASS / ${fail} FAIL`);

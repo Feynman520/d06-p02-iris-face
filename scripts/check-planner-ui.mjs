@@ -370,6 +370,44 @@ try {
   await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(400);
   ok((await text('.pl-thread .pl-bub.ai > p:not(.warn)')).pop() === '날짜가 바뀌어서 옮기지 않았어요. 달력에서 다시 확인해 주세요.', '어제 뜬 「내일로 옮기기」를 오늘 누르면 옮기지 않음(말풍선이 말하던 그날 것만)');
   await ev(`Planner.close()`); await settle();
+  // ---- 「작업 시작」 · 처음 한 번 소개 · 끌 때 말풍선 거두기 · 안 보는 사이의 차례(2026-11-23, 걸음 9 + 걸음 7~8 검토 반영) ----
+  const clearSays = async () => { for (let i = 0; i < 6; i++) { await ev(`document.querySelectorAll('.pl-say [data-line-x]').forEach((b) => b.click())`); await settle(); } };
+  await clearSays();
+  const prep = pl.store.apply([{ op: 'propose', item: { title: '결과 보고서 초안 쓰기', start: '2026-11-23', folder: 'C:\\IRIS\\R01\\결과 보고서', action: { kind: 'start-work', for: big.id, folder: 'C:\\IRIS\\R01\\결과 보고서', prompt: '「결과 보고서 제출」을 준비하려고 해요. 계획부터 말해 주세요.' } } }], { by: 'iris', via: 'check', evidence: '폴더에서 파일 이름 3개를 살펴봤어요' }).items[0];
+  await ev(`window.__calls.length = 0; Planner.onMessage({ type: 'planner', rev: ${pl.store.rev}, proposals: ${pl.store.list('proposed').length}, say: { group: 'proposal', tone: 'iris', text: '아이리스 제안이 1개 있어요.', actions: [{ kind: 'proposals' }] } })`); await settle();
+  await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(500);
+  ok((await ev(`!!document.querySelector('[data-work="${prep.id}"]')`)), '준비 점검이 올린 제안에는 「작업 시작」 단추가 있음');
+  await page.click(`[data-work="${prep.id}"]`); await settle();
+  const work = await ev('window.__calls');
+  ok(work.length === 1 && work[0][0] === 'chat' && work[0][1] === 'C:\\IRIS\\R01\\결과 보고서' && work[0][2].startsWith('「결과 보고서 제출」을 준비하려고 해요') && pl.store.get(prep.id).state === 'proposed', '「작업 시작」 = 그 폴더 + 요청문을 본체에 넘기기만 함(보내기는 사용자 · 제안은 그대로 남음)');
+  await ev(`Planner.close()`); await settle(); await clearSays();
+  // 처음 한 번 소개: 첫 실행 튜토리얼이 덮고 있는 동안에는 띄우지 않고, 닫히면 띄운다
+  await ev(`window.__tut = true; window.Tutorial = { isOpen: () => window.__tut }; Planner.onMessage({ type: 'planner', rev: ${pl.store.rev}, proposals: 0, say: { group: 'greet', tone: 'iris', intro: true, text: '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.', actions: [{ kind: 'open', day: '2026-11-23', label: '열어 보기' }] } })`); await settle();
+  ok((await ev('Planner.bubbles().length')) === 0, '소개 말풍선: 튜토리얼이 덮고 있는 동안에는 띄우지 않음');
+  await ev(`window.__tut = false`); await page.waitForTimeout(2600);
+  ok((await text('.pl-say .pl-line p'))[0] === '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.' && (await text('.pl-say [data-act="0"]'))[0].includes('열어 보기'), '튜토리얼이 닫히면 소개 말풍선 + 「열어 보기」');
+  await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(400);
+  ok((await ev('Planner.isOpen()')) === true, '「열어 보기」 = 달력 판이 펴짐');
+  await ev(`Planner.close(); delete window.Tutorial`); await settle(); await clearSays();
+  // 플래너를 끄면: 플래너가 하던 말 · 차례를 기다리던 말만 거둔다(세션의 작업 알림은 그대로)
+  await ev(`Planner.say({ group: 'done', tone: 'ok', text: '세션 작업 알림', ttl: 0 }); Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', text: '플래너가 한 말(차례 대기)' } })`); await settle();
+  ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => b.text)) === '["세션 작업 알림","플래너가 한 말(차례 대기)"]', '(준비) 세션 알림이 떠 있고 플래너의 말이 차례를 기다림');
+  await ev(`Planner.applySettings({ plannerEnabled: false })`); await settle();
+  ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => b.text)) === '["세션 작업 알림"]' && (await ev(`!document.getElementById('pl-hex').closest('[hidden]')`)), '플래너를 끄면 기다리던 플래너의 말만 거둠 · 세션 알림과 육각 단추는 남음');
+  await clearSays(); await ev(`Planner.applySettings({ plannerEnabled: true })`); await settle();
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'sched', tone: 'iris', text: '플래너가 하던 말(떠 있음)', sticky: true } }); Planner.say({ group: 'done', tone: 'ok', text: '뒤에 선 세션 알림', ttl: 0 })`); await settle();
+  await ev(`Planner.applySettings({ plannerEnabled: false })`); await settle();
+  ok((await text('.pl-say .pl-line p'))[0] === '뒤에 선 세션 알림' && (await ev('Planner.bubbles().length')) === 1, '떠 있던 플래너의 말도 거두고 뒤에 선 세션 알림이 바로 나옴');
+  await clearSays(); await ev(`Planner.applySettings({ plannerEnabled: true })`); await settle();
+  // 안 보는 사이에 더 급한 말이 오면: 떠 있던 덜 급한 말(인사)을 차례로 돌려보내고 급한 것을 앞에 세운다
+  await ev(`window.__realFocus2 = document.hasFocus; document.hasFocus = () => false; Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', text: '뒤에 있을 때 뜬 인사' } }); Planner.say({ group: 'done', tone: 'ok', text: '뒤에 있을 때 끝난 작업' })`); await settle();
+  ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => `${b.text}${b.shown ? '*' : ''}`)) === '["뒤에 있을 때 끝난 작업*","뒤에 있을 때 뜬 인사"]', '안 보는 사이: 작업 완료가 인사보다 앞에 섬(돌아왔을 때 급한 것부터)');
+  await ev(`document.hasFocus = window.__realFocus2; window.dispatchEvent(new Event('focus'))`); await settle();
+  await ev(`Planner.say({ group: 'greet', tone: 'iris', text: '보고 있을 때 뜬 인사', ttl: 0 })`); await clearSays();
+  await ev(`Planner.say({ group: 'greet', tone: 'iris', text: '보고 있을 때 뜬 인사', ttl: 0 }); Planner.say({ group: 'done', tone: 'ok', text: '보고 있을 때 끝난 작업', ttl: 0 })`); await settle();
+  ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => `${b.text}${b.shown ? '*' : ''}`)) === '["보고 있을 때 뜬 인사*","보고 있을 때 끝난 작업"]', '보고 있을 때는 읽던 말풍선을 바꿔치지 않음(전과 같음)');
+  await clearSays();
+  ok((await ev(`(() => { try { Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, cfg: { plannerQuietUntil: null } }); return true; } catch { return false; } })()`)), '설정을 맞추라는 방송(cfg)은 받는 쪽이 없어도 오류 없이 넘어감');
   // 준비(init) 전에 온 말: 버리지 않고 모아 두었다가 준비되면 말한다 — 새 인스턴스로 확인(끝에서, 화면에 판이 하나 더 생긴다)
   const early = await ev(`(async () => { const src = await (await fetch('/planner.js')).text(); const keep = window.Planner; new Function(src)(); const P2 = window.Planner; window.Planner = keep; const h = P2.say({ group: 'done', tone: 'ok', text: '준비 전에 온 말' }); const before = P2.bubbles().length; P2.init({}); return { handle: !!h && typeof h.close === 'function', before, after: P2.bubbles().map((b) => b.text) }; })()`);
   ok(early.handle && early.before === 0 && early.after.join() === '준비 전에 온 말', '준비 전에 온 말은 버리지 않고 준비되면 말함');

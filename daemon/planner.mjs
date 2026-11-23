@@ -50,9 +50,10 @@ export class Planner {
   /**
    * @param {{ dir: string, stateDir: string, settings: { get: () => object }, broadcast?: (o: object) => void, log?: (m: string) => void, now?: () => Date }} o
    */
-  constructor({ dir, stateDir, settings, broadcast = () => {}, log = () => {}, now = () => new Date() }) {
-    this.now = now; this.log = log; this.settings = settings; this.stateDir = stateDir;
-    this.cast = broadcast;
+  constructor({ dir, stateDir, settings, broadcast = () => {}, log = () => {}, now = () => new Date(), openDir = null }) {
+    this.now = now; this.log = log; this.settings = settings; this.stateDir = stateDir; this.dir = dir;
+    this.cast = broadcast; this.openDir = openDir; // openDir(dir) = 탐색기로 그 폴더 열기(server.mjs 가 꽂는다 — 시험에서는 없음)
+    this.muted = 0;                                 // 「잠시 조용히」 동안 하지 않은 말의 수(끝나면 규칙 알림이 한 번에 말한다)
     this.store = new PlannerStore({ dir, now, log, autoload: false });
     this.secret = null; this.started = false; this.failed = false;
     this.rules = null;    // 규칙 알림(planner-rules.mjs) — server.mjs 가 꽂는다
@@ -139,12 +140,38 @@ export class Planner {
     return this.apply([yes ? { op: 'accept', id, patch: patch || undefined } : { op: 'decline', id }], { by: 'user', via: 'proposal' });
   }
   /** 전부 종료: 규칙 점검을 멈추고, 돌고 있는 숨은 호출이 있으면 끝낸다(새로 부르지도 않는다). */
-  stop() { try { this.rules?.stop(); } catch { /* 이미 멈춤 */ } try { this.talkSvc?.stop(); } catch { /* 이미 멈춤 */ } }
+  stop() { try { this.rules?.stop(); } catch { /* 이미 멈춤 */ } try { return this.talkSvc?.stop() || null; } catch { return null; } } // 돌려주는 것: 끝내려 한 숨은 호출 { pid, gone } 또는 null
   /** 화면에 알린다 — 장부는 이미 저장됐으므로, 알리다 실패해도 던지지 않는다. */
-  #changed(say) { this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, ...(say ? { say } : {}) }); }
+  #changed(say) { const s = say && !this.#mute() ? say : null; this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, ...(s ? { say: s } : {}) }); }
   #send(o) { try { this.cast(o); } catch (e) { this.log(`planner: 화면에 알리지 못했습니다 (${e?.code || e?.name || 'error'})`); } }
-  /** 말풍선으로 한마디(장부는 그대로) — 규칙 알림 · 세션이 넣었을 때 */
-  say(say) { this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, say }); }
+  /** 말풍선으로 한마디(장부는 그대로) — 규칙 알림 · 세션이 넣었을 때. 「잠시 조용히」 동안에는 말하지 않고 개수만 센다(달력 · 제안 숫자는 그대로 바뀐다). */
+  say(say) { if (this.#mute()) return this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length }); this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, say }); }
+  #mute() { if (!this.quietNow()) return false; this.muted++; return true; }
+  /** 조용히 하는 동안 하지 않은 말의 수를 돌려주고 0 으로(규칙 알림이 조용히가 끝났을 때 부른다). */
+  takeMuted() { const n = this.muted; this.muted = 0; return n; }
+
+  // ---- 잠시 조용히(설계 조각 ⑧): 끝나는 시각 하나(settings.plannerQuietUntil). 플래너의 말풍선만 멈춘다 — 달력과 작업 완료 알림은 그대로. ----
+  quietNow(nowMs = this.now().getTime()) { const u = this.cfg().plannerQuietUntil; const t = u ? Date.parse(u) : NaN; return Number.isFinite(t) && nowMs < t; }
+  /**
+   * 말로 시킨 조용히("1시간 동안 알리지 마"): minutes(1~1440) · until:'today'(오늘 하루 = 내일 0시까지) · off:true(다시 알리기).
+   * 설정에 적고 화면의 설정 사본도 맞춘다(방송의 cfg). 던지지 않는다 — { ok, say }.
+   */
+  setQuiet({ minutes, until, off } = {}) {
+    const now = this.now(); let t = null;
+    if (off !== true) {
+      if (until === 'today') t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      else { const m = Number(minutes); if (!Number.isInteger(m) || m < 1 || m > 1440) return { ok: false, say: '얼마 동안 조용히 할지 다시 말해 주세요(길어도 하루까지예요).' }; t = new Date(now.getTime() + m * 60_000); }
+    }
+    const iso = t ? t.toISOString() : null;
+    if (typeof this.settings.set !== 'function') return { ok: false, say: '지금은 설정을 바꿀 수 없어요. 설정 → 플래너에서 바꿔 주세요.' };
+    try { this.settings.set({ plannerQuietUntil: iso }); } catch (e) { this.log(`planner: 설정을 적지 못했습니다 (${e?.code || 'error'})`); return { ok: false, say: '설정을 적지 못했어요. 설정 → 플래너에서 바꿔 주세요.' }; }
+    this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, cfg: { plannerQuietUntil: iso } });
+    this.log(`planner: quiet ${iso ? 'on' : 'off'}`);
+    if (!t) return { ok: true, say: '네, 다시 알릴게요.', quietUntil: null };
+    const h = t.getHours(), mi = t.getMinutes();
+    const word = until === 'today' ? '오늘은' : `${h < 12 ? '오전' : '오후'} ${h % 12 === 0 ? 12 : h % 12}시${mi ? ` ${mi}분` : ''}까지`;
+    return { ok: true, say: `${word} 조용히 할게요. 그사이 지나간 약속은 끝나면 모아서 말할게요.`, quietUntil: iso };
+  }
 
   /** 하루 한 번: 휴지통 30일 · 사본 30장. 플래너가 꺼져 있거나 쉬는 중이면 아무것도 하지 않는다. */
   sweep() {
@@ -207,6 +234,15 @@ export class Planner {
         if (!b || typeof b !== 'object' || Array.isArray(b)) return h.json(res, 400, { ok: false, code: 'bad-json', error: '요청을 알아볼 수 없습니다.' });
         if (!this.talkSvc) return h.json(res, 200, { ok: false, say: '지금은 아이리스를 부를 수 없어요.' });
         return h.json(res, 200, await this.talkSvc.talk(b));
+      }
+      if (req.method === 'POST' && p === '/api/planner/open-folder') {
+        // 설정의 「수첩 폴더 열기」: 같은 출처만, 요청이 준 경로는 쓰지 않는다(여는 곳은 언제나 수첩 폴더 하나). 쓰기 전에는 폴더가 없다 — 만들지 않고 그렇게 말한다.
+        if (!h.sameOrigin(req)) { this.log(`planner: 403 ${where} (다른 출처)`); return h.json(res, 403, { ok: false, code: 'forbidden', error: 'forbidden origin' }); }
+        let isDir = false; try { isDir = fs.statSync(this.dir).isDirectory(); } catch { /* 아직 없음 */ }
+        if (!isDir) return h.json(res, 404, { ok: false, code: 'empty', error: '아직 수첩에 적은 것이 없어 폴더가 없습니다. 일정을 하나 넣으면 생깁니다.' });
+        if (typeof this.openDir !== 'function') return h.json(res, 503, { ok: false, code: 'unavailable', error: '지금은 폴더를 열 수 없습니다.' });
+        try { this.openDir(this.dir); this.log('planner: open-folder'); return h.json(res, 200, { ok: true }); }
+        catch (e) { this.log(`planner: open-folder 실패 ${e?.code || e?.name || 'error'}`); return h.json(res, 500, { ok: false, code: 'error', error: '폴더를 열지 못했습니다.' }); }
       }
       if (req.method === 'POST' && ['/api/planner/ops', '/api/planner/undo', '/api/planner/decide'].includes(p)) {
         if (!h.sameOrigin(req)) { this.log(`planner: 403 ${where} (다른 출처)`); return h.json(res, 403, { ok: false, code: 'forbidden', error: 'forbidden origin' }); }

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Planner } from '../daemon/planner.mjs';
 import { PlannerRules } from '../daemon/planner-rules.mjs';
-import { PlannerTalk, SYSTEM, bookText, bookView, parseReply, readClaude, runAgent, linkSteps, toStoreOps, TEXT_MAX, INBOX_MAX, BOOK_MAX_CHARS } from '../daemon/planner-talk.mjs';
+import { PlannerTalk, SYSTEM, bookText, bookView, parseReply, readClaude, runAgent, linkSteps, toStoreOps, looksLikeQuestion, killTree, TEXT_MAX, INBOX_MAX, BOOK_MAX_CHARS } from '../daemon/planner-talk.mjs';
 
 let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) { pass++; console.log(`PASS ${n}`); } else { fail++; console.log(`FAIL ${n}`); } };
@@ -19,16 +19,16 @@ const J = (say, ops = []) => JSON.stringify({ say, ops });
 
 function world({ agents = ['claude', 'codex'], cfg = {} } = {}) {
   const dir = path.join(base, `w${++n}`); const sent = []; const logs = []; const calls = []; const script = [];
-  const pl = new Planner({ dir: path.join(dir, 'planner'), stateDir: dir, settings: { get: () => cfg }, broadcast: (o) => sent.push(o), log: (m) => logs.push(m), now: () => new Date(clock) });
+  const pl = new Planner({ dir: path.join(dir, 'planner'), stateDir: dir, settings: { get: () => cfg, set: (p) => Object.assign(cfg, p) }, broadcast: (o) => sent.push(o), log: (m) => logs.push(m), now: () => new Date(clock) });
   pl.start();
   pl.rules = new PlannerRules({ planner: pl, stateDir: dir, now: () => new Date(clock), log: (m) => logs.push(m) });
-  const killed = [];
+  const killed = []; const gate = { ready: true };
   const run = async (a) => { calls.push(a); const next = script.shift(); if (typeof next === 'function') return next(a); if (!next) return { ok: false, reason: 'failed', ms: 1 }; return typeof next === 'string' ? { ok: true, text: next, model: 'claude-haiku-5-5', modelActual: true, tokens: 3200, ms: 5000 } : { ms: 1, ...next }; };
-  const talk = new PlannerTalk({ planner: pl, stateDir: dir, agents: () => agents, run, now: () => new Date(clock), log: (m) => logs.push(m), kill: (pid) => killed.push(pid) });
+  const talk = new PlannerTalk({ planner: pl, stateDir: dir, agents: () => agents, run, now: () => new Date(clock), log: (m) => logs.push(m), kill: (pid) => killed.push(pid), ready: () => gate.ready });
   pl.talkSvc = talk;
   const add = (item, meta = U) => pl.store.apply([{ op: 'add', item }], meta).items[0];
   const reply = (...r) => script.push(...r);
-  return { pl, talk, sent, logs, calls, cfg, dir, add, reply, script, killed };
+  return { pl, talk, sent, logs, calls, cfg, dir, add, reply, script, killed, gate };
 }
 function seed(w) {
   return {
@@ -117,7 +117,7 @@ try {
     ok(!(await w.talk.talk({ confirm: c.confirm, yes: true })).ok && w.calls.length === 1, '같은 물음에 두 번 답할 수 없음 · 확인에는 AI 를 부르지 않음');
     w.reply(J('옮겼어요.', [{ op: 'update', no: s.news.no, end: '2026-11-28' }, { op: 'update', no: s.meet.no, time: '16:00' }, { op: 'check', no: s.big.no, step: 2, done: true }]));
     const c2 = await w.talk.talk({ text: '셋 다 바꿔' });
-    ok(c2.confirm && c2.say === '「가정통신문 회신 정리」 고치기(날짜 · 시각) · 「협의회」 고치기(날짜 · 시각) · 「결과 보고서 제출」 끝냄 — 이렇게 할까요?', `여러 건을 한꺼번에 바꾸기도 먼저 묻는다(실제로 바뀔 내용을 보여 줌) — ${c2.say}`);
+    ok(c2.confirm && c2.say === '「가정통신문 회신 정리」 고치기(11/22~11/27 → 11/22~11/28) · 「협의회」 고치기(11/23 15:00 → 11/23 16:00) · 「결과 보고서 제출」 끝냄 — 이렇게 할까요?', `여러 건을 한꺼번에 바꾸기도 먼저 묻는다(실제로 바뀔 내용을 보여 줌) — ${c2.say}`);
     const no = await w.talk.talk({ confirm: c2.confirm, yes: false });
     ok(no.ok && no.say === '알겠어요. 그대로 둘게요.' && w.pl.store.get(s.meet.id).time === '15:00', '아니요 → 그대로');
     w.reply(J('지웠어요.', [{ op: 'remove', no: s.meet.no }]));
@@ -385,6 +385,73 @@ try {
     ok(bad.ok === false && bad.reason === 'spawn-failed', '프로그램을 띄우지 못하면 사유만(예외 없음)');
     const src = fs.readFileSync(new URL('../daemon/planner-talk.mjs', import.meta.url), 'utf8');
     ok(src.includes("'-s', 'read-only'") && src.includes("'mcp_servers={}'") && src.includes("'--tools', ''") && src.includes("'--strict-mcp-config'") && !/taskkill[^\n]*\/IM/i.test(src), '숨은 호출은 도구 없이: 코덱스 = 읽기 전용 · MCP 0 / 클로드 = 도구 0 · MCP 0 · 이름으로 프로세스를 고르지 않음'); }
+
+  // ---- 18. 말로 조용히 · 끈 뒤의 호출 · 물어보는 말 · 부른 횟수 · 볼 창이 없을 때(2026-11-23 걸음 7~8 검토 반영 + 설계 조각 ⑧) ----
+  { const w = world(); seed(w); const rev = w.pl.store.rev;
+    w.reply(J('1시간 동안 조용히 할게요.', [{ op: 'quiet', minutes: 60 }]));
+    const q = await w.talk.talk({ text: '1시간 동안 알리지 마' });
+    ok(q.ok && q.say.startsWith('오전 10시까지 조용히') && w.cfg.plannerQuietUntil === new Date(2026, 10, 23, 10, 0, 0).toISOString() && w.pl.store.rev === rev && w.sent.at(-1).cfg.plannerQuietUntil === w.cfg.plannerQuietUntil, `"1시간 동안 알리지 마" = 수첩이 아니라 설정을 바꿈 — ${q.say}`);
+    w.reply(J('네.', [{ op: 'quiet', off: true }]));
+    ok((await w.talk.talk({ text: '다시 알려 줘' })).ok && w.cfg.plannerQuietUntil === null, '"다시 알려 줘" = 조용히 풂');
+    w.reply(J('네.', [{ op: 'quiet', until: 'today' }]));
+    ok((await w.talk.talk({ text: '오늘은 알리지 마' })).say.startsWith('오늘은 조용히') && w.cfg.plannerQuietUntil === new Date(2026, 10, 24).toISOString(), '"오늘은 알리지 마" = 내일 0시까지');
+    w.cfg.plannerQuietUntil = null;
+    w.reply(J('네.', [{ op: 'quiet', minutes: 99999 }]));
+    ok(!(await w.talk.talk({ text: '한 달 동안 알리지 마' })).ok && w.cfg.plannerQuietUntil === null, '하루를 넘는 조용히는 받지 않음');
+    w.reply(J('네.', [{ op: 'quiet', minutes: 30 }, { op: 'remove', no: 1 }]));
+    ok(!(await w.talk.talk({ text: '섞인 답' })).ok && w.cfg.plannerQuietUntil === null && w.pl.store.rev === rev, '조용히에 다른 조작을 섞은 답은 받지 않음');
+    ok(SYSTEM.includes('"op":"quiet"'), '안내문에 조용히 조작이 있음'); }
+  { const w = world({ agents: ['claude', 'codex'] }); seed(w); const rev = w.pl.store.rev;
+    w.reply(async () => { w.cfg.plannerTalk = false; return { ok: false, reason: 'limit', ms: 1 }; });
+    const r = await w.talk.talk({ text: '26일 출장' });
+    ok(!r.ok && r.say.includes('꺼져서') && w.calls.length === 1 && w.talk.inbox().length === 0, '부르는 사이에 말하기를 끄면 다음 에이전트로 넘어가지 않고 받아 두지도 않음');
+    w.cfg.plannerTalk = true;
+    w.reply(async () => { w.cfg.plannerEnabled = false; return { ok: true, text: J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]), tokens: 1, ms: 1 }; });
+    const r2 = await w.talk.talk({ text: '26일 출장' });
+    ok(!r2.ok && w.pl.store.rev === rev, '답이 온 뒤라도 그사이 플래너를 껐으면 적지 않음');
+    w.cfg.plannerEnabled = true;
+    w.reply(async () => { w.cfg.plannerTalk = false; return { ok: true, text: J('살펴볼게요.', [{ op: 'prepare', no: 1 }]), tokens: 1, ms: 1 }; });
+    const r3 = await w.talk.talk({ text: '준비됐는지 봐 줘' });
+    ok(!r3.ok && w.calls.length === 3, '그사이 껐으면 뒤따르는 호출(준비 살펴보기)도 하지 않음'); }
+  { const w = world(); const s = seed(w);
+    // 물어보는 말에 있는 일을 고치는 조작이 오면 바로 하지 않고 먼저 묻는다(수첩 속 글이 지시문처럼 작동하는 것을 막는 마지막 문)
+    w.reply(J('협의회를 4시로 바꿨어요.', [{ op: 'update', no: s.meet.no, time: '16:00' }]));
+    const a = await w.talk.talk({ text: '협의회가 언제였지?' });
+    ok(a.confirm && a.say === '「협의회」 고치기(11/23 15:00 → 11/23 16:00) — 이렇게 할까요?' && w.pl.store.get(s.meet.id).time === '15:00', `물어보는 말 + 고치는 조작 = 먼저 물음(바뀔 값을 보여 줌) — ${a.say}`);
+    w.reply(J('협의회를 4시로 바꿨어요.', [{ op: 'update', no: s.meet.no, time: '16:00' }]));
+    const b = await w.talk.talk({ text: '협의회 4시로 바꿔 줘' });
+    ok(!b.confirm && b.changeId && w.pl.store.get(s.meet.id).time === '16:00', '바꾸라는 말이면 하나 고치기는 바로(전과 같음)');
+    w.reply(J('넣었어요.', [{ op: 'add', title: '상담', start: '2026-11-25' }]));
+    ok((await w.talk.talk({ text: '수요일에 상담 넣어도 될까?' })).changeId, '물어보는 말이어도 넣기만 하는 것은 바로(되돌리기 한 번이면 됨)');
+    ok(looksLikeQuestion('협의회가 언제였지') && looksLikeQuestion('출장은 왜 넣었더라?') && looksLikeQuestion('다음 주 회의 몇 시야') && !looksLikeQuestion('내일 3시에 협의회 넣어 줘') && !looksLikeQuestion('이건 30분 전에 알려 줘') && !looksLikeQuestion('어디든 좋으니 내일로 옮겨 줘'), '물어보는 말 가리기'); }
+  { const w = world({ agents: ['claude', 'codex'] }); seed(w);
+    w.reply({ ok: false, reason: 'limit' }, J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]));
+    await w.talk.talk({ text: '26일 출장' });
+    const u = w.talk.usage();
+    ok(u.today.calls === 2 && u.today.fails === 1 && u.today.tokens === 3200 && u.today.unknown === 0 && u.week.fails === 1 && u.model === 'claude-haiku-5-5', `부른 횟수에는 답을 못 받은 시도도 들어감(따로 셈) — calls=${u.today.calls} fails=${u.today.fails}`);
+    w.reply({ ok: false, reason: 'limit' }, { ok: false, reason: 'limit' });
+    await w.talk.talk({ text: '27일 회의' });
+    const u2 = w.talk.usage();
+    ok(u2.today.calls === 4 && u2.today.fails === 3 && u2.model === 'claude-haiku-5-5', '둘 다 실패해도 부른 횟수로 셈 · 마지막으로 쓴 모델은 그대로'); }
+  { const w = world(); seed(w);
+    w.reply({ ok: false, reason: 'limit' }, { ok: false, reason: 'limit' });
+    await w.talk.talk({ text: '26일 출장' });
+    ok(w.talk.inbox().length === 1, '(준비) 받아 둔 말 하나');
+    w.gate.ready = false; w.reply(J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]));
+    ok((await w.talk.drain()) === 0 && w.talk.inbox().length === 1 && w.calls.length === 2, '볼 창이 없으면 받아 둔 말을 정리하지 않음(결과를 아무도 못 본다)');
+    w.gate.ready = true; w.cfg.plannerQuietUntil = new Date(2026, 10, 23, 12, 0).toISOString();
+    ok((await w.talk.drain()) === 0 && w.talk.inbox().length === 1 && w.calls.length === 2, '「잠시 조용히」 동안에도 정리하지 않음');
+    w.cfg.plannerQuietUntil = null;
+    ok((await w.talk.drain()) === 1 && w.talk.inbox().length === 0 && w.sent.some((m) => m.say && m.say.text.startsWith('적어 두신 말을 정리했어요')), '창이 있고 조용히가 아니면 정리하고 알림'); }
+  { const r0 = killTree(0); const child = (await import('node:child_process')).spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
+    await new Promise((r) => setTimeout(r, 300));
+    const gone = killTree(child.pid);
+    ok(r0 === true && gone === true, '가계도 끝내기는 정말 끝났는지 돌려줌(끝났으면 true)');
+    const w = world(); let seenPid = 0;
+    const t2 = new PlannerTalk({ planner: w.pl, stateDir: w.dir, kill: (pid) => { seenPid = pid; return false; }, log: (m) => w.logs.push(m) });
+    t2.proc = { pid: 4242, exitCode: null };
+    const res = t2.stop();
+    ok(res && res.pid === 4242 && res.gone === false && seenPid === 4242 && w.logs.some((m) => /숨은 호출을 끝내지 못했습니다 pid=4242/.test(m)), '끝내지 못한 숨은 호출은 보고에 남김(끝냈다고 하지 않음)'); }
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }
 finally { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} }
 console.log(`${pass} PASS / ${fail} FAIL`);

@@ -30,18 +30,18 @@ export class PlannerRules {
     this.pl = planner; this.now = now; this.log = log; this.ready = ready;
     this.told = new Set(); // 이번 실행에서 이미 말한 약속(장부에 적지 못해도 30초마다 되풀이하지 않게)
     this.file = path.join(stateDir, 'planner-rules.json');
-    this.state = { morning: null, evening: null, seenAt: null }; this.loaded = false; this.timer = null; this.first = true;
+    this.state = { morning: null, evening: null, seenAt: null, intro: null }; this.loaded = false; this.timer = null; this.first = true;
   }
   #load() {
     if (this.loaded) return; this.loaded = true;
-    try { const s = JSON.parse(fs.readFileSync(this.file, 'utf8')); if (s && typeof s === 'object') this.state = { morning: s.morning || null, evening: s.evening || null, seenAt: s.seenAt || null }; } catch { /* 처음 */ }
+    try { const s = JSON.parse(fs.readFileSync(this.file, 'utf8')); if (s && typeof s === 'object') this.state = { morning: s.morning || null, evening: s.evening || null, seenAt: s.seenAt || null, intro: s.intro || null }; } catch { /* 처음 */ }
   }
   #save() { try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); const tmp = `${this.file}.tmp-${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(this.state), 'utf8'); fs.renameSync(tmp, this.file); } catch (e) { this.log(`planner-rules: 상태를 적지 못했습니다 (${e?.code || 'error'})`); } }
   start() { if (this.timer) return; this.timer = setInterval(() => { try { this.tick(); } catch (e) { this.log(`planner-rules: tick error ${e?.code || e?.name || 'error'}`); } }, TICK_MS); this.timer.unref?.(); try { this.tick(); } catch (e) { this.log(`planner-rules: tick error ${e?.code || e?.name || 'error'}`); } }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
 
   /** 지금 조용히 해야 하는가 */
-  quiet(nowMs) { const u = this.pl.cfg().plannerQuietUntil; const t = u ? Date.parse(u) : NaN; return Number.isFinite(t) && nowMs < t; }
+  quiet(nowMs) { return this.pl.quietNow(nowMs); }
 
   /** 아침 인사의 재료(화면 · 시험도 쓴다): 오늘 할 것 · 밀린 일 · 가까운 마감 · 몰린 주 */
   summary(today) {
@@ -156,6 +156,15 @@ export class PlannerRules {
         }
         this.state.evening = today;
       }
+    }
+
+    // ---- 조용히가 끝났을 때: 그사이 하지 않은 말(세션이 넣은 것 · 제안 등)이 있었으면 한 번에 ----
+    if (!quiet) { const n = pl.takeMuted(); if (n) speak({ group: 'info', tone: 'iris', text: `조용히 하는 동안 플래너 소식이 ${n}개 있었어요.`, actions: [{ kind: 'open', day: today, label: '플래너 열기' }] }); }
+
+    // ---- 처음 한 번 소개(설계 조각 ⑧): 플래너를 처음 받은 사람에게 한 번만. 수첩이 비어 있어도 말한다(먼저 말하지 않는다는 규칙의 하나뿐인 예외). ----
+    if (!this.state.intro && !quiet) {
+      speak({ group: 'greet', tone: 'iris', intro: true, text: '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.', actions: [{ kind: 'open', day: today, label: '열어 보기' }] });
+      this.state.intro = today;
     }
 
     this.state.seenAt = now.toISOString();
