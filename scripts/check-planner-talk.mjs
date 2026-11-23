@@ -455,14 +455,17 @@ try {
     w.gate.ready = true;
     w.reply(async () => { w.cfg.plannerQuietUntil = new Date(2026, 10, 23, 12, 0).toISOString(); return { ok: true, text: J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]), tokens: 1, ms: 1 }; });
     ok((await w.talk.drain()) === 0 && w.pl.store.rev === rev && w.talk.inbox().length === 1, '답을 기다리는 사이 「잠시 조용히」가 켜져도 적지 않고 남겨 둠'); }
-  { const leftover = await runAgent({ agent: 'codex', system: 's', prompt: 'p', exe: process.execPath, env: { ...process.env, NODE_OPTIONS: `--require ${path.join(base, 'hang.cjs').replace(/\\/g, '/')}` }, timeoutMs: 400, kill: () => false });
-    ok(leftover.ok === false && leftover.reason === 'timeout' && leftover.leftover > 0, '시간이 넘었는데 끝내지 못한 숨은 호출은 그 PID 를 결과에 실어 줌(나중에 다시 끝내고 보고하려고)');
+  { let kept = null;
+    const leftover = await runAgent({ agent: 'codex', system: 's', prompt: 'p', exe: process.execPath, env: { ...process.env, NODE_OPTIONS: `--require ${path.join(base, 'hang.cjs').replace(/\\/g, '/')}` }, timeoutMs: 400, kill: () => false, onLeftover: (p) => { kept = p; } });
+    ok(leftover.ok === false && leftover.reason === 'timeout' && leftover.leftover > 0 && kept && kept.pid === leftover.leftover && kept.exitCode == null, '시간이 넘었는데 끝내지 못한 숨은 호출은 그 프로세스 손잡이를 넘겨 줌(번호만이 아니라 — 나중에 아직 안 끝난 것만 다시 끝내려고)');
     killTree(leftover.leftover);
     const w = world(); const seen = [];
     const t3 = new PlannerTalk({ planner: w.pl, stateDir: w.dir, kill: (pid, o) => { seen.push([pid, !!(o && o.deep)]); return pid !== 111; }, log: (m) => w.logs.push(m) });
-    t3.leftovers.add(111); t3.proc = { pid: 222, exitCode: null };
+    // 111 = 아직 살아 있는 것 · 333 = 그사이 스스로 끝난 것(그 번호는 이제 다른 프로그램의 것일 수 있다 — 건드리지 않는다)
+    t3.leftovers.add({ pid: 111, exitCode: null, signalCode: null }); t3.leftovers.add({ pid: 333, exitCode: 0, signalCode: null }); t3.leftovers.add({ pid: 444, exitCode: null, signalCode: 'SIGTERM' });
+    t3.proc = { pid: 222, exitCode: null };
     const res = t3.stop();
-    ok(JSON.stringify(seen) === '[[111,true],[222,true]]' && res.gone === false && JSON.stringify(res.left) === '[111]', '전부 종료: 앞서 못 끝낸 것까지 다시 끝내 보고(자손까지 확인), 남은 PID 를 돌려줌'); }
+    ok(JSON.stringify(seen) === '[[111,true],[222,true]]' && res.gone === false && JSON.stringify(res.left) === '[111]', `전부 종료: 앞서 못 끝낸 것 가운데 아직 안 끝난 것만 다시 끝내 보고(이미 끝난 번호는 건드리지 않음), 남은 PID 를 돌려줌 — ${JSON.stringify(seen)}`); }
   { const r0 = killTree(0); const child = (await import('node:child_process')).spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
     await new Promise((r) => setTimeout(r, 300));
     const gone = killTree(child.pid);

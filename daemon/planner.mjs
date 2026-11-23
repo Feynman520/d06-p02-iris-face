@@ -97,7 +97,9 @@ export class Planner {
     };
   }
   /** 웹소켓 첫 인사에 싣는 짧은 상태 */
-  hello() { return { ok: !this.failed, enabled: this.enabled, rev: this.store.rev, proposals: this.store.list('proposed').length, readOnly: this.store.readOnly, recovered: !!this.store.recovered }; }
+  hello() { return { ok: !this.failed, enabled: this.enabled, rev: this.store.rev, proposals: this.store.list('proposed').length, readOnly: this.store.readOnly, recovered: !!this.store.recovered, asks: this.asks() }; }
+  /** 답을 기다리는 물음(세션이 지우려는 것의 확인) — 화면이 다시 붙거나 플래너를 다시 켰을 때 말풍선을 되살리려고 준다. */
+  asks() { try { return this.cliSvc && !this.failed && this.started ? this.cliSvc.asks() : []; } catch { return []; } }
 
   // ---- 쓰기(창구) ----
   /**
@@ -230,6 +232,7 @@ export class Planner {
         if (req.headers && (req.headers['transfer-encoding'] || !(len >= 0) || len > BODY_MAX)) { this.log(`planner: 413 ${where}`); return h.json(res, 413, { ok: false, code: 'too-large', error: '요청이 너무 큽니다.', text: '요청이 너무 큽니다.' }); }
       }
       if (req.method === 'GET' && p === '/api/planner/view') return h.json(res, 200, this.view({ month: q.get('month'), day: q.get('day') }));
+      if (req.method === 'GET' && p === '/api/planner/asks') return h.json(res, 200, { ok: true, asks: this.asks() });
       if (req.method === 'GET' && p === '/api/planner/changes') return h.json(res, 200, { ok: true, changes: this.store.changes(Math.min(100, Math.max(1, Number(q.get('limit')) || 20))) });
       if (req.method === 'GET' && p === '/api/planner/usage') return h.json(res, 200, { ok: true, ...(this.talkSvc ? this.talkSvc.usage() : { today: { calls: 0, tokens: 0 }, week: { calls: 0, tokens: 0 }, model: null, inbox: 0 }) });
       if (req.method === 'POST' && p === '/api/planner/cli') {

@@ -9,6 +9,7 @@
 //     열쇠는 그 세션 카드가 살아 있는 동안만 받는다.
 //   · 숨은 AI 를 부르지 않는다 — 토큰은 그 세션이 이미 쓰고 있는 것뿐이다.
 //   · 로그에 일정 내용 · 열쇠 값을 싣지 않는다.
+import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -74,12 +75,33 @@ export class PlannerCli {
   }
   /** 열쇠가 틀린 요청이 짧은 동안 너무 많았는가(맞히려고 두드리는 것을 늦춘다 — 맞는 열쇠의 요청은 그대로 받는다) */
   #badKey() { const t = this.now().getTime(); this.badKeys = this.badKeys.filter((x) => t - x < WRITE_WINDOW_MS); if (this.badKeys.length >= BAD_KEY_LIMIT) return true; this.badKeys.push(t); return false; }
+  // ---- 지우려고 물어 둔 것(답을 기다리는 물음): 메모리 + 파일(state\planner-pending.json). 24시간이 지난 것은 읽을 때 버린다. ----
+  #pendingFile() { return path.join(this.pl.stateDir, 'planner-pending.json'); }
+  #pendingLoad() {
+    if (!this.pendingLoaded) {
+      this.pendingLoaded = true;
+      try { const o = JSON.parse(fs.readFileSync(this.#pendingFile(), 'utf8')); if (o && typeof o === 'object' && !Array.isArray(o)) for (const [k, v] of Object.entries(o)) if (/^[0-9a-f]{24}$/.test(k) && v && typeof v.id === 'string' && v.source && typeof v.at === 'number') this.pending.set(k, v); } catch { /* 없음 · 깨짐 = 빈 목록 */ }
+    }
+    const nowMs = this.now().getTime(); let cut = false;
+    for (const [k, v] of this.pending) if (nowMs - v.at > CONFIRM_KEEP_MS || nowMs < v.at - 60_000) { this.pending.delete(k); cut = true; }
+    if (cut) this.#pendingSave();
+  }
+  #pendingSave() {
+    const f = this.#pendingFile();
+    try {
+      if (!this.pending.size) { try { fs.unlinkSync(f); } catch { /* 없음 */ } return; }
+      fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.tmp-${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.pending)), 'utf8'); fs.renameSync(tmp, f);
+    } catch (e) { this.log(`planner-cli: 물어 둔 것을 적지 못했습니다 (${e?.code || 'error'})`); }
+  }
+  /** 아직 답을 기다리는 물음들(말풍선 모양 그대로) — 화면이 다시 붙거나 플래너를 다시 켰을 때 되살리려고 준다. 꺼져 있으면 빈 목록. */
+  asks() { if (!this.on) return []; this.#pendingLoad(); return [...this.pending.values()].sort((a, b) => a.at - b.at).map((v) => v.say).filter((s) => s && typeof s.text === 'string'); }
   /**
    * 세션이 지우려던 것에 대한 사용자의 답(화면의 말풍선 → POST /api/planner/confirm). 던지지 않는다 — { ok, say, changeId? }.
    * 물어본 뒤로 그 일이 바뀌었으면(이름 · 날짜를 고쳤거나 이미 지웠거나) 지우지 않는다.
    */
   confirm(token, yes) {
-    const pl = this.pl; const p = this.pending.get(token); this.pending.delete(token);
+    this.#pendingLoad();
+    const pl = this.pl; const p = this.pending.get(token); if (this.pending.delete(token)) this.#pendingSave();
     if (!p || this.now().getTime() - p.at > CONFIRM_KEEP_MS) return { ok: false, say: '물어본 지 오래돼서 그 일은 그대로 두었어요.' };
     if (!yes) { this.log('planner-cli: confirm no'); return { ok: true, say: `「${p.title}」${josa(p.title, '은', '는')} 그대로 두었어요.` }; }
     try {
@@ -147,12 +169,18 @@ export class PlannerCli {
           else return no(400, '반복하는 일입니다. 그날 것만 빼려면 --date YYYY-MM-DD, 반복 전체를 지우려면 --all 을 붙이세요(사용자가 어느 쪽을 말했는지 확인하세요).', 'repeat-scope');
         }
         const nowMs = this.now().getTime();
-        for (const [k, v] of this.pending) if (nowMs - v.at > CONFIRM_KEEP_MS) this.pending.delete(k);
+        this.#pendingLoad();
+        // 같은 일을 같은 범위로 또 물으면 새로 묻지 않는다(되풀이에 빠진 세션이 물음을 쌓지 않게)
+        const dupAsk = [...this.pending.values()].find((v) => v.id === it.id && v.scope === scope && v.date === (scope === 'day' ? body.date : null) && v.source.id === sid);
+        if (dupAsk) return { code: 200, out: { ok: true, text: `이미 사용자 화면에 확인을 띄워 두었습니다(아직 지우지 않았습니다): ${fmtItem(it)}\n사용자에게 화면의 확인을 눌러 달라고 알려 주세요. 다시 요청하지 마세요.` } };
         if ([...this.pending.values()].filter((v) => v.source.id === sid).length >= PENDING_MAX) return no(429, `이 세션이 지우려고 물어 둔 것이 이미 ${PENDING_MAX}개 있습니다. 사용자가 답한 뒤에 다시 하세요.`, 'pending-max');
         const token = crypto.randomBytes(12).toString('hex');
-        this.pending.set(token, { id: it.id, title: it.title, scope, date: scope === 'day' ? body.date : null, updatedAt: it.updatedAt || null, meta, source, at: nowMs });
         const what = scope === 'day' ? `${+body.date.slice(5, 7)}월 ${+body.date.slice(8, 10)}일 것만 빼려고` : scope === 'all' ? '반복 전체를 지우려고' : '지우려고';
-        pl.say({ group: 'attention', tone: 'warn', sticky: true, text: `「${source.title}」 세션이 ${T}${josa(it.title, '을', '를')} ${what} 해요.`, tip: fmtItem(it), actions: [{ kind: 'confirm', token, yes: true, label: scope === 'day' ? '그날만 빼기' : '지우기' }, { kind: 'confirm', token, yes: false, label: '그대로 두기' }] });
+        const ask = { group: 'attention', tone: 'warn', sticky: true, text: `「${source.title}」 세션이 ${T}${josa(it.title, '을', '를')} ${what} 해요.`, tip: fmtItem(it), actions: [{ kind: 'confirm', token, yes: true, label: scope === 'day' ? '그날만 빼기' : '지우기' }, { kind: 'confirm', token, yes: false, label: '그대로 두기' }] };
+        // 물음은 답하거나 24시간이 지날 때까지 남는다(파일에도 — 데몬이 다시 켜져도, 화면을 다시 열어도, 플래너를 껐다 켜도 답할 수 있게)
+        this.pending.set(token, { id: it.id, title: it.title, scope, date: scope === 'day' ? body.date : null, updatedAt: it.updatedAt || null, meta, source, at: nowMs, say: ask });
+        this.#pendingSave();
+        pl.say(ask);
         return { code: 200, out: { ok: true, text: [`아직 지우지 않았습니다. 사용자 화면에 확인을 띄웠습니다 — 사용자가 「${scope === 'day' ? '그날만 빼기' : '지우기'}」를 눌러야 지워집니다: ${fmtItem(it)}`, '사용자에게 화면의 확인을 눌러 달라고 알려 주세요. 다시 요청하지 마세요.'].join('\n') } };
       }
       const patch = pick(body.item, FIELDS);

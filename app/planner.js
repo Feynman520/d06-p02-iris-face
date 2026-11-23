@@ -357,7 +357,10 @@ window.Planner = (() => {
       if (a.kind === 'confirm' && typeof a.token === 'string') return { label: a.label || (a.yes ? '지우기' : '그대로 두기'), icon: a.yes ? 'check' : 'close', main: !!a.yes, run: () => answerConfirm(a.token, !!a.yes) }; // 세션이 지우려는 것에 대한 답
       return null;
     }).filter(Boolean);
-    const ask = (Array.isArray(s.actions) ? s.actions : []).some((a) => a && a.kind === 'confirm');
+    const askAct = (Array.isArray(s.actions) ? s.actions : []).find((a) => a && a.kind === 'confirm' && typeof a.token === 'string');
+    const ask = !!askAct; const token = askAct ? askAct.token : null;
+    // 같은 물음을 두 번 띄우지 않는다(조용히가 끝나 다시 온 것 · 다시 붙으며 되살린 것이 이미 떠 있는 경우)
+    if (token && bubbles().some((b) => b.meta && b.meta.token === token)) return;
     if (s.intro) {
       // 처음 한 번 소개: 이미 들고 있으면(기다리는 중 · 떠 있음) 겹쳐 띄우지 않는다 — 데몬은 화면이 "보여 줬다"고 알릴 때까지 다시 보낸다
       if (introWait || bubbles().some((b) => b.meta && b.meta.intro)) return;
@@ -366,7 +369,7 @@ window.Planner = (() => {
       // 첫 실행 튜토리얼이 덮고 있는 동안 띄우지 않는다(뒤에서 떴다 사라지면 아무도 못 본다) — 닫힐 때까지 기다렸다가, 조금 더 오래 보인다
       if (tutorialOpen()) { introWait = setInterval(() => { if (!tutorialOpen()) { clearInterval(introWait); introWait = 0; sayFromDaemon(s); } }, 2000); return; }
     }
-    say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : s.intro ? TTL * 2.5 : undefined, meta: { src: 'planner', intro: !!s.intro, ask } });
+    say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : s.intro ? TTL * 2.5 : undefined, meta: { src: 'planner', intro: !!s.intro, ask, token } });
     // 약속 알림(os 표시가 붙은 것)은 창이 뒤에 있으면 윈도우 알림으로도 — 설정의 「윈도우 알림」을 따른다(app/notify.js 의 같은 길)
     if (s.os && away()) { try { window.Notify?.os?.({ title: s.text, sub: s.tip || '', onClick: () => openPanel(null) }); } catch { /* 알림 실패는 넘어간다 */ } }
   }
@@ -497,7 +500,18 @@ window.Planner = (() => {
     } catch { /* 옛 환경: 창 크기 변화 때만 다시 잰다 */ }
     place(); render();
   }
-  function onHello(p) { if (p && typeof p.proposals === 'number') { count = p.proposals; cfg.plannerEnabled = p.enabled !== false; renderRow(); if (open) load(); } }
+  function onHello(p) {
+    if (!(p && typeof p.proposals === 'number')) return;
+    count = p.proposals; cfg.plannerEnabled = p.enabled !== false; renderRow(); if (open) load();
+    restoreAsks(p.asks); // 화면을 다시 열었거나 데몬이 다시 붙었다: 답을 기다리는 물음(세션이 지우려는 것)을 되살린다
+  }
+  /** 답을 기다리는 물음을 되살린다(이미 떠 있는 것은 sayFromDaemon 이 걸러 낸다). list 가 없으면 데몬에 묻는다. */
+  async function restoreAsks(list) {
+    let asks = Array.isArray(list) ? list : null;
+    if (!asks) { try { const r = await fetch('/api/planner/asks'); const j = await r.json(); asks = Array.isArray(j.asks) ? j.asks : []; } catch { asks = []; } }
+    if (cfg.plannerEnabled === false) return;
+    for (const s of asks.slice(0, 20)) sayFromDaemon(s);
+  }
   function onMessage(m) {
     if (!m) return;
     if (typeof m.proposals === 'number') count = m.proposals;
@@ -515,6 +529,7 @@ window.Planner = (() => {
     const was = cfg.plannerEnabled !== false; const wasQuiet = quietOn(cfg);
     cfg = { ...cfg, ...(c || {}) };
     if (was && cfg.plannerEnabled === false) dropPlannerSays(); // 방금 껐다: 플래너가 하던 말 · 차례를 기다리던 말을 거둔다(세션의 작업 알림은 그대로)
+    else if (!was && cfg.plannerEnabled !== false) restoreAsks(null); // 다시 켰다: 끌 때 거둔 물음(세션이 지우려는 것)을 되살린다 — 답할 길이 없어지지 않게
     else if (!wasQuiet && quietOn(cfg)) dropPlannerSays({ keepAsk: true }); // 방금 「잠시 조용히」를 켰다: 화면에 이미 와 있던 플래너의 말도 멈춘다(답을 기다리는 물음은 남긴다)
     render(); if (open) load();
   }

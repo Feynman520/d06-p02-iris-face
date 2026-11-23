@@ -297,6 +297,14 @@ try {
     at(23, 10, 0, 30);
     const t = w.tick();
     ok(JSON.stringify(t) === '["조용히 하는 동안 플래너 소식이 5개 있었어요. 최근 것부터 알려 드릴게요.","소식 3","소식 4","소식 5"]', `미뤄 둔 말이 많으면 개수를 먼저 말하고 최근 것 셋만 — ${t.join(' / ')}`); }
+  { const cfg = { plannerQuietUntil: new Date(2026, 10, 23, 10, 0, 0).toISOString() };
+    at(23, 9, 0); const w = world(null, cfg); w.tick();
+    // 답을 기다리는 물음(세션이 지우려는 것의 확인)은 뒤에 다른 소식이 많이 와도 빠뜨리지 않는다 — 빠지면 답할 길이 없어진다
+    w.pl.say({ group: 'attention', tone: 'warn', sticky: true, text: '지우려고 해요', actions: [{ kind: 'confirm', token: 'a'.repeat(24), yes: true }, { kind: 'confirm', token: 'a'.repeat(24), yes: false }] });
+    for (let i = 1; i <= 4; i++) w.pl.say({ group: 'info', tone: 'iris', text: `뒤에 온 소식 ${i}` });
+    at(23, 10, 0, 30);
+    const t = w.tick();
+    ok(JSON.stringify(t) === '["조용히 하는 동안 플래너 소식이 4개 있었어요. 최근 것부터 알려 드릴게요.","지우려고 해요","뒤에 온 소식 2","뒤에 온 소식 3","뒤에 온 소식 4"]', `답을 기다리는 물음은 개수와 상관없이 모두 다시 말함 — ${t.join(' / ')}`); }
   { // 「오늘 하루」 조용히: 아침에 지나간 약속도 조용히가 끝난 자정에 모아 말한다(평소의 12시간보다 오래됐어도)
     at(23, 8, 0);
     const cfg = { plannerQuietUntil: new Date(2026, 10, 24, 0, 0, 0).toISOString() };

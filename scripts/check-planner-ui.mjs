@@ -417,6 +417,19 @@ try {
   await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(500);
   ok(JSON.stringify(confirms) === '[["tok-1",true]]' && (await text('.pl-say .pl-line p'))[0] === '「협의회」를 지웠어요. 휴지통에 30일 남아요.' && (await text('.pl-say [data-act="0"]'))[0].includes('되돌리기'), '「지우기」 = 데몬에 답을 보내고 결과 + 「되돌리기」를 말함');
   await clearSays();
+  // 답을 기다리는 물음은 사라지지 않는다: 플래너를 껐다 켜도 · 화면이 다시 붙어도 되살아나고, 같은 물음을 겹쳐 띄우지 않는다
+  const askSay = { group: 'attention', tone: 'warn', sticky: true, text: '「결과 보고서 초안」 세션이 「출장」을 지우려고 해요.', actions: [{ kind: 'confirm', token: 'tok-2', yes: true, label: '지우기' }, { kind: 'confirm', token: 'tok-2', yes: false, label: '그대로 두기' }] };
+  pl.cliSvc.asks = () => [askSay];
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: ${JSON.stringify(askSay)} }); Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: ${JSON.stringify(askSay)} })`); await settle();
+  ok((await ev(`Planner.bubbles().filter((b) => b.meta && b.meta.token === 'tok-2').length`)) === 1, '같은 물음이 다시 와도 겹쳐 띄우지 않음');
+  await ev(`Planner.applySettings({ plannerEnabled: false })`); await settle();
+  const offN = await ev(`Planner.bubbles().length`);
+  await ev(`Planner.applySettings({ plannerEnabled: true })`); await page.waitForTimeout(500);
+  ok(offN === 0 && (await text('.pl-say .pl-line p'))[0] === askSay.text, '플래너를 껐다 켜면 거뒀던 물음이 되살아남(답할 길이 없어지지 않음)');
+  await ev(`document.querySelectorAll('.pl-say [data-line-x]').forEach((b) => b.click())`); await settle();
+  await ev(`Planner.onHello({ ok: true, enabled: true, rev: 1, proposals: 0, asks: [${JSON.stringify(askSay)}] })`); await settle();
+  ok((await text('.pl-say .pl-line p'))[0] === askSay.text, '화면이 다시 붙을 때(hello)도 답을 기다리는 물음을 되살림');
+  pl.cliSvc.asks = () => []; await clearSays();
   // 플래너를 끄면: 플래너가 하던 말 · 차례를 기다리던 말만 거둔다(세션의 작업 알림은 그대로)
   await ev(`Planner.say({ group: 'done', tone: 'ok', text: '세션 작업 알림', ttl: 0 }); Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', text: '플래너가 한 말(차례 대기)' } })`); await settle();
   ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => b.text)) === '["세션 작업 알림","플래너가 한 말(차례 대기)"]', '(준비) 세션 알림이 떠 있고 플래너의 말이 차례를 기다림');

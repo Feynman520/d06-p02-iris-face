@@ -222,6 +222,26 @@ try {
   pl.apply([{ op: 'update', id: st.id, patch: { title: '이름을 바꾼 일' } }], { by: 'user', via: 'test' });
   ok(cli.confirm(tok2, true).ok === false && pl.store.get(st.id).state === 'active', '물어본 뒤로 그 일이 바뀌었으면 지우지 않음');
   ok(cli.confirm('없는표', true).ok === false, '모르는 물음에는 아무것도 하지 않음');
+  // 물음은 답하거나 24시간이 지날 때까지 남는다: 데몬이 다시 켜져도(파일) · 화면이 다시 붙어도(hello 의 asks) · 같은 것을 또 물어도(쌓지 않음)
+  const ask1 = await post(H('s1'), { cmd: 'remove', asked: true, no: late.no });
+  const tokL = says().pop().actions[0].token; const saidN = says().length;
+  const ask2 = await post(H('s1'), { cmd: 'remove', asked: true, no: late.no });
+  ok(ask1.code === 200 && ask2.code === 200 && ask2.out.text.startsWith('이미 사용자 화면에 확인을 띄워 두었습니다') && says().length === saidN, '같은 일을 또 지워 달라고 해도 물음을 쌓지 않음(말풍선도 다시 띄우지 않음)');
+  ok(cli.asks().length === 1 && cli.asks()[0].actions[0].token === tokL && pl.hello().asks.length === 1 && (await (await fetch(`http://127.0.0.1:${port}/api/planner/asks`)).json()).asks[0].text.includes('지우려고 해요'), '답을 기다리는 물음은 화면이 다시 붙을 때 되살릴 수 있게 내어 줌(hello · /api/planner/asks)');
+  const pendFile = path.join(base, 'planner-pending.json');
+  const cli2 = new PlannerCli({ planner: pl, port, session: (id) => sessions[id] || null, now: () => new Date(clock), log: () => {} });
+  ok(fs.existsSync(pendFile) && cli2.asks().length === 1, '물음은 파일에도 남아 데몬이 다시 켜져도 이어짐');
+  const afterRestart = cli2.confirm(tokL, true);
+  ok(afterRestart.ok && pl.store.get(late.id).state === 'trash' && !fs.existsSync(pendFile), '다시 켜진 뒤에도 그 물음에 답하면 지워짐 · 답한 물음은 파일에서도 사라짐');
+  pl.undo(afterRestart.changeId); cli.pendingLoaded = false; cli.pending.clear();
+  cfg.plannerEnabled = false;
+  ok(cli.asks().length === 0 && pl.hello().asks.length === 0, '플래너가 꺼져 있으면 물음을 내어 주지 않음');
+  cfg.plannerEnabled = true;
+  clock = new Date(2026, 10, 24, 12, 0, 0);
+  await post(H('s1'), { cmd: 'remove', asked: true, no: late.no }); const tokOld = says().pop().actions[0].token;
+  clock = new Date(2026, 10, 25, 12, 1, 0);
+  ok(cli.asks().length === 0 && cli.confirm(tokOld, true).ok === false && pl.store.get(late.id).state === 'active', '24시간이 지난 물음은 버림(지우지 않음)');
+  clock = new Date(2026, 10, 23, 11, 0, 0);
   const rp0 = await post(H('s1'), { cmd: 'remove', asked: true, no: it3.no });
   ok(rp0.code === 400 && rp0.out.text.includes('--date') && rp0.out.text.includes('--all') && pl.store.get(it3.id).state === 'active', '반복하는 일은 그날 것만인지 전부인지 밝혀야 함');
   const rp1 = await post(H('s1'), { cmd: 'remove', asked: true, no: it3.no, date: '2026-12-01' });

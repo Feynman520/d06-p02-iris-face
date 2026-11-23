@@ -264,7 +264,7 @@ export function killTree(pid, { deep = false, table = readTableSync } = {}) {
  * 돌려주는 것: { ok, text, model, modelActual, tokens, ms, reason } — reason 은 정해진 낱말.
  * onSpawn(proc) = 띄운 프로세스를 알려 준다(전부 종료 때 끝내려고). kill(pid) = 그 가계도 끝내기(시험에서 바꿔 끼운다).
  */
-export function runAgent({ agent, system, prompt, timeoutMs = TALK_TIMEOUT_MS, exe = undefined, env = childEnv(), onSpawn = null, kill = killTree }) {
+export function runAgent({ agent, system, prompt, timeoutMs = TALK_TIMEOUT_MS, exe = undefined, env = childEnv(), onSpawn = null, onLeftover = null, kill = killTree }) {
   return new Promise((resolve) => {
     const t0 = Date.now(); const cwd = os.tmpdir(); let file, args, stdinText = null, outFile = null;
     if (agent === 'codex') {
@@ -285,7 +285,8 @@ export function runAgent({ agent, system, prompt, timeoutMs = TALK_TIMEOUT_MS, e
     catch { return finish({ ok: false, reason: 'spawn-failed' }); }
     try { onSpawn?.(proc); } catch { /* 알림 실패는 넘어간다 */ }
     // 끝내지 못했으면(kill 이 false) 그 PID 를 결과에 실어 준다 — 부른 쪽이 기억했다가 전부 종료 때 다시 끝내고 보고한다
-    const cut = (reason) => { const gone = kill(proc.pid); finish({ ok: false, reason, ...(gone === false ? { leftover: proc.pid } : {}) }); };
+    //   PID 숫자만 기억하지 않는다 — 그 프로세스가 나중에 끝나면 같은 번호를 다른 프로그램이 받을 수 있다. 프로세스 손잡이(proc)를 넘겨, 아직 안 끝난 것만 다시 끝내게 한다.
+    const cut = (reason) => { const gone = kill(proc.pid); if (gone === false) { try { onLeftover?.(proc); } catch { /* 알림 실패는 넘어간다 */ } } finish({ ok: false, reason, ...(gone === false ? { leftover: proc.pid } : {}) }); };
     timer = setTimeout(() => cut('timeout'), timeoutMs);
     proc.on('error', () => finish({ ok: false, reason: 'spawn-failed' }));
     if (stdinText != null && proc.stdin) { proc.stdin.on('error', () => { /* 읽기 전에 끝난 프로세스 */ }); try { proc.stdin.end(stdinText); } catch { /* 닫힘 */ } }
@@ -319,7 +320,7 @@ export class PlannerTalk {
     this.pl = planner; this.stateDir = stateDir; this.agents = agents; this.run = run; this.now = now; this.log = log; this.kill = kill;
     this.ready = ready;         // 지금 말을 받을 창이 있는가 — 받아 둔 말의 정리 결과는 말풍선 한 번으로만 알리므로, 볼 창이 없을 때는 정리하지 않는다
     this.busy = false; this.stopped = false; this.proc = null;
-    this.leftovers = new Set(); // 끝내려 했지만 살아남은 숨은 호출의 PID(전부 종료 때 다시 끝내고 보고한다)
+    this.leftovers = new Set(); // 끝내려 했지만 살아남은 숨은 호출의 프로세스 손잡이(전부 종료 때 아직 안 끝난 것만 다시 끝내고 보고한다 — 번호만 기억하면 다른 프로그램을 끝낼 수 있다)
     this.pending = new Map();   // 물어 둔 큰 변경: id → { ops, text, at, rev }
     this.settled = new Set();   // 이번 실행에서 이미 정리한 받아 둔 말(파일에서 지우지 못했어도 다시 적지 않게)
     this.inboxFile = path.join(stateDir, 'planner-inbox.json'); this.usageFile = path.join(stateDir, 'planner-usage.json');
@@ -327,8 +328,11 @@ export class PlannerTalk {
   /** 전부 종료: 새로 부르지 않고, 돌고 있는 숨은 호출이 있으면 그 가계도만 끝낸다. */
   stop() {
     this.stopped = true; const p = this.proc; this.proc = null;
-    const pids = [...this.leftovers]; this.leftovers.clear();      // 앞서(시간 초과 등) 끝내지 못한 것도 한 번 더 끝내 본다
-    if (p && p.pid && p.exitCode == null) pids.push(p.pid);
+    // 앞서(시간 초과 등) 끝내지 못한 것도 한 번 더 끝내 본다 — 그사이 스스로 끝난 것은 뺀다. 손잡이를 쥐고 있고 아직 끝나지 않았으면
+    // 그 번호는 여전히 우리가 띄운 그 프로세스다(끝난 뒤의 번호는 다른 프로그램이 받았을 수 있으므로 건드리지 않는다).
+    const live = (x) => x && x.pid && x.exitCode == null && x.signalCode == null;
+    const pids = [...this.leftovers].filter(live).map((x) => x.pid); this.leftovers.clear();
+    if (live(p)) pids.push(p.pid);
     if (!pids.length) return null;
     const left = [];
     for (const pid of new Set(pids)) { const gone = this.kill(pid, { deep: true }); if (gone === false) { left.push(pid); this.log(`planner-talk: 숨은 호출을 끝내지 못했습니다 pid=${pid}`); } }
@@ -376,9 +380,10 @@ export class PlannerTalk {
     for (const agent of order.slice(0, 2)) {
       if (this.stopped) return { ok: false, reason: 'stopped' };
       if (alive && !alive()) return { ok: false, reason: 'off' };   // 부르는 사이에 설정에서 껐다 — 다음 에이전트로 넘어가지 않는다
-      const r = await this.run({ agent, system, prompt, onSpawn: (p) => { this.proc = p; }, kill: this.kill });
+      const r = await this.run({ agent, system, prompt, onSpawn: (p) => { this.proc = p; }, onLeftover: (p) => { this.leftovers.add(p); }, kill: this.kill });
       this.proc = null;
-      if (r.leftover) { this.leftovers.add(r.leftover); this.log(`planner-${what}: 숨은 호출을 끝내지 못했습니다 pid=${r.leftover}`); }
+      for (const x of [...this.leftovers]) if (!(x && x.exitCode == null && x.signalCode == null)) this.leftovers.delete(x); // 그사이 스스로 끝난 것은 잊는다
+      if (r.leftover) this.log(`planner-${what}: 숨은 호출을 끝내지 못했습니다 pid=${r.leftover}`);
       this.log(`planner-${what}: ${agent} ${r.ok ? 'ok' : `fail(${r.reason})`} ${((r.ms || 0) / 1000).toFixed(1)}s${r.tokens ? ` tokens=${r.tokens}` : ''}`);
       this.#count(r, agent);                                         // 실패한 시도도 "부른 횟수"다
       if (r.ok) return { ...r, agent };

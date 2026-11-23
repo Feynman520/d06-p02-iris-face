@@ -170,8 +170,12 @@ export class PlannerRules {
     //   많으면 먼저 개수를 말하고 최근 것 셋만 다시 말한다(나머지는 달력과 변경 기록에 있다).
     if (!quiet) {
       const held = pl.takeMuted();
-      if (held.length > MUTED_REPLAY) speak({ group: 'info', tone: 'iris', text: `조용히 하는 동안 플래너 소식이 ${held.length}개 있었어요. 최근 것부터 알려 드릴게요.`, actions: [{ kind: 'open', day: today, label: '플래너 열기' }] });
-      for (const s of held.slice(-MUTED_REPLAY)) speak(s);
+      //   답을 기다리는 물음(세션이 지우려는 것의 확인)은 개수와 상관없이 모두 다시 말한다 — 빠뜨리면 답할 길이 없어진다.
+      const isAsk = (s) => Array.isArray(s.actions) && s.actions.some((a) => a && a.kind === 'confirm');
+      const asks = held.filter(isAsk); const rest = held.filter((s) => !isAsk(s));
+      if (rest.length > MUTED_REPLAY) speak({ group: 'info', tone: 'iris', text: `조용히 하는 동안 플래너 소식이 ${rest.length}개 있었어요. 최근 것부터 알려 드릴게요.`, actions: [{ kind: 'open', day: today, label: '플래너 열기' }] });
+      for (const s of asks) speak(s);
+      for (const s of rest.slice(-MUTED_REPLAY)) speak(s);
     }
 
     // ---- 처음 한 번 소개(설계 조각 ⑧): 플래너를 처음 받은 사람에게 한 번만. 수첩이 비어 있어도 말한다(먼저 말하지 않는다는 규칙의 하나뿐인 예외). ----
