@@ -1,0 +1,5 @@
+#!/bin/sh
+# iris-planner (Git Bash) - IRIS planner command for sessions started by IRIS
+dir=$(dirname "$0")
+if [ -n "$IRIS_PLANNER_NODE" ]; then exec "$IRIS_PLANNER_NODE" "$dir/../iris-planner.mjs" "$@"; fi
+exec node "$dir/../iris-planner.mjs" "$@"

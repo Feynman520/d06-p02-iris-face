@@ -14,7 +14,8 @@ window.Settings = (() => {
   // ---- 저장/불러오기 ----
   function load() { try { const s = JSON.parse(localStorage.getItem('iris.settings') || 'null'); if (s) cfg = { ...DEF, ...s }; } catch {} }
   async function pullServer() { try { const r = await fetch('/api/settings'); const s = await r.json(); if (s && s.updatedAt) { const local = JSON.parse(localStorage.getItem('iris.settings') || '{}'); if (!local.updatedAt || s.updatedAt > local.updatedAt) cfg = { ...DEF, ...s }; } } catch {} }
-  function save() { cfg.updatedAt = new Date().toISOString(); try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {} fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).catch(() => {}); }
+  const CLIENT = Math.random().toString(36).slice(2, 12); // 이 화면이 보낸 저장인지 가리는 표(데몬이 방송에 그대로 실어 준다 — 자기 저장의 메아리로 값을 되돌리지 않게)
+  function save() { cfg.updatedAt = new Date().toISOString(); try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {} return fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-iris-client': CLIENT }, body: JSON.stringify(cfg) }).catch(() => {}); }
 
   // ---- 적용 ----
   function applyTheme() {
@@ -120,10 +121,11 @@ window.Settings = (() => {
     renderMods();
     renderAuth();
     renderUpdate();
+    renderPlanner();
     renderNav();
   }
   // ---- 묶음과 오른쪽 목차(v2.87, 사용자 선택 = 시안 A′): 한 번에 한 묶음만. 마지막으로 본 묶음을 기억한다. ----
-  const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js)
+  const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'planner', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js) · 플래너(설계 조각 ⑧)
   let pane = (() => { try { const p = localStorage.getItem('iris.settings.pane'); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
   let modsSum = '';
   // 미리보기 캔버스는 「디자인」 묶음이 보일 때만 돌린다(다른 묶음에서 숨은 캔버스 11개가 GPU 를 쓰지 않게)
@@ -142,7 +144,79 @@ window.Settings = (() => {
     if (open && p === 'ontology') window.OntologyView?.show();
     if (open && p === 'tools') window.ToolsView?.show();
     if (open && p === 'feedback') window.FeedbackView?.show();
+    if (open && p === 'planner') loadPlannerUsage();
   }
+  // ---- 플래너(설계 조각 ⑧, 2026-11-23): 스위치 여덟 줄 + 딸린 값 · 잠시 조용히 · 사용량 한 줄 · 수첩 폴더 ----
+  // 처음 값은 데몬 daemon/planner.mjs PLANNER_DEFAULTS 와 같아야 한다(verify:settings 가 대조). DEF 에 넣지 않는다 —
+  // 사용자가 바꾼 키만 저장되어야 "없는 키 = 처음 값"이 지켜진다(나중에 처음 값을 바꿔도 손대지 않은 사람은 따라온다).
+  const PL_DEF = { plannerEnabled: true, plannerMorning: true, plannerMorningAt: '08:00', plannerStartAlert: true, plannerStartMin: 10, plannerEvening: true, plannerEveningAt: '16:30', plannerOverlap: true, plannerTalk: true, plannerFromSessions: true, plannerCheck: false, plannerQuietUntil: null };
+  const PL_SW = { 'st-pl-on': 'plannerEnabled', 'st-pl-morning': 'plannerMorning', 'st-pl-start': 'plannerStartAlert', 'st-pl-evening': 'plannerEvening', 'st-pl-overlap': 'plannerOverlap', 'st-pl-talk': 'plannerTalk', 'st-pl-sessions': 'plannerFromSessions', 'st-pl-check': 'plannerCheck' };
+  const PL_LEADS = [5, 10, 15, 30];
+  const plv = (k) => (cfg[k] === undefined || cfg[k] === null ? PL_DEF[k] : cfg[k]);
+  const plTime = (k) => (/^\d\d:\d\d$/.test(cfg[k] || '') ? cfg[k] : PL_DEF[k]);
+  /** 조용히가 끝나는 때(ms). 지났거나 없으면 0. */
+  const plQuietMs = () => { const t = cfg.plannerQuietUntil ? Date.parse(cfg.plannerQuietUntil) : NaN; return Number.isFinite(t) && t > Date.now() ? t : 0; };
+  const clockWord = (ms) => { const d = new Date(ms), h = d.getHours(), m = d.getMinutes(); const day = new Date(); const tomorrow = d.getDate() !== day.getDate(); return h === 0 && m === 0 && tomorrow ? '오늘 밤 12시' : `${tomorrow ? '내일 ' : ''}${h < 12 ? '오전' : '오후'} ${h % 12 === 0 ? 12 : h % 12}시${m ? ` ${m}분` : ''}`; };
+  let plQuietTimer = 0;
+  function renderPlanner() {
+    if (!$('#st-pl-on')) return;
+    const on = plv('plannerEnabled') !== false;
+    for (const [id, k] of Object.entries(PL_SW)) { const el = $('#' + id); el.checked = plv(k) !== false && plv(k) !== 0; if (id !== 'st-pl-on') el.disabled = !on; }
+    $('#st-pl-check').checked = plv('plannerCheck') === true;
+    const lead = PL_LEADS.includes(Number(plv('plannerStartMin'))) ? Number(plv('plannerStartMin')) : PL_DEF.plannerStartMin;
+    const leadOff = !on || plv('plannerStartAlert') === false;
+    $('#st-pl-lead').innerHTML = PL_LEADS.map(n => `<button class="st-chip${n === lead ? ' cur' : ''}" type="button" data-lead="${n}"${leadOff ? ' disabled' : ''}>${n}분</button>`).join('');
+    $('#st-pl-morning-at').value = plTime('plannerMorningAt'); $('#st-pl-morning-at').disabled = !on || plv('plannerMorning') === false;
+    $('#st-pl-evening-at').value = plTime('plannerEveningAt'); $('#st-pl-evening-at').disabled = !on || plv('plannerEvening') === false;
+    // 잠시 조용히: 끝나는 시각 하나(plannerQuietUntil). 끝나면 데몬이 그사이 지나간 약속을 모아 말한다.
+    const q = plQuietMs();
+    $('#st-pl-quiet').innerHTML = q
+      ? `<button class="st-chip cur" type="button" data-quiet="off"${on ? '' : ' disabled'}>다시 알리기</button>`
+      : `<button class="st-chip" type="button" data-quiet="60"${on ? '' : ' disabled'}>1시간</button><button class="st-chip" type="button" data-quiet="today"${on ? '' : ' disabled'}>오늘 하루</button>`;
+    $('#st-pl-quiet-note').textContent = q ? `${clockWord(q)}까지 조용히 하는 중입니다. 끝나면 그사이 지나간 약속을 모아서 말합니다` : '그동안 플래너의 말풍선만 멈춥니다(약속 알림 포함). 달력과 작업 완료 알림은 그대로입니다';
+    clearTimeout(plQuietTimer); if (q && open) plQuietTimer = setTimeout(() => { if (open) { renderPlanner(); renderNav(); } }, Math.min(q - Date.now() + 500, 2 ** 31 - 1));
+  }
+  /** 사용량 한 줄 — 실제 응답에 실린 값만 더한 것(어림을 지어내지 않는다). 토큰 수를 알려 주지 않은 호출은 "모름"으로 따로 센다. */
+  let plUsageSeq = 0;
+  async function loadPlannerUsage() {
+    const el = $('#st-pl-usage'); if (!el) return; const seq = ++plUsageSeq;
+    let u = null; try { const r = await fetch('/api/planner/usage'); if (r.ok) u = await r.json(); } catch {}
+    if (seq !== plUsageSeq) return;
+    if (!u || u.ok === false) { el.textContent = '사용량을 읽지 못했습니다.'; return; }
+    const n = (v) => Number(v || 0).toLocaleString('ko-KR');
+    const part = (p) => { const bits = [`${n(p.calls)}번`]; if (p.tokens) bits.push(`약 ${n(p.tokens)}토큰`); if (p.unknown) bits.push(`토큰 모름 ${n(p.unknown)}번`); if (p.fails) bits.push(`답을 못 받음 ${n(p.fails)}번`); return bits.join(' · '); };
+    const lines = [`오늘 아이리스를 부른 횟수 ${part(u.today || {})}`, `최근 7일 ${part(u.week || {})}`];
+    if (u.model) lines.push(u.modelActual ? `마지막으로 쓴 모델: ${u.model}` : `마지막으로 부른 모델: ${u.model}(응답에서 실제 이름을 확인하지 못함)`);
+    if (u.inbox) lines.push(`받아 둔 말 ${n(u.inbox)}개 — 아이리스와 연결되면 정리합니다`);
+    el.textContent = lines.join('\n'); // 줄바꿈은 CSS(white-space: pre-line)로 — 데몬이 준 글을 HTML 로 넣지 않는다
+  }
+  async function openPlannerFolder() {
+    try { const r = await fetch('/api/planner/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); const d = await r.json().catch(() => ({})); if (!r.ok) Dialog.alert(d.error || `폴더를 열지 못했습니다(${r.status}).`); }
+    catch (e) { Dialog.alert(`폴더를 열지 못했습니다: ${e.message}`); }
+  }
+  function setQuiet(v) {
+    const now = new Date();
+    const until = v === 'off' ? null : v === 'today' ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : new Date(now.getTime() + Number(v) * 60000);
+    pick({ plannerQuietUntil: until ? until.toISOString() : null });
+  }
+  /**
+   * 데몬이 알려 온 설정 변화를 화면의 사본에 맞춘다 — 말로 한 「잠시 조용히」(데몬이 바꿈)와, 어느 창에서든 저장한 설정(PUT 뒤의 방송).
+   * 데몬에는 이미 적혀 있으므로 다시 보내지 않는다. 사본의 시각(updatedAt)은 화면의 지금 시각이 아니라 데몬이 적은 시각(at)으로 맞춘다 —
+   * 일부 키만 받은 사본이 "가장 새것"인 척해서 나중에 데몬의 값을 밀어내지 않게.
+   */
+  function applyRemote(patch, at, from) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return;
+    if (from && from === CLIENT) return;   // 이 화면이 방금 보낸 저장의 메아리 — 그 뒤에 또 바꾼 값을 옛 값으로 되돌리지 않는다
+    let changed = false;
+    for (const [k, v] of Object.entries(patch)) { if (k === 'updatedAt') continue; if (JSON.stringify(cfg[k]) !== JSON.stringify(v)) { cfg[k] = v; changed = true; } }
+    if (typeof at === 'string' && at) cfg.updatedAt = at;
+    try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {}
+    if (!changed) return;
+    applyAll(); if (open) renderPanel();
+    opts.onChange?.(cfg);
+  }
+  /** 데몬과 다시 붙었을 때(웹소켓 hello): 그사이 놓친 설정 변화를 데몬에서 다시 읽는다. */
+  async function resync() { const before = JSON.stringify(cfg); await pullServer(); if (JSON.stringify(cfg) === before) return; applyAll(); if (open) renderPanel(); opts.onChange?.(cfg); }
   const optText = (id) => $(id)?.selectedOptions?.[0]?.textContent || '';
   /** 목차 아래 작은 글씨 = 지금 값 한 줄, 노란·빨간 숫자 = 갱신이 필요한 로그인 열쇠, 청보라 = 새 판. */
   function renderNav() {
@@ -154,6 +228,8 @@ window.Settings = (() => {
     set('#st-sum-tools', 'Skill · MCP · Plugin');
     set('#st-sum-feedback', '개발자에게 바로');
     set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
+    const plQ = plQuietMs();
+    set('#st-sum-planner', plv('plannerEnabled') === false ? '꺼짐' : plQ ? `조용히 · ${clockWord(plQ)}까지` : `켜짐${plv('plannerCheck') === true ? ' · 준비 점검' : ''}`);
     set('#st-sum-mods', modsSum);
     const items = auth?.info?.items || [], due = authDue(), hasAuth = !!(auth?.available || health?.features?.auth);
     const nCl = items.filter(i => i.group !== 'iris' && i.provider !== 'codex').length, nCx = items.filter(i => i.group !== 'iris' && i.provider === 'codex').length;
@@ -448,7 +524,7 @@ window.Settings = (() => {
   /** p = 열 묶음(없으면 마지막으로 본 묶음). 예: 헤더 모듈 버튼이 멈춘 모듈을 보여 줄 때 show('mods'). */
   function show(p) { if (!open) opts.onShow?.(); open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(p)) pane = p; showPane(pane); renderPanel(); }
   function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
-  function pick(patch) { Object.assign(cfg, patch); applyAll(); save(); renderPanel(); }
+  function pick(patch) { Object.assign(cfg, patch); applyAll(); const sent = save(); renderPanel(); opts.onChange?.(cfg); sent.then(() => opts.onChange?.(cfg)); } // onChange 두 번: 화면은 바로, 데몬에 적힌 뒤 한 번 더(데몬이 준 한 장을 다시 읽는 쪽을 위해)
 
   function init(o) {
     opts = o || {};
@@ -475,6 +551,12 @@ window.Settings = (() => {
     $('#st-notify').addEventListener('change', (e) => pick({ notifyDone: e.target.checked }));
     $('#st-notify-os').addEventListener('change', (e) => { if (e.target.checked) Notify.requestOs(); pick({ notifyOs: e.target.checked }); });
     $('#st-notify-test').onclick = () => Notify.preview();
+    // 플래너(설계 조각 ⑧): 스위치 여덟 줄 · 몇 분 전 · 시각 둘 · 잠시 조용히 · 수첩 폴더
+    for (const [id, k] of Object.entries(PL_SW)) $('#' + id)?.addEventListener('change', (e) => pick({ [k]: e.target.checked }));
+    $('#st-pl-lead')?.addEventListener('click', (e) => { const b = e.target.closest('[data-lead]'); if (b && !b.disabled) pick({ plannerStartMin: Number(b.dataset.lead) }); });
+    for (const [id, k] of [['st-pl-morning-at', 'plannerMorningAt'], ['st-pl-evening-at', 'plannerEveningAt']]) $('#' + id)?.addEventListener('change', (e) => { if (/^\d\d:\d\d$/.test(e.target.value)) pick({ [k]: e.target.value }); else renderPlanner(); });
+    $('#st-pl-quiet')?.addEventListener('click', (e) => { const b = e.target.closest('[data-quiet]'); if (b && !b.disabled) setQuiet(b.dataset.quiet); });
+    $('#st-pl-folder')?.addEventListener('click', openPlannerFolder);
     fetch('/api/agents').then(r => r.json()).then((a) => { agents = a; if (open) renderPanel(); }).catch(() => {});
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
     // 업데이트(v2.58): 절 머리 단추 하나 + 하루 1회 스위치. 상태는 데몬이 준다(웹소켓 방송은 main.js 가 onUpdate 로 넘긴다).
@@ -500,8 +582,8 @@ window.Settings = (() => {
     $('#st-tutorial')?.addEventListener('click', () => { hide(); window.Tutorial?.open({ replay: true }); }); // v2.90
     $('#maker').onclick = about;
     applyMaker();
-    fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); }).catch(() => {});
+    fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); opts.onChange?.(cfg); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, showPane, pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth };
+  return { init, show, hide, about, showPane, pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth, applyRemote, resync };
 })();

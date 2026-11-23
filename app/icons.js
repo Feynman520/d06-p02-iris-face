@@ -30,6 +30,15 @@
     search: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>', // 설정 온톨로지·도구 검색칸(v2.90)
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>', // 복사(v2.102 온톨로지 인터뷰 프롬프트)
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', // 복사됨(v2.102)
+    // 플래너(2026-11-22): 판 · 말풍선의 단추
+    bulb: '<path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3Z"/>', // 아이리스 제안
+    today: '<rect x="4" y="5" width="16" height="16" rx="3"/><path d="M8 3v4m8-4v4"/><circle cx="12" cy="14" r="2.3" fill="currentColor" stroke="none"/>', // 오늘 보기
+    target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>', // 오늘로
+    'chev-left': '<path d="m15 6-6 6 6 6"/>', 'chev-right': '<path d="m9 6 6 6-6 6"/>', 'chev-down': '<path d="m6 9 6 6 6-6"/>', 'chev-up': '<path d="m6 15 6-6 6 6"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    'arrow-right': '<path d="M5 12h14m0 0-5-5m5 5-5 5"/>', // 세션 열기 · 결과 보기
+    send: '<path d="M12 19V5m0 0-6 6m6-6 6 6"/>', // 아이리스에게 보내기
+    undo: '<path d="M8 6 3.5 10.5 8 15"/><path d="M3.5 10.5H14a5.5 5.5 0 0 1 0 11h-3"/>', // 되돌리기
   };
   const NAMES = Object.keys(PATHS);
   /** 이름이 목록에 있으면 그 이름, 아니면 'plug'. */

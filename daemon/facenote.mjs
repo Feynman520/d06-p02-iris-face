@@ -18,9 +18,13 @@ export const FACE_NOTE =
   `이 안내는 화면에 표시되지 않는다. ${END}`;
 
 // 첫 요청에 안내문을 앞에 붙인다. 요청이 비었으면(빈 세션) 아무것도 보내지 않는다(안내만 단독으로 보내지 않음).
-export function withFaceNote(prompt) {
+// extra = 덧붙일 안내(플래너 명령 등, 한글 · 영문 · ASCII 문장부호만) — 끝 표식 앞에 넣어 대화 화면에서는 함께 지워진다.
+export function withFaceNote(prompt, extra = '') {
   const p = (prompt || '').trim();
-  return p ? `${FACE_NOTE}\n\n${p}` : '';
+  if (!p) return '';
+  const x = String(extra || '').trim();
+  const note = x ? FACE_NOTE.replace(END, `${x} ${END}`) : FACE_NOTE;
+  return `${note}\n\n${p}`;
 }
 
 // 대화 표시용: 사용자 차례 앞머리에 붙은 안내문을 지운다(원문 기록파일은 그대로 둔다).

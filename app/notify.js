@@ -1,5 +1,6 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-/* 작업 완료 알림(2026-09-11): 작업목록의 어떤 세션이 '작업 중'에서 '대기·확인 필요·종료'로 바뀌면 창 오른쪽 아래에 작은 알림을 띄운다.
+/* 작업 완료 알림(2026-09-11): 작업목록의 어떤 세션이 '작업 중'에서 '대기·확인 필요·종료'로 바뀌면 알린다.
+   - 2026-11-22(플래너): 알림은 창 오른쪽 아래 네모 대신 육각 단추의 말풍선으로 말한다(app/planner.js). 아래 규칙은 그대로다(verify:notify).
    - 근거는 데몬의 status 방송에 실린 done 표시(요청을 실제로 받은 뒤의 busy→끝 전환에만 true — 세션 시작 직후 첫 프롬프트는 제외).
    - 지금 보고 있는 세션이고 창이 앞에 있으면 띄우지 않는다(화면에서 이미 끝난 것이 보이므로).
    - 창이 뒤에 있거나 숨어 있으면 윈도 OS 알림(화면 오른쪽 아래)도 함께(설정으로 끔). 누르면 창을 앞으로 가져와 그 세션을 연다.
@@ -27,9 +28,25 @@ window.Notify = (() => {
   const fmtDur = (ms) => { if (!ms || ms < 1000) return ''; const s = Math.round(ms / 1000); if (s < 60) return `${s}초`; const m = Math.floor(s / 60); return m < 60 ? `${m}분 ${s % 60}초` : `${Math.floor(m / 60)}시간 ${m % 60}분`; };
   const shortPath = (p) => String(p || '').split(/[\\/]/).filter(Boolean).slice(-1)[0] || p || '';
 
-  /** 알림 하나. { id, title, sub, status, force } — force = 설정·초점 규칙을 무시(설정의 미리보기). */
-  function push({ id, title, sub, status = 'idle', force = false }) {
+  // 그리는 곳(2026-11-22, 플래너 설계 조각 ⑦): 알림은 육각 단추의 말풍선으로 말한다(app/planner.js Planner.say).
+  // "언제 알리는가"의 규칙은 이 파일에 그대로 있고 바뀌지 않았다(verify:notify). 같은 종류는 한 말풍선에 줄로 쌓이고(최대 4줄), 다른 종류는 차례로 뜬다.
+  // 아래의 네모 알림(#toasts)은 planner.js 가 없는 쪽(작은 시험 쪽 등)에서만 쓰는 대체 길이다.
+  const SAY = {
+    idle: { group: 'done', tone: 'ok', text: (t) => `「${t}」 작업이 끝났어요.` },
+    attention: { group: 'attention', tone: 'warn', text: (t) => `「${t}」에서 확인을 기다려요.` },
+    exited: { group: 'exited', tone: 'dim', text: (t) => `「${t}」 세션이 끝났어요.` },
+    dead: { group: 'exited', tone: 'dim', text: (t) => `「${t}」 세션이 끝났어요.` },
+  };
+  /** 알림 하나. { id, title, sub, status, force, session } — force = 설정·초점 규칙을 무시(설정의 미리보기). session = 세션의 상태 알림(문장으로 말하고 자세한 것은 올렸을 때). */
+  function push({ id, title, sub, status = 'idle', force = false, session = false }) {
     if (!force && !opts.enabled()) return null;
+    if (window.Planner && typeof window.Planner.say === 'function') {
+      const k = SAY[status] || SAY.idle;
+      return window.Planner.say({
+        force, group: k.group, tone: k.tone, id: id || null, pick: id ? (x) => opts.onPick(x) : null, meta: { title, sub: sub || '', status },
+        ...(session ? { text: k.text(title), tip: sub || '' } : { text: title, sub: sub || '' }),
+      });
+    }
     const host = box();
     while (host.children.length >= MAX) host.firstElementChild.remove();
     const el = document.createElement('div'); el.className = `toast ${status}`; el.setAttribute('role', 'status');
@@ -49,12 +66,12 @@ window.Notify = (() => {
   }
 
   // ---- 윈도 OS 알림(창이 뒤에 있을 때) ----
-  function osNotify({ id, title, sub }) {
+  function osNotify({ id, title, sub, onClick = null }) {
     if (!('Notification' in window)) return;
     const fire = () => {
       try {
         const n = new Notification(title, { body: sub || '', tag: `iris-${id || 'preview'}`, silent: false });
-        n.onclick = () => { try { n.close(); } catch {} window.focus(); window.irisHost?.refocus?.().catch?.(() => {}); if (id) opts.onPick(id); };
+        n.onclick = () => { try { n.close(); } catch {} window.focus(); window.irisHost?.refocus?.().catch?.(() => {}); if (onClick) onClick(); else if (id) opts.onPick(id); };
       } catch {}
     };
     if (Notification.permission === 'granted') fire();
@@ -96,7 +113,7 @@ window.Notify = (() => {
     const took = fmtDur(started ? Date.now() - started : 0);
     const combo = s ? `${AGENT_KO[s.agent] || s.agent || ''} ${s.modelLabel || s.model || ''}`.trim() : '';
     const sub = [STATUS_KO[m.status] || m.status, subsTotal > 0 && `보조 ${subsTotal}개 포함`, took && `${took} 걸림`, combo].filter(Boolean).join(' · ');
-    push({ id: m.id, title, sub, status: m.status });
+    push({ id: m.id, title, sub, status: m.status, session: true });
     if (away && opts.osEnabled()) osNotify({ id: m.id, title, sub });
   }
 
@@ -113,6 +130,9 @@ window.Notify = (() => {
     push(sample);
     if (opts.osEnabled()) osNotify(sample);
   }
-  function init(o) { opts = { ...opts, ...o }; box(); }
-  return { init, onStatus, onSubs, push, preview, requestOs, external };
+  /** 플래너의 약속 알림: 창이 뒤에 있고 「윈도우 알림」이 켜져 있을 때만 OS 알림(누르면 onClick). 알림을 끈 사용자에게는 띄우지 않는다. */
+  let osSeq = 0;
+  function os({ title, sub, onClick }) { if (!opts.enabled() || !opts.osEnabled() || !winAway()) return false; osNotify({ id: `planner-${++osSeq}`, title, sub, onClick: onClick || (() => {}) }); return true; }
+  function init(o) { opts = { ...opts, ...o }; if (!(window.Planner && typeof window.Planner.say === 'function')) box(); } // 말풍선으로 말하는 쪽에서는 네모 알림 자리를 만들지 않는다
+  return { init, onStatus, onSubs, push, preview, requestOs, external, os };
 })();

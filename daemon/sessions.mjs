@@ -166,7 +166,7 @@ export class SessionManager {
     assertExpected(sel, expectModel);
     const cmd = buildCommand(sel, cwd);
     const id = `s${++this.seq}`;
-    const proc = this.spawn(cmd, cwd, cols, rows);
+    const proc = this.spawn(cmd, cwd, cols, rows, id);
     const rec = {
       id, cwd, ...sel, cmdline: cmd.cmdline,
       startedAt: new Date().toISOString(), pid: proc.pid, pidAt: Date.now(), // pidAt(v2.97) = 이 PID 를 받은 시각 — 이전 실행이 남긴 카드의 PID 가 재사용됐는지 가르는 근거
@@ -179,17 +179,19 @@ export class SessionManager {
     this.sessions.set(id, rec);
     this.nameSession(id, prompt);
     // Face 안내문을 첫 요청 앞에 붙인다(새 세션에만; 이어가기는 맥락에 이미 있음)
-    this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
+    this.wire(id, rec, proc, cols, rows, withFaceNote(prompt, this.hooks.noteExtra?.() || ''));
     strictAdapter(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
     this.save(); this.hooks.onList?.();
     return rec;
   }
-  spawn(cmd, cwd, cols, rows) {
+  spawn(cmd, cwd, cols, rows, id = null) {
     // 띄우기 직전에 그 에이전트의 일(폴더 신뢰 선답 · 열쇠)을 한다 — 이 명령을 만든 어댑터로(agents.mjs buildCommand 가 짝지어 둔다).
     // buildCommand 가 만들지 않은 명령은 띄우지 않는다(명령 글자로 에이전트를 짐작하지 않는다 — 걸음 5).
     const ad = adapterOfCommand(cmd);
     if (!ad) throw new Error('spawn: buildCommand 가 만든 명령이 아닙니다(어느 에이전트의 명령인지 알 수 없음)');
     const env = childEnv();
+    // 세션용 플래너 명령(daemon/planner-cli.mjs): 그 세션만의 열쇠와 명령 폴더를 환경 변수로 준다(플래너가 꺼져 있으면 아무것도 더하지 않음)
+    try { this.hooks.sessionEnv?.(env, { id, cwd }); } catch (e) { this.hooks.onLog?.(`[planner] session env skipped: ${e?.code || e?.name || 'error'}`); }
     // 폴더 신뢰 물음 선답(daemon/trust.mjs, 2026-09-19): CLI 가 이 폴더를 처음 볼 때 묻는 "Do you trust…" 를 미리 "예"로 적어 둔다.
     const t = ad.preTrust(cwd, env);
     if (t.result !== 'unchanged') this.hooks.onLog?.(`[trust] ${ad.id} ${cwd} → ${t.result}`);
@@ -230,7 +232,7 @@ export class SessionManager {
     const adResume = strictAdapter(sel.agent);
     if (adResume?.beforeResume) preReason = adResume.beforeResume(this, id, rec, FACE_VERSION); // 재개 전 호환 처리(코덱스 — agents/codex.mjs)
     const cmd = buildCommand(sel, rec.cwd, { resumeId: rec.sessionId });
-    const proc = this.spawn(cmd, rec.cwd, cols, rows);
+    const proc = this.spawn(cmd, rec.cwd, cols, rows, id);
     Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), resumeCmd: cmd.resumeCmd || rec.resumeCmd });
     this.wire(id, rec, proc, cols, rows, (prompt || '').trim(), { preReason });
     this.save(); this.hooks.onList?.();
@@ -249,13 +251,13 @@ export class SessionManager {
     if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
     this.live.delete(id);
     const cmd = buildCommand(sel, rec.cwd);
-    const proc = this.spawn(cmd, rec.cwd, cols, rows);
+    const proc = this.spawn(cmd, rec.cwd, cols, rows, id);
     if (rec.title && rec.titleSource !== 'user') rec.titleSource = 'fixed'; // 이어받기 요청문("이전 대화…")으로 이름이 바뀌지 않게 고정(사용자가 지은 이름은 그대로)
     if (rec.autoTitle) rec.autoTitle.source = 'fixed';                       // 사용자 이름을 지워 되돌릴 때도 이어받기 요청문 이름이 끼어들지 않게
     rec.previous = [...(rec.previous || []), { agent: rec.agent, model: rec.model, effort: rec.effort, sessionId: rec.sessionId, recordPath: rec.recordPath, resumeCmd: rec.resumeCmd, until: new Date().toISOString() }];
     Object.assign(rec, sel, { cmdline: cmd.cmdline, pid: proc.pid, pidAt: Date.now(),status: 'busy', exitCode: null, exitReason: null, switchedAt: new Date().toISOString(), sessionId: cmd.sessionId || null, recordPath: cmd.recordPath || null, resumeCmd: cmd.resumeCmd || '' });
     // 다른 에이전트로 새로 띄우는 것이므로 안내문을 이어받기 요청 앞에 붙인다
-    this.wire(id, rec, proc, cols, rows, withFaceNote(prompt));
+    this.wire(id, rec, proc, cols, rows, withFaceNote(prompt, this.hooks.noteExtra?.() || ''));
     strictAdapter(sel.agent).watchRecord(this, id, rec); // 기록 파일 찾기(에이전트마다 다르다 — agents/<id>.mjs)
     this.save(); this.hooks.onList?.();
     return rec;

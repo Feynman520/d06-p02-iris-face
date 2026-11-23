@@ -1,0 +1,3 @@
+# shell wrapper must keep LF (a CR after #!/bin/sh breaks it), cmd wrapper must keep CRLF
+bin/sh/iris-planner text eol=lf
+bin/iris-planner.cmd text eol=crlf

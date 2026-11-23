@@ -153,7 +153,7 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); render(); }
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); window.Planner?.onHello(m.planner); Settings.resync(); render();} // resync = 데몬과 (다시) 붙었을 때 그사이 놓친 설정 변화를 다시 읽는다
       else if (m.type === 'shutdown') showQuitting();                                                       // 전부 종료 시작(v2.97) — 어느 창·탭이 시작했든 「종료하는 중」
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
@@ -167,6 +167,8 @@
         else if (m.phase === 'error' || m.phase === 'resume-failed') Notify.push({ title: '세팅 마무리 오류', sub: m.error || '', status: 'attention', force: true });
       }
       else if (m.type === 'modules') setModules(m.list);                                                   // 모듈 콘센트: 상태·panel·배지
+      else if (m.type === 'settings') Settings.applyRemote(m.patch, m.updatedAt, m.from);                            // 설정이 바뀜(이 창이든 다른 창이든) — 화면의 사본을 데몬의 값 · 시각에 맞춘다
+      else if (m.type === 'planner') window.Planner?.onMessage(m);                                        // 플래너: 장부가 바뀜 · 말풍선 한마디(2026-11-22)
       else if (m.type === 'tools') window.ToolsView?.onTools(m);                                          // 도구 설치·제거 진행(판 B, 2026-11-10)
       else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
@@ -710,6 +712,7 @@
     if (SubPanel.isOpen()) { SubPanel.close(); ta.focus(); return; } // 보조 작업 서랍이 열려 있으면 Esc = 서랍만 닫힘(중단 아님)
     if (!$('#cam').hidden) { camStop(); return; }
     if (FolderPicker.isOpen()) { FolderPicker.hide(); return; }
+    if (window.Planner?.onEscape()) return; // 플래너가 펴져 있으면 Esc = 대화 → 판 순서로 한 단계만 닫기 — 앞에 떠 있는 것(녹음 · 서랍 · 폴더 고르기)보다는 뒤, 작업 중단보다는 앞
     if (setupMode === 'switch') { setupMode = 'new'; renderSetup(); return; }
     // 확인 카드가 떠 있으면 Esc = 터미널과 같게 취소 키(ESC)를 그 세션에 보낸다(v2.43)
     if (mode === 'chat' && Approval.isOpen() && Approval.choose('\x1b')) { ta.focus(); return; }
@@ -726,8 +729,29 @@
   }, 0));
 
   // ---------- 꾸미기 설정 + 사용량 배터리 (app/settings.js) ----------
-  Settings.init({ sessionCount: () => sessions.length, onShow: () => closeDrawer() }); // 서랍은 한 번에 하나 — 설정을 열면 대시보드·모듈 서랍은 닫는다
+  Settings.init({ sessionCount: () => sessions.length, onShow: () => closeDrawer(), onChange: (c) => window.Planner?.applySettings(c) }); // 서랍은 한 번에 하나 — 설정을 열면 대시보드·모듈 서랍은 닫는다 · 설정이 바뀌면 플래너 화면도 바로 따라간다
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
+  // ---------- 플래너(app/planner.js, 2026-11-22): 육각 단추 + 말풍선 + 달력 판. 폴더 열기는 영혼 안 폴더만(데몬이 검사), 대화 시작은 「첫 대화 해 보기」처럼 요청문만 채운다(보내기는 사용자). ----------
+  Planner.init({
+    openFolder: (p) => { fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: p }) }).catch(() => {}); },
+    chatIn: async (p, text) => {
+      if (!p) return;
+      // 입력창에 쓰던 요청이나 첨부가 있으면 다른 폴더의 새 작업에 섞이지 않게 먼저 묻는다(그대로 두기 = 아무 일도 하지 않음)
+      const draftBox = $('#composer-text');
+      if (draftBox.value.trim() || attachments.length) {
+        if (!(await Dialog.confirm('입력창에 쓰던 요청이 있습니다.\n지우고 이 폴더에서 새 작업을 시작할까요?', { okLabel: '지우고 시작' }))) return;
+        draftBox.value = ''; attachments.length = 0; renderAttach(); draftBox.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (current) goHome();
+      folder = { path: p, rel: p, name: String(p).split(/[\\/]/).filter(Boolean).pop() || p };
+      render(); const box = $('#composer-text'); if (text) { box.value = text; box.dispatchEvent(new Event('input', { bubbles: true })); } box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+    },
+    openSession: (id) => { if (sessions.some(s => s.id === id)) select(id); },
+    openSettings: (pane) => { Settings.show(pane); },
+    onCfg: (patch, at) => { Settings.applyRemote(patch, at); },   // 데몬이 바꾼 플래너 설정(말로 한 「잠시 조용히」)
+    drawerOpen: () => Settings.isOpen() || !$('#dash').hidden,
+  });
+  Planner.applySettings(Settings.get());
   MemGauge.init({ notify: (n) => Notify.push(n), pick: (id) => { if (sessions.some(s => s.id === id)) select(id); } }); // 메모리 계기판(v2.78)
   Notify.init({ onPick: (id) => { if (String(id).startsWith('mod:')) { openModule(String(id).split(':')[1]); return; } if (sessions.some(s => s.id === id)) select(id); }, current: () => current, enabled: () => Settings.get().notifyDone !== false, osEnabled: () => Settings.get().notifyOs !== false });
   // ---------- 보조 작업(서브에이전트) 칩·서랍(app/subagents.js, 2026-09-11): 목록이 바뀌면 작업목록의 ⁺N을 다시 그린다 ----------

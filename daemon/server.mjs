@@ -17,7 +17,12 @@ import { SubagentWatcher } from './subagents.mjs';
 import { listFolders, checkFresh, RecentFolders } from './folders.mjs';
 import { readLimits } from './limits.mjs';
 import { findRoot, rootName, Settings } from './workspace.mjs';
-import { dashDir, dashPort, sweeperPath, pythonExe } from './paths.mjs';
+import { dashDir, dashPort, sweeperPath, pythonExe, plannerDir } from './paths.mjs';
+import { Planner } from './planner.mjs';
+import { PlannerRules } from './planner-rules.mjs';
+import { PlannerTalk } from './planner-talk.mjs';
+import { PlannerCli } from './planner-cli.mjs';
+import { PlannerCheck } from './planner-check.mjs';
 import { MemoryMonitor } from './memory.mjs';
 import { toPdf, isConvertible } from './doc2pdf.mjs';
 import { Voice } from './voice.mjs';
@@ -64,11 +69,30 @@ const sm = new SessionManager(STATE, {
   onPrompt: (id, prompt) => broadcast({ type: 'prompt', id, prompt }), // 확인 카드(v2.43): 노란불의 질문·선택지, null = 카드 내림. 세션 목록(publicList)에도 rec.prompt 로 실린다.
   onList: () => broadcast({ type: 'sessions', list: publicList() }),
   onLog: (msg) => log(msg),
+  sessionEnv: (env, { id }) => plannerCli.applyEnv(env, id), // 세션용 플래너 명령의 열쇠 · 명령 폴더(planner-cli.mjs, 플래너가 꺼져 있으면 아무것도 안 함)
+  noteExtra: () => plannerCli.note(),
   // v2.73: 대화 기록의 차례가 열려 있는가(transcript.mjs turnState) — 화면 글자 판정의 교차 확인(sessions.mjs idleCheck). 기록이 없으면 null.
   turnOpen: (id) => { const tl = tails.get(id); if (!tl) return null; const s = tl.turnState(); return s == null ? null : s === 'open'; },
 });
 const recent = new RecentFolders(STATE);
 const WS_ROOT = findRoot(ROOT); const settings = new Settings(STATE);
+// 플래너(설계 docs\설계-플래너-2026-11-13.md): 장부는 앱 폴더 밖(영혼 폴더 _agent\planner, 시험 데몬은 STATE\planner). 쓰기 전에는 폴더를 만들지 않는다.
+// 여기서는 만들기만 하고 장부 파일은 건드리지 않는다 — 여는 것은 listen 뒤 planner.start().
+const planner = new Planner({ dir: plannerDir(), stateDir: STATE, settings, broadcast: (o) => broadcast(o), log: (m) => log(m),
+  openDir: (dir) => { spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref(); } }); // 설정의 「수첩 폴더 열기」 — windowsHide 를 주지 않는다(폴더 창이 안 보이게 된다, v2.92)
+// 규칙 알림(아침 인사 · 시작 전 · 하루 끝 정리): AI 도 윈도우 예약도 쓰지 않고, 켜져 있는 동안 30초마다 장부와 시계를 견준다(listen 뒤 시작).
+const plannerRules = new PlannerRules({ planner, stateDir: STATE, log: (m) => log(m), ready: () => clients.size > 0 }); // 받을 창이 붙은 뒤에만 말한다(데몬이 창보다 먼저 뜬다)
+planner.rules = plannerRules;
+// 아이리스에게 말하기: 말할 때만 숨은 AI 를 한 번 부른다(제목 생성기와 같은 길). 지금 쓸 수 있는 에이전트를 클로드 → 코덱스 순서로.
+const plannerTalk = new PlannerTalk({ planner, stateDir: STATE, log: (m) => log(m), ready: () => clients.size > 0, agents: () => { const on = activeAgentsMap(AGENTS); return ['claude', 'codex'].filter((a) => on[a]); } });
+planner.talkSvc = plannerTalk;
+// 세션용 명령 iris-planner 의 창구: 다른 세션이 플래너에 넣는 길(사용자가 시킨 것 = 바로 + 되돌리기, 세션의 판단 = 제안). 숨은 AI 를 부르지 않는다.
+const plannerCli = new PlannerCli({ planner, port: PORT, session: (id) => sm.get(id) || null, log: (m) => log(m) });
+planner.cliSvc = plannerCli;
+// 준비 점검: 아이리스가 먼저 AI 를 부르는 유일한 기능(처음 값 꺼짐). 하루 한 번, 첫 인사 뒤, 대상(폴더가 붙고 마감이 3일 안인 일)이 있을 때만.
+const plannerCheck = new PlannerCheck({ planner, stateDir: STATE, log: (m) => log(m), root: WS_ROOT }); // 영혼 폴더 안의 폴더만 훑는다
+planner.checkSvc = plannerCheck;
+let plannerDrainTimer = null;
 // 도구 설치·제거(판 B, 2026-11-10 — docs\설계-도구화면-2026-11-10.md): 엄선 목록만, 세션과 같은 환경으로 공식 CLI 실행.
 // 살아 있는 세션 수 = 파일 삭제를 미루는 기준(세션이 지운 파일을 나중에 부르지 않게).
 const tools = new ToolManager({
@@ -311,7 +335,14 @@ const server = http.createServer(async (req, res) => {
     if (shuttingDown && req.method !== 'GET' && p !== '/api/shutdown') return json(res, 503, { error: 'IRIS 가 종료하는 중입니다' });
     if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features(), autoResume: autoResumeState(settings.get()) });
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
-    if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
+    if (req.method === 'PUT' && p === '/api/settings') {
+      const b = await readBody(req); const saved = settings.set(b);
+      // 붙어 있는 화면 모두에 알린다 — 다른 창(브라우저 탭)이 옛 사본을 들고 있다가 나중에 통째로 저장해 이 변경을 되돌리지 않게
+      try { if (b && typeof b === 'object' && !Array.isArray(b)) { const { updatedAt: _drop, ...patch } = b; broadcast({ type: 'settings', patch, updatedAt: saved.updatedAt, from: String(req.headers['x-iris-client'] || '').slice(0, 40) }); } } catch {}
+      return json(res, 200, saved);
+    }
+    // ---- 플래너: 달력 보기 · 끝냄 · 되돌리기 · 제안에 답하기(daemon/planner.mjs 가 전부 맡는다) ----
+    if (p.startsWith('/api/planner/')) return await planner.route(req, res, { url, json, readBody, sameOrigin });
     if (req.method === 'GET' && p === '/api/agents') return json(res, 200, activeAgentsMap(AGENTS));
     // 잠든 에이전트 목록(2026-09-23 다른 선생님 PC: Codex 버튼이 없어 고장으로 보였다) — /api/agents 모양은 그대로 두고 따로 준다.
     if (req.method === 'GET' && p === '/api/agents/sleeping') return json(res, 200, { sleeping: sleepingAgents() });
@@ -606,7 +637,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public(), planner: planner.hello() });
   if (updateResult) updateResult = null;
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
@@ -636,14 +667,19 @@ function shutdown() {
   if (shuttingDown) return shuttingDown;
   log('shutdown: start (all sessions by PID tree)');
   try { broadcast({ type: 'shutdown', phase: 'start' }); } catch {}
+  let plannerHidden = null; // 플래너의 숨은 호출을 끝내려 했으면 { pid, gone } — 끝내지 못했으면 보고에 남긴다
+  try { plannerHidden = planner.stop(); clearInterval(plannerDrainTimer); } catch {} // 플래너: 규칙 점검 · 받아 둔 말 정리를 멈추고, 돌던 숨은 호출은 그 가계도만 끝낸다
   shuttingDown = (async () => {
     await Promise.race([mods.stopAll(), new Promise(r => setTimeout(r, 2500))]).catch(() => {});
     let report = null;
     try { report = await Promise.race([sm.endAll(), new Promise(r => setTimeout(() => r(null), SHUTDOWN_SESSIONS_MS))]); }
     catch (e) { log(`shutdown: endAll error ${e?.stack || e}`); }
     if (!report) report = { ok: false, verified: false, timeout: true, sessions: [], ended: 0, survivors: [] };
+    // 플래너의 숨은 호출을 끝내지 못했으면 "다 끝났다"고 하지 않는다 — 남은 것으로 보고에 넣어 창이 그대로 알리게 한다
+    if (plannerHidden && !plannerHidden.gone) { report.ok = false; for (const pid of plannerHidden.left || [plannerHidden.pid]) report.survivors.push({ pid, name: '플래너의 숨은 호출', session: '' }); }
     try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { memory.stop(); } catch {}
-    try { fs.writeFileSync(path.join(STATE, 'shutdown-report.json'), JSON.stringify({ ...report, at: new Date().toISOString(), version: VERSION }, null, 2), 'utf8'); } catch {}
+    try { fs.writeFileSync(path.join(STATE, 'shutdown-report.json'), JSON.stringify({ ...report, ...(plannerHidden ? { plannerHidden } : {}), at: new Date().toISOString(), version: VERSION }, null, 2), 'utf8'); } catch {}
+    if (plannerHidden && !plannerHidden.gone) log(`shutdown: planner hidden call still alive pid=${plannerHidden.pid}`);
     try { fs.unlinkSync(PID_FILE); } catch {}
     log(`daemon exit (shutdown ok=${report.ok} verified=${report.verified} survivors=${report.survivors.length}${report.timeout ? ' TIMEOUT' : ''})`);
     return report;
@@ -664,6 +700,12 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
   const sweepUp = () => { try { const r = sweepUploads(path.join(STATE, 'uploads')); if (r.removed) log(`uploads: removed ${r.removed} file(s) older than ${UPLOAD_KEEP_DAYS} days (${Math.round(r.bytes / 1024)}KB), kept ${r.kept}`); } catch (e) { log(`uploads sweep error: ${e?.message || e}`); } };
   sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();
+  // 플래너: 장부는 포트를 잡은 뒤에 연다(두 번째로 뜬 데몬이 장부를 건드리고 끝나지 않게). 여는 데 실패해도 플래너만 쉰다.
+  // 휴지통 30일 · 사본 30장 정리는 시작할 때와 하루 한 번(꺼져 있으면 안 함). 장부가 없으면 아무것도 만들지 않는다.
+  try { planner.start(); planner.sweep(); plannerRules.start(); setInterval(() => planner.sweep(), 24 * 60 * 60 * 1000).unref();
+    // 받아 둔 말(아이리스를 부를 수 없었을 때 적어 둔 것)이 있으면 5분마다 정리를 시도한다. 없으면 아무것도 부르지 않는다.
+    plannerDrainTimer = setInterval(() => { plannerTalk.drain().catch((e) => log(`planner-talk drain error: ${e?.code || e?.name || 'error'}`)).then(() => plannerCheck.tick()).catch((e) => log(`planner-check error: ${e?.code || e?.name || 'error'}`)); }, 5 * 60 * 1000); plannerDrainTimer.unref(); log(`planner: ${planner.failed ? 'failed' : planner.enabled ? 'on' : 'off'} rev=${planner.store.rev}${planner.store.readOnly ? ' (read-only)' : ''}${planner.store.recovered ? ' (recovered)' : ''}`); }
+  catch (e) { log(`planner init error: ${e?.code || e?.name || 'error'}`); }
   // 도구(판 B): 중간에 끊긴 설치·제거를 실제 상태와 맞추고(같은 잠금 아래), 세션이 0 일 때 「제거 대기」를 처리한다(1분마다 확인 — 세션이 있으면 아무것도 안 함).
   tools.reconcile().then((r) => { if (r?.changed) log('tools: reconciled ledger'); }).catch((e) => log(`tools reconcile error: ${e?.message || e}`));
   setInterval(() => { tools.processPending().catch((e) => log(`tools pending error: ${e?.message || e}`)); }, 60 * 1000).unref();
