@@ -10,16 +10,33 @@ const FRESH_MS = 60_000;
 const TIMEOUT_MS = 3_000;
 let last = null; // { ok, why, at, accounts: [{ name, status }] }
 
+/**
+ * 중계기 상태의 구글 계정 한도 → 창이 쓰는 모양. 구글이 준 묶음(googleBuckets)이 있으면 그대로, 없으면 주간 한 줄(unified7d = 쓴 비율)로.
+ * @returns {{ seenAt: number|null, buckets: { group, id, window, remaining, reset }[] } | null} 아직 읽은 값이 없으면 null
+ */
+export function quotaOf(q) {
+  if (!q || typeof q !== 'object') return null;
+  const frac = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null);
+  const iso = (ms) => (typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null);
+  const seenAt = typeof q.googleBucketsSeenAt === 'number' ? q.googleBucketsSeenAt : typeof q.unified7dSeenAt === 'number' ? q.unified7dSeenAt : null;
+  let buckets = (Array.isArray(q.googleBuckets) ? q.googleBuckets : []).filter((b) => b && typeof b === 'object' && frac(b.remaining) !== null)
+    .map((b) => ({ group: String(b.group || ''), id: String(b.id || ''), window: String(b.window || ''), remaining: frac(b.remaining), reset: iso(b.resetAt) }));
+  if (!buckets.length && frac(q.unified7d) !== null) buckets = [{ group: 'Gemini Models', id: 'gemini-weekly', window: 'weekly', remaining: 1 - frac(q.unified7d), reset: iso(q.unified7dReset) }];
+  return buckets.length ? { seenAt, buckets } : null;
+}
+
 /** /teamclaude/status JSON → 판정(순수 함수 — 시험이 직접 부른다) */
 export function judge(status, at = Date.now()) {
   if (!status || typeof status !== 'object') return { ok: false, why: '중계기(IRIS Gate) 상태를 읽지 못했습니다', at, accounts: [] };
   if (status.google?.supported !== true) return { ok: false, why: '지금 켜져 있는 중계기(IRIS Gate)가 구글을 모르는 옛 판입니다 — 대시보드 「재시작」으로 새 판을 켜 주세요', at, accounts: [] };
+  // quota = 중계기가 5분마다 구글에서 직접 읽어 둔 그 계정의 한도(2026-11-23 밤 — 창이 한도를 알려고 agy 를 따로 띄우지 않게). 이메일 · 열쇠는 싣지 않는다.
   const accounts = (Array.isArray(status.accounts) ? status.accounts : []).filter((a) => a?.provider === 'google')
-    .map((a) => ({ name: String(a.name || ''), status: String(a.status || ''), disabled: !!a.disabled }));
+    .map((a) => ({ name: String(a.name || ''), status: String(a.status || ''), disabled: !!a.disabled, quota: quotaOf(a.quota) }));
+  const current = typeof status.currentAccounts?.google === 'string' ? status.currentAccounts.google : null;
   if (status.google.halt) return { ok: false, why: `중계기가 구글 계정 전체를 멈춰 두었습니다(${status.google.halt.account || '?'} 에서 정지 신호, ${status.google.halt.at || '?'}) — 그 계정을 확인한 뒤 대시보드에서 풀어 주세요`, at, accounts, halt: true };
   const usable = accounts.filter((a) => !a.disabled && a.status !== 'error');
   if (!usable.length) return { ok: false, why: accounts.length ? '중계기에 쓸 수 있는 구글 계정이 없습니다(모두 꺼짐 또는 로그인 오류)' : '중계기에 등록된 구글 계정이 없습니다 — 대시보드 「+ 구글 계정 추가」로 넣어 주세요', at, accounts };
-  return { ok: true, why: '', at, accounts };
+  return { ok: true, why: '', at, accounts, current };
 }
 
 /** 뒤에서 새로 읽는다(기다리지 않는 쪽 — 데몬 주기 갱신) */

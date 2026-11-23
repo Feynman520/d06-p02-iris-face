@@ -1,6 +1,10 @@
 // IRIS-Face · © 2026 Sejun Ham (함세준) · MIT · https://feynman520.github.io/card/#home
-// 안티그래비티 준비 상태 · 한도 · 모델 목록 — agy 에게 묻는다. 연결 방식이 gate(2026-11-23~)면 agy 를 중계기로 띄워 묻고(그 무료 계정의 한도 · 목록),
-// 중계기를 못 쓰면 agy 를 띄우지 않고 state = gate + 이유를 낸다(이 PC 로그인으로 묻지 않음 — antigravity.gate.mjs).
+// 안티그래비티 준비 상태 · 한도 · 모델 목록. 연결 방식이 gate(2026-11-23~)면 중계기를 못 쓸 때 agy 를 띄우지 않고 state = gate + 이유를 낸다
+// (이 PC 로그인으로 묻지 않음 — antigravity.gate.mjs).
+// 🔴 한도는 중계기에서 읽는다(2026-11-23 밤 사용자 결정 — 클로드 · 코덱스와 같은 방식): 중계기가 5분마다 계정별 한도를 구글에서 직접 읽어 두므로
+//   창은 그 값을 가져다 쓴다. 전에는 창이 6분마다 agy 를 띄워 물어 쓰지 않을 때도 하루 약 3,100개의 조회가 구글로 갔다(한도는 안 깎이지만 겹치는 조회).
+//   agy 를 실제로 띄워 보는 것(프로그램이 뜨고 중계기를 지나 답을 받는가)은 이제 가끔만: 창을 켤 때 한 번 · 6시간마다 · agy 실행 파일이 바뀌었을 때(스스로 업데이트됨)
+//   · 지난번에 실패했으면 10분 뒤 다시. 그 확인이 실패한 동안에는 중계기 값이 있어도 '로그인됨'으로 보이지 않는다.
 //   agy --print /usage --output-format json  (약 5초 · 토큰 0, 1.5.14 실측) → command.data.groups[].buckets[] { id, name, window, remaining_fraction, reset_time }
 // 로그인 판정은 세 갈래(코덱스 설계 검토): ok = 답을 받음 / auth = 로그인하라는 글 / unknown = 시간 초과 · 실행 실패 · 모르는 모양(로그아웃으로 보지 않는다).
 // + missing = 실행 파일 없음. 한 번에 하나만 돈다 · 5분 캐시 · 세션을 띄울 때 기다리지 않는다.
@@ -22,6 +26,9 @@ const STATE = process.env.IRIS_FACE_STATE || path.join(FACE_ROOT, 'state');
 // 대시보드(teamclaude-dash, _agent\claude\tools)가 읽는 자리 = _agent\claude\state(다른 도구의 상태 파일과 같은 곳). 시험은 IRIS_AGY_STATUS_FILE 로 바꾼다.
 export const STATUS_FILE = process.env.IRIS_AGY_STATUS_FILE || path.join(soulRoot(), '_agent', 'claude', 'state', 'antigravity-status.json');
 const MAX_AGE_MS = 5 * 60_000;
+const GATE_AGE_MS = 55_000;              // 중계기에서 읽는 한도는 싸다(이 PC 안의 짧은 요청) — 데몬이 1분마다 부를 때마다 새로 본다
+const REAL_EVERY_MS = 6 * 3600_000;      // agy 를 실제로 띄워 보는 주기
+const REAL_RETRY_MS = 10 * 60_000;       // 지난 확인이 실패했으면 이만큼 뒤 다시
 const TIMEOUT_MS = 25_000;
 const now = () => new Date().toISOString();
 
@@ -40,9 +47,42 @@ function run(exe, args, { cwd = os.tmpdir(), timeoutMs = TIMEOUT_MS, env = undef
 }
 
 // ───────── 로그인 · 한도 ─────────
-let last = null;      // { state, groups, at, detail }
+let last = null;      // { state, groups, at, detail, source?, account? }
 let running = null;
-
+let runner = run;     // 시험이 가짜로 바꾼다(_setRunner)
+// 마지막으로 agy 를 실제로 띄워 본 것: 언제 · 통과했나 · 그때의 실행 파일(크기|수정 시각) · 실패했으면 그 결과
+let real = { at: 0, ok: null, key: '', bad: null };
+let wroteAt = 0, wroteSig = '';
+const exeKey = (exe) => { try { const st = fs.statSync(exe); return `${st.size}|${Math.round(st.mtimeMs)}`; } catch { return ''; } };
+/** agy 를 지금 실제로 띄워 봐야 하는가 */
+function realDue(key, t = Date.now()) {
+  if (real.ok === null || key !== real.key) return true;                 // 한 번도 안 봤거나 실행 파일이 바뀌었다(스스로 업데이트)
+  return t - real.at >= (real.ok ? REAL_EVERY_MS : REAL_RETRY_MS);
+}
+/** 쓸 수 있는(꺼지지 않고 오류가 아닌) 구글 계정들 */
+const usableOf = (j) => (j && Array.isArray(j.accounts) ? j.accounts : []).filter((a) => !a.disabled && a.status !== 'error');
+/**
+ * 헤더에 보일 한도의 주인: 중계기가 지금 먼저 쓰는 구글 계정(그 계정을 쓸 수 있을 때). 그 계정이 없거나 못 쓰면 쓸 수 있는 첫 계정.
+ * 🔴 지금 먼저 쓰는 계정의 한도를 아직 못 읽었다고 다른 계정의 값을 대신 보이지 않는다(코덱스 검토 1 — 다른 계정의 80% 가 내 것처럼 보인다).
+ */
+export function accountFromGate(j) {
+  const list = usableOf(j);
+  return list.find((a) => a.name === j.current) || list[0] || null;
+}
+/**
+ * 중계기 판정(gate.judge 의 결과) → 한도 묶음.
+ * @returns {{ groups: object[], account: string, seenAt: number|null } | null} 그 계정의 한도를 중계기가 아직 읽지 못했으면 null
+ */
+export function groupsFromGate(j) {
+  const pick = accountFromGate(j);
+  if (!pick || !pick.quota) return null;
+  const by = new Map();
+  for (const b of pick.quota.buckets) {
+    if (!by.has(b.group)) by.set(b.group, []);
+    by.get(b.group).push({ id: b.id, name: b.window === 'weekly' ? 'Weekly Limit Remaining' : b.window === '5h' ? '5 Hour Limit Remaining' : '', window: b.window, remaining: b.remaining, reset: b.reset });
+  }
+  return { groups: [...by].map(([name, buckets]) => ({ name, buckets })), account: pick.name, seenAt: pick.quota.seenAt };
+}
 /** /usage JSON 글 → 판정 결과(순수 함수 — 시험이 직접 부른다) */
 export function parseUsage(stdout, { code = 0, stderr = '' } = {}) {
   const at = now();
@@ -71,6 +111,10 @@ export function headline(r) {
 }
 
 function writeStatus(r) {
+  // 내용이 같으면 5분에 한 번만 적는다(중계기 값은 1분마다 다시 보므로 — 파일을 매분 쓰지 않게). 토큰 합계도 그때만 다시 센다.
+  const sig = JSON.stringify([r.state, r.detail, r.groups, r.source || '', r.account || '']);
+  if (sig === wroteSig && Date.now() - wroteAt < MAX_AGE_MS) return;
+  wroteSig = sig; wroteAt = Date.now();
   try {
     fs.mkdirSync(path.dirname(STATUS_FILE), { recursive: true });
     const tmp = `${STATUS_FILE}.${process.pid}.tmp`;
@@ -80,36 +124,59 @@ function writeStatus(r) {
   } catch {}
 }
 
-/** 상태를 새로 읽는다(5분 안이면 지난 값, 도는 중이면 그것을 기다림). 실행 파일이 없으면 state = missing(파일에도 적어 대시보드가 옛 '로그인됨'을 붙들지 않게). */
+/**
+ * 상태를 새로 읽는다(묵힌 시간 안이면 지난 값, 도는 중이면 그것을 기다림). 실행 파일이 없으면 state = missing(파일에도 적어 대시보드가 옛 '로그인됨'을 붙들지 않게).
+ * gate: 중계기 판정 → (때가 됐으면) agy 를 실제로 한 번 띄워 봄 → 아니면 중계기가 읽어 둔 한도를 가져다 씀. direct: 예전처럼 agy 에게 묻는다(5분 묵힘).
+ */
 export function refresh({ force = false } = {}) {
   const exe = agyExe();
-  if (!exe) { const was = last?.state; last = { state: 'missing', groups: [], at: now(), detail: 'agy.exe not found' }; if (was !== 'missing') writeStatus(last); return Promise.resolve(last); }
+  if (!exe) { const was = last?.state; last = { state: 'missing', groups: [], at: now(), detail: 'agy.exe not found' }; if (was !== 'missing') { wroteSig = ''; writeStatus(last); } return Promise.resolve(last); }
   // 중계기를 못 쓰는 판정(state = gate)은 50초만 믿는다 — 사용자가 중계기를 다시 켜면 1분 안에 단추가 살아나게(데몬이 1분마다 부른다).
-  const maxAge = last?.state === 'gate' ? 50_000 : MAX_AGE_MS;
+  const maxAge = last?.state === 'gate' ? 50_000 : connection === 'gate' ? GATE_AGE_MS : MAX_AGE_MS;
   if (!force && last && last.state !== 'missing' && Date.now() - Date.parse(last.at) < maxAge) return Promise.resolve(last);
   if (running) return running;
   const cwd = path.join(os.tmpdir(), 'iris-agy-usage'); try { fs.mkdirSync(cwd, { recursive: true }); } catch {}
+  const done = (r) => { last = r; running = null; writeStatus(r); return r; };
   running = (async () => {
     await null; // running 이 먼저 정해지도록(아래에서 running = null 로 비우는 것이 그 뒤가 되게)
-    // 길(2026-11-23): gate 면 중계기 판정이 통과할 때만 agy 를 중계기로 띄워 묻는다(그 무료 계정의 한도가 온다).
-    // 통과 못 하면 agy 를 이 PC 로그인으로 띄우지 않는다 — state = gate + 이유(화면이 단추를 끄고 이유를 보인다).
+    // 길(2026-11-23): gate 면 중계기 판정이 통과할 때만 agy 를 중계기로 띄운다. 통과 못 하면 agy 를 이 PC 로그인으로 띄우지 않는다 — state = gate + 이유.
     const env = { ...process.env };
+    let j = null;
     if (connection === 'gate') {
-      const j = await gate.refresh();
-      if (!j.ok) { const r = { state: 'gate', groups: [], at: now(), detail: j.why }; last = r; running = null; writeStatus(r); return r; }
+      j = await gate.refresh();
+      if (!j.ok) return done({ state: 'gate', groups: [], at: now(), detail: j.why });
     }
     try { gate.applyRoute(env, connection); }
-    catch (e) { const r = { state: 'gate', groups: [], at: now(), detail: String(e?.message || e) }; last = r; running = null; writeStatus(r); return r; }
-    const x = await run(exe, ['--print', '/usage', '--output-format', 'json'], { cwd, env });
-    const r = x.error ? { state: 'unknown', groups: [], at: now(), detail: x.error } : parseUsage(x.out, { code: x.code, stderr: x.err });
-    last = r; running = null; writeStatus(r); return r;
+    catch (e) { return done({ state: 'gate', groups: [], at: now(), detail: String(e?.message || e) }); }
+    const key = exeKey(exe);
+    // agy 를 실제로 띄워 보는 때(직결은 늘 · 중계기 길은 가끔만 — realDue)
+    if (connection !== 'gate' || force === 'real' || realDue(key)) {
+      const x = await runner(exe, ['--print', '/usage', '--output-format', 'json'], { cwd, env });
+      const r = x.error ? { state: 'unknown', groups: [], at: now(), detail: x.error } : parseUsage(x.out, { code: x.code, stderr: x.err });
+      real = { at: Date.now(), ok: r.state === 'ok', key, bad: r.state === 'ok' ? null : r };
+      return done(connection === 'gate' ? { ...r, source: 'agy', account: accountFromGate(j)?.name || null } : r);   // 중계기 길의 agy 는 중계기가 지금 먼저 쓰는 계정으로 묻는다
+    }
+    // 지난 확인이 실패한 채면(다시 볼 때가 아직 안 됐다) 그 결과를 그대로 둔다 — 중계기 값이 있다고 '로그인됨'으로 보이지 않게
+    if (real.ok === false && real.bad) return done({ ...real.bad, at: now(), source: 'agy' });
+    // 한도 = 중계기가 읽어 둔 값. 중계기가 그 계정의 값을 아직 못 읽었으면(막 켜졌다): 지난 값이 **같은 계정** 것일 때만 그대로 두고,
+    // 계정이 바뀌었으면 지난 값을 버린다(빈 묶음 = 헤더에 '모름') — 꺼진 계정의 한도가 새 계정 것처럼 남지 않게(코덱스 검토 2)
+    const q = groupsFromGate(j);
+    if (q) return done({ state: 'ok', groups: q.groups, at: now(), detail: '', source: 'gate', account: q.account, seenAt: q.seenAt ? new Date(q.seenAt).toISOString() : null });
+    const want = accountFromGate(j)?.name || null;
+    const same = last?.state === 'ok' && !!want && last.account === want;
+    return done({ state: 'ok', groups: same ? last.groups : [], at: now(), detail: '', source: 'gate', account: want, seenAt: same ? (last.seenAt || null) : null });
   })();
   return running;
 }
+/** 시험용: agy 를 띄우는 함수를 가짜로 바꾼다(null = 되돌림) · 실제로 띄워 본 기록을 지운다 */
+export function _setRunner(f) { runner = f || run; }
+export function _resetReal() { real = { at: 0, ok: null, key: '', bad: null }; last = null; running = null; wroteSig = ''; wroteAt = 0; }
+/** 시험용: 마지막으로 실제로 띄워 본 때를 옮긴다(6시간 · 10분이 지난 것처럼) */
+export function _ageReal(ms) { real.at -= ms; if (last) last.at = new Date(Date.parse(last.at) - ms).toISOString(); }
 /** 지금 아는 값(기다리지 않음) */
 export const current = () => last;
 /** 화면에 보낼 짧은 값 */
-export const brief = () => (last ? { state: last.state, at: last.at, headline: headline(last), connection, ...(last.state === 'gate' ? { detail: last.detail } : {}) } : { state: 'unknown', at: null, headline: null, connection });
+export const brief = () => (last ? { state: last.state, at: last.at, headline: headline(last), connection, ...(last.account ? { account: last.account } : {}), ...(last.state === 'gate' ? { detail: last.detail } : {}) } : { state: 'unknown', at: null, headline: null, connection });
 
 // ───────── 토큰 수(보여 주기 전용) — ~/.gemini 의 기록 전체(IRIS 창 + 직접 띄운 agy), 한도가 계정 전체 기준이라서 ─────────
 // 파일마다 (크기 · 수정 시각)이 같으면 다시 읽지 않는다 · 없어진 파일은 캐시에서 뺀다. 5분에 한 번(상태를 적을 때)만 돈다.
@@ -188,7 +255,7 @@ export function refreshModels(table, { log = () => {} } = {}) {
   // gate 면 중계기를 쓸 수 있을 때만 묻는다(못 쓰면 목록을 바꾸지 않는다 — 이 PC 로그인으로 묻지 않는다)
   const env = { ...process.env };
   try { gate.applyRoute(env, connection); } catch { return Promise.resolve(fromCache); }
-  modelsRun = run(exe, ['models'], { env }).then((x) => {
+  modelsRun = runner(exe, ['models'], { env }).then((x) => {
     modelsRun = null;
     const list = parseModels(x.out);
     if (x.error || x.code !== 0 || !list.length) { log(`models: antigravity 목록 못 읽음(${x.error || `exit ${x.code}`}) — 목록 그대로`); return fromCache; }

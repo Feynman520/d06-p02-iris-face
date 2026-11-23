@@ -117,7 +117,8 @@ const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커
 // 계정 수·프로그램 없음이 바뀌면 화면에 알린다. 영수증이 없는 PC(이 개발 PC 포함)에서는 무동작.
 const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeAgentsMap(AGENTS), sleeping: status.sleeping, status });
 // 안티그래비티(중계기 밖) 상태는 위 상태 객체에 섞지 않고 따로 보낸다(클로드 · 코덱스가 받는 모양 그대로 — 코덱스 코드 검토 1번, 2026-11-23).
-// 시작 때 한 번 + 5분마다 로그인 · 한도를 읽고, 판정이 바뀌면 { type: 'agy' } 로 알린다(세션 시작은 기다리지 않는다).
+// 시작 때 한 번 + 1분마다 로그인 · 한도를 읽고, 판정이 바뀌면 { type: 'agy' } 로 알린다(세션 시작은 기다리지 않는다).
+// 중계기 길이면 한도는 중계기가 읽어 둔 값을 가져올 뿐이다(agy 를 띄우는 것은 켤 때 한 번 · 6시간마다 · agy 가 업데이트됐을 때 — antigravity.status.mjs, 2026-11-23 밤).
 // 중계기 길(gate)의 첫 판정 — 끊긴 안티그래비티 세션의 자동 재개는 이것을 기다린다(아래 auto-resume). 그 밖에는 기다리는 곳이 없다.
 let agyGateFirst = Promise.resolve();
 // 사용자가 안티그래비티 세션을 열 · 바꿀 · 재개할 때: 미리 읽어 둔 판정이 '통과 · 1분 안'이 아니면 그 자리에서 한 번 다시 묻는다(비동기, 최대 약 3초 —
