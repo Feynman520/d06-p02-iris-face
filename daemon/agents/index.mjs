@@ -9,10 +9,11 @@
 // (걸음 2, 기록 파일 찾기): watchRecord(sm, id, rec). 기록 해석(parseRecord · turnState · contextWindowGuess)은 <id>.records.mjs 와 records.mjs 명부에 따로 있다.
 import * as claude from './claude.mjs';
 import * as codex from './codex.mjs';
+import * as antigravity from './antigravity.mjs';
 import { strictIn, orDefaultIn, isMissing } from './select.mjs';
 
-/** 순서 = 화면·목록에 보이는 순서(AGENTS 표의 키 순서) */
-export const ADAPTERS = Object.freeze({ claude, codex });
+/** 순서 = 화면·목록에 보이는 순서(AGENTS 표의 키 순서). 첫째 = 값이 없을 때의 기본 에이전트(클로드 — 바꾸지 않는다). */
+export const ADAPTERS = Object.freeze({ claude, codex, antigravity });
 
 // 어댑터 고르기(규칙 = select.mjs). 명부에 없는 이름을 다른 에이전트로 바꿔 다루지 않는다(에이전트 장부 걸음 5, 2026-11-21 사용자 결정 "보이는 오류").
 /** 글자가 정확히 같을 때만 그 어댑터, 아니면 null */

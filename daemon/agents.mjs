@@ -14,7 +14,8 @@ export { CODEX_HOME } from './agents/codex.mjs';
 
 // 에이전트 값: 없으면 기본(명부의 첫째), 명부에 있으면 그 에이전트, 그 밖은 거절(UNKNOWN_AGENT) — 다른 에이전트로 바꿔 열지 않는다(걸음 5).
 // 재개가 지켜도 되는 "쓰던 정확한 모델 이름"의 모양(지금은 두 에이전트의 이름 모양을 한 식으로 본다 — 머리 글자는 어댑터의 actualPrefix)
-const ACTUAL_NAME_RE = /^(claude-[a-z0-9-]+|gpt-[a-z0-9.-]+)$/;
+// 2026-11-23: 안티그래비티 이름 꼴(gemini-…)을 더함 — 클로드 · 코덱스는 머리 글자(claude- · gpt-) 검사가 그대로라 받는 이름이 늘지 않는다.
+const ACTUAL_NAME_RE = /^(claude-[a-z0-9-]+|gpt-[a-z0-9.-]+|gemini-[a-z0-9.-]+)$/;
 // 재개 모델의 머리 글자: 명부에 없는 에이전트 값이면 어떤 이름도 받지 않는다(이름에 올 수 없는 글자로 견줌)
 const actualPrefixOf = (agent) => adapterOrDefault(agent)?.actualPrefix ?? '\u0000';
 // 두 에이전트 값이 같은 에이전트를 가리키는가를 볼 때의 이름: 값이 없으면 기본 에이전트, 명부에 없는 값은 그 값 그대로

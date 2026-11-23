@@ -36,6 +36,7 @@ import { sweepUploads, UPLOAD_KEEP_DAYS } from './uploads.mjs';
 import { ToolManager, makeRunner } from './toolinstall.mjs';
 import { childEnv } from './sessions.mjs';
 import { CLAUDE_CONFIG_DIR, CODEX_HOME } from './agents.mjs';
+import * as agyStatus from './agents/antigravity.status.mjs';
 import { taskkillTree, pidAlive } from './proctree.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -88,7 +89,19 @@ const handoff = new HandoffFlow({ root: WS_ROOT, stateDir: STATE, sm, log, broad
 const voice = new Voice(STATE, settings, log);   // 🎤 로컬 위스퍼 워커(자식 PID 하나) — 시작 때 모델 미리 올림
 // 에이전트 자가 치유·계정 감시(v2.76): 시작 때 한 번 + 15초마다 — 프로그램이 있는 잠든/빠진 에이전트를 켜고,
 // 계정 수·프로그램 없음이 바뀌면 화면에 알린다. 영수증이 없는 PC(이 개발 PC 포함)에서는 무동작.
-const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeAgentsMap(AGENTS), sleeping: status.sleeping, status });
+// 안티그래비티(중계기 밖)의 몫은 agy 에게 직접 물은 값을 덧붙인다(daemon/agents/antigravity.status.mjs — 원래 객체는 그대로, 2026-11-23).
+const fullStatus = (status = agentStatus()) => agyStatus.mergeStatus(status);
+const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeAgentsMap(AGENTS), sleeping: status.sleeping, status: fullStatus(status) });
+// 시작 때 한 번 + 5분마다 로그인 · 한도를 읽고, 판정이 바뀌면 화면에 알린다(세션 시작은 기다리지 않는다).
+{
+  let prevState = null;
+  const tickAgy = () => {
+    agyStatus.refresh().then((r) => { if (r?.state !== prevState) { prevState = r?.state; log(`antigravity status: ${r?.state}${r?.detail ? ` (${r.detail})` : ''}`); broadcast(agentsMsg()); } }).catch(() => {});
+    agyStatus.refreshModels(AGENTS.antigravity, { log }).then((ch) => { if (ch) broadcast(agentsMsg()); }).catch(() => {});
+  };
+  setTimeout(tickAgy, 3000).unref?.();
+  setInterval(tickAgy, 5 * 60_000).unref();
+}
 const sleepWatcher = new SleepWatcher({
   log: (m) => log(`wake: ${m}`),
   onChange: (status) => broadcast(agentsMsg(status)),
@@ -304,7 +317,8 @@ const server = http.createServer(async (req, res) => {
     // 잠든 에이전트 목록(2026-09-23 다른 선생님 PC: Codex 버튼이 없어 고장으로 보였다) — /api/agents 모양은 그대로 두고 따로 준다.
     if (req.method === 'GET' && p === '/api/agents/sleeping') return json(res, 200, { sleeping: sleepingAgents() });
     // v2.76: 버튼 옆 안내의 재료 — 에이전트별 계정 수(null = 판단 안 함)·프로그램 없음·잠든 목록.
-    if (req.method === 'GET' && p === '/api/agents/status') return json(res, 200, agentStatus());
+    if (req.method === 'GET' && p === '/api/agents/status') return json(res, 200, fullStatus());
+    if (req.method === 'GET' && p === '/api/antigravity/status') return json(res, 200, agyStatus.current() || { state: 'unknown' });
     if (req.method === 'GET' && p === '/api/limits') return json(res, 200, await readLimits());
     // 메모리 계기판(v2.78): 최근 30분 기록 · 많이 차지하는 것(펼쳤을 때만, 8초 캐시) · 잔여물 미리보기(종료 안 함, 같은 출처만)
     if (req.method === 'GET' && p === '/api/memory') return json(res, 200, memory.history());

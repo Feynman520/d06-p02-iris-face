@@ -301,13 +301,16 @@ export class SessionManager {
     st.pty.write('\x1b[200~' + text + '\x1b[201~');
     log(`send${first ? ' first' : ''} ${text.length}c`);
     const alive = () => this.live.get(id) === st;
-    const composerHolds = (screen) => { const s = flat(screen); return !WORKING_RE.test(screen) && ((tail && s.includes(tail)) || (head && s.includes(head))); };
+    // 화면 신호가 다른 에이전트(안티그래비티)는 어댑터가 자기 식을 낸다. 클로드 · 코덱스는 공용 식 그대로(2026-11-23).
+    const scr = strictAdapter(rec?.agent)?.screen;
+    const W = scr?.working || WORKING_RE, A = scr?.attention || ATTENTION_RE;
+    const composerHolds = (screen) => { const s = flat(screen); return !W.test(screen) && ((tail && s.includes(tail)) || (head && s.includes(head))); };
     const verify = (n) => {
       if (!alive()) return;
       const screen = this.screenText(id, 10);
-      if (WORKING_RE.test(screen)) { log(`enter ok (${n}) working`); return; }
+      if (W.test(screen)) { log(`enter ok (${n}) working`); return; }
       if (!composerHolds(screen)) { log(`enter ok (${n})`); return; }
-      if (ATTENTION_RE.test(screen)) { log(`enter (${n}): 확인 프롬프트가 떠 있어 재시도하지 않음`); return; }
+      if (A.test(screen)) { log(`enter (${n}): 확인 프롬프트가 떠 있어 재시도하지 않음`); return; }
       if (n >= ENTER_TRIES) { log(`enter FAILED: ${n}회 뒤에도 요청이 입력창에 남아 있음 — 터미널에서 Enter를 눌러야 함`); return; }
       log(`enter retry ${n + 1}: 요청이 입력창에 남아 있음`);
       pressEnter(n + 1);
@@ -341,7 +344,9 @@ export class SessionManager {
     const promptNear = lines.slice(-4).some(l => /^\s*(❯|›|>)\s*$/.test(l));
     // 코덱스 업데이트 물음도 노란불(2026-11-09): 0.165 부터 안내줄이 "enter continue · esc skip" 이라 ATTENTION_RE("Press enter")에 안 걸리고,
     // 커서 줄 `› 1. Update now` 가 PROMPT_RE 에 걸려 '대기'로 보였다 → 아래 자동 응답(2)이 안 돌고 첫 요청+Enter 가 「Update now」를 눌러 세션이 끝났다.
-    let status = (WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : ((ATTENTION_RE.test(tail) || CODEX_UPDATE_PROMPT_RE.test(tail)) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy')));
+    // 화면 신호가 다른 에이전트(안티그래비티)는 어댑터의 판정을 쓴다(2026-11-23). 클로드 · 코덱스는 아래 공용 판정 그대로.
+    const scr = strictAdapter(rec.agent)?.screen;
+    let status = scr ? scr.status(tail, lines) : ((WORKING_RE.test(tail) || spinner) ? 'busy' : (promptNear ? 'idle' : ((ATTENTION_RE.test(tail) || CODEX_UPDATE_PROMPT_RE.test(tail)) ? 'attention' : (PROMPT_RE.test(tail) ? 'idle' : 'busy'))));
     // v2.73(2026-09-21): 화면 글자로는 '대기'라도 대화 기록의 차례가 아직 열려 있으면(도구 결과 대기·요청 직후) 바쁨으로 둔다.
     // 도구 출력에 섞인 `>` 줄·빈 프롬프트 줄 때문에 진행 중인 세션을 "작업 완료"로 알린 사건(2026-09-20 사용자 실측)의 교차 확인.
     // 기록이 답 글로 끝나 있으면(null) 화면 판정을 그대로 믿는다 — 기록이 잠시 뒤처져도 다음 폴링에서 따라잡는다.
@@ -350,7 +355,7 @@ export class SessionManager {
     this.setStatus(id, status);
     // 코덱스 시작 시 "Update available … 1. Update now / 2. Skip / 3. Skip until next version" 물음 → 2(이번만 건너뜀)로 자동 응답.
     // 실제 업데이트는 코덱스 SessionStart 훅(_agent\claude\scripts\codex-autoupdate.ps1)이 같은 세션에서 배경 설치한다(사용자 규칙 2026-09-10).
-    if (status === 'attention' && !st.updateAnswered && CODEX_UPDATE_PROMPT_RE.test(tail)) {
+    if (!scr && status === 'attention' && !st.updateAnswered && CODEX_UPDATE_PROMPT_RE.test(tail)) { // 자기 화면 신호를 가진 에이전트(안티그래비티)에는 이 자동 입력을 하지 않는다
       st.updateAnswered = true; this.hooks.onLog?.(`${id} codex update prompt → 2(Skip); 설치는 훅이 배경에서`);
       try { st.pty.write('2'); setTimeout(() => { try { st.pty.write('\r'); } catch {} }, 200); } catch {}
       return;
@@ -361,7 +366,7 @@ export class SessionManager {
     const actLine = status === 'busy' ? (lines.find(l => WORKING_RE.test(l)) || '') : '';
     // 스피너 문구만 남긴다: 상태줄(⏵⏵ bypass permissions…, ← for agents, shift+tab to cycle)과 스피너 글리프 제거
     const legacy = actLine.split(/⏵|bypass permissions|← for agents|\(shift\+tab/)[0].replace(/[✢✶✻✽·•◦*]+/g, ' ').replace(/\(?\s*esc to interrupt\)?/i, '').replace(/ctrl\+c to interrupt/i, '').replace(/\s{2,}/g, ' ').replace(/^[\s·]+|[\s·]+$/g, '').trim().slice(0, 80);
-    const act = status === 'busy' ? (spinner ? spinner[1].trim() : legacy) : '';
+    const act = status === 'busy' ? (scr ? scr.activity(lines) : (spinner ? spinner[1].trim() : legacy)) : '';
     if (act !== st.activity) { st.activity = act; this.hooks.onActivity?.(id, act); }
     if (status === 'busy' && !st.timer) st.timer = setTimeout(() => this.idleCheck(id), BUSY_WINDOW_MS);
     if (status === 'idle' && st.pendingPrompt && !st.promptSent) { // 첫 요청문: 프롬프트가 처음 보일 때 1회

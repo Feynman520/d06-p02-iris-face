@@ -4,9 +4,10 @@
 // 어댑터가 내놓는 것: parseRecord(tail, r) · turnState(tail) · contextWindowGuess(model)(추정할 것이 있는 에이전트만)
 import * as claude from './claude.records.mjs';
 import * as codex from './codex.records.mjs';
+import * as antigravity from './antigravity.records.mjs';
 import { strictIn, orDefaultIn } from './select.mjs';
 
-export const RECORD_ADAPTERS = Object.freeze({ claude, codex });
+export const RECORD_ADAPTERS = Object.freeze({ claude, codex, antigravity });
 export const strictRecordAdapter = strictIn(RECORD_ADAPTERS);
 /** 값이 없으면 기본(명부의 첫째) 해석기, 명부에 있으면 그 해석기, 명부에 없는 값이면 null(그 기록은 읽지 않는다) */
 export const recordAdapterFor = orDefaultIn(RECORD_ADAPTERS);

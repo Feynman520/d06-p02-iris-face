@@ -631,6 +631,10 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 /* 밝은 테마(아이보리·새벽 안개·밝은 종이)에서는 위 연한 색이 바탕에 묻혀 진한 같은 계열로(2026-11-10 도구 화면 캡처에서 발견) */
 :root:is([data-iris-theme="ivory"], [data-iris-theme="mist"], [data-iris-theme="paper"]) .chip.claude { color: #5b3fc4; border-color: rgba(91,63,196,.4); }
 :root:is([data-iris-theme="ivory"], [data-iris-theme="mist"], [data-iris-theme="paper"]) .chip.codex { color: #187a4a; border-color: rgba(24,122,74,.4); }
+/* 셋째 에이전트 안티그래비티(2026-11-23) — 파랑 계열. 위 두 에이전트의 규칙은 그대로 */
+.seg-agent .seg-btn[data-agent="antigravity"].active { color: #9cc3ff; }
+.chip.antigravity { color: #9cc3ff; border-color: rgba(156,195,255,.35); }
+:root:is([data-iris-theme="ivory"], [data-iris-theme="mist"], [data-iris-theme="paper"]) .chip.antigravity { color: #1f5fbf; border-color: rgba(31,95,191,.4); }
 
 /* ---- 폴더 팝오버 ---- */
 .fp { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% - 2px); width: min(620px, calc(100% - 48px)); max-height: 440px; display: flex; flex-direction: column; background: var(--overlay); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.55); z-index: 6; overflow: hidden; }

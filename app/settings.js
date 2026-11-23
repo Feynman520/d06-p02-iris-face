@@ -73,6 +73,18 @@ window.Settings = (() => {
         ? battery('Claude', a?.account, a?.d7, `왕관 계정 ${a?.account || '?'} — 남은 잔량: 주간 ${L(a?.d7)} · Fable 주간 ${L(a?.d7Fable)} · 5시간 ${L(a?.h5)}  (누르면 사용량 대시보드)`) + battery('Codex', c?.account, c?.d7, `왕관 계정 ${c?.account || '?'} — 남은 잔량: 주간 ${L(c?.d7)} · 5시간 ${L(c?.h5)}  (누르면 사용량 대시보드)`)
         : '<span class="batt-off">대시보드</span>';
     } catch { $('#limits').innerHTML = '<span class="batt-off">대시보드</span>'; }
+    // 셋째 배터리 = 안티그래비티(중계기 밖 — 데몬이 agy 에게 직접 물은 남은 한도, 2026-11-23). 못 읽었으면 그리지 않는다(클로드 · 코덱스 배터리는 위 그대로).
+    try {
+      const g = await (await fetch('/api/antigravity/status')).json();
+      if (g?.state === 'ok' && Array.isArray(g.groups)) {
+        const all = g.groups.flatMap((x) => (x.buckets || []).map((b) => ({ ...b, group: x.name })));
+        const h = all.find((b) => /argon/i.test(b.group) && b.window === 'weekly') || all.find((b) => b.window === 'weekly') || all[0];
+        const R = (b) => (b?.remaining == null ? '?' : Math.round(b.remaining * 100) + '%');
+        const when = (t) => { const d = t ? new Date(t) : null; return d && !isNaN(d) ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '?'; };
+        const tip = `Antigravity 남은 한도 — ${all.map((b) => `${b.group} ${b.window === '5h' ? '5시간' : b.window === 'weekly' ? '주간' : b.window} ${R(b)}(다시 참 ${when(b.reset)})`).join(' · ')}`;
+        if (h) $('#limits').insertAdjacentHTML('beforeend', battery('Antigravity', null, h.remaining == null ? null : 1 - h.remaining, tip));
+      }
+    } catch {}
   }
 
   // ---- 패널 ----
@@ -330,7 +342,18 @@ window.Settings = (() => {
     const sub = due.map(i => i.level === 'expired' ? `${i.label} 만료` : `${i.label} D-${i.daysLeft}`).join(' · ');
     Notify.push({ title: '로그인 갱신 필요', sub: `${sub} — 설정 → 인증에서 갱신`, status: 'attention', force: true });
   }
+  // 넷째 카드 = 안티그래비티 로그인(2026-11-23). 중계기 밖이라 대시보드 계정이 아니다 — 이 PC 의 구글 로그인 하나. 데몬이 agy 에게 물은 판정만 보인다.
+  let agyInfo = null;
+  function agyCard() {
+    if (!agyInfo || agyInfo.state === 'missing') return '';
+    const W = { ok: ['로그인됨', 'ok'], auth: ['로그인 안 됨', 'expired'], unknown: ['확인 못 함', 'unknown'] }[agyInfo.state] || ['확인 못 함', 'unknown'];
+    const how = agyInfo.state === 'auth' ? '터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하세요(앱 · 확장과 함께 쓰는 로그인).' : agyInfo.state === 'ok' ? '이 PC 의 구글 계정 하나로 씁니다(돌려 쓰기 없음). 로그아웃은 agy 화면의 /logout — Antigravity 앱 로그인도 함께 풀립니다.' : '데몬이 아직 확인하지 못했습니다(네트워크 · 시간 초과). 로그아웃으로 보지 않습니다.';
+    return `<section class="st-grp auth-card" data-kind="antigravity"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">로그인</span><small>중계기를 거치지 않는 구글 로그인</small></h3>`
+      + `<div class="st-opt auth-row ${W[1]}"><span class="st-opt-text">${esc(W[0])}<small>${esc(how)}${agyInfo.at ? ` · 확인 ${esc(fmtWhen(agyInfo.at))}` : ''}</small></span></div></section>`;
+  }
+  async function loadAgy() { try { agyInfo = await (await fetch('/api/antigravity/status')).json(); } catch { agyInfo = null; } }
   function renderAuth() {
+    if (agyInfo === null && !renderAuth.agyAsked) { renderAuth.agyAsked = true; loadAgy().then(() => { if (open) renderAuth(); }); }
     const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
     renderNav();
     // v2.97.2(2026-11-02 사용자 신고 "복구 문구만 있고 로그인 열쇠가 없다"): 도구(iris-auth)가 없는 PC 도 절을 숨기지 않고 이유를 한 줄 보인다.
@@ -366,6 +389,7 @@ window.Settings = (() => {
     host.innerHTML = card('iris', `<span class="auth-sec-t">${Icons.svg('key', 14)}IRIS 열쇠</span><small>IRIS 창이 Claude 세션을 열 때 쓰는 열쇠</small>`, iris, '열쇠 없음 — Claude 세션은 각 계정 로그인으로 열립니다')
       + card('claude', `<span class="chip claude">Claude</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 Claude 계정</small>`, cl, '계정 없음 — 대시보드에서 추가')
       + card('codex', `<span class="chip codex">Codex</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 ChatGPT(Codex) 계정</small>`, cx, '계정 없음 — 대시보드에서 추가')
+      + agyCard()
       + (auth?.info?.checkedAt ? `<div class="upd-line st-sub auth-checked">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '');
     if (job && (job.running || job.result)) {
       const el = document.createElement('div');

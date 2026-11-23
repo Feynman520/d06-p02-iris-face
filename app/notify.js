@@ -12,7 +12,7 @@ window.Notify = (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const STATUS_KO = { idle: '작업이 끝났습니다', attention: '확인이 필요합니다', exited: '세션이 종료됐습니다', dead: '세션이 종료됐습니다' };
-  const AGENT_KO = { claude: 'Claude', codex: 'Codex' };
+  const AGENT_KO = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
   const MAX = 4, TTL = 8000;
   let opts = { onPick: () => {}, current: () => null, enabled: () => true, osEnabled: () => true };
   const busyAt = new Map(); // 세션별 '작업 중' 시작 시각(걸린 시간 표시용)
