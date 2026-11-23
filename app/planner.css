@@ -23,15 +23,16 @@
 .pl-hex.speak { box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 0 4px color-mix(in srgb, var(--tone) 22%, transparent); }
 .pl-cnt { position: absolute; right: -3px; top: -3px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--iris); color: var(--base); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
 
-/* ---- 말풍선: 꼬리가 단추를 가리킨다. 폭은 가장 긴 줄에 맞춘다(planner.js fit) ---- */
-.pl-say { position: relative; width: max-content; max-width: 330px; padding: 10px 12px; background: var(--overlay); border: 1px solid var(--bd); border-radius: 18px; box-shadow: 0 16px 48px rgba(0,0,0,.55); --bd: color-mix(in srgb, var(--tone) 50%, transparent); }
+/* ---- 말풍선: 내용 하나에 말풍선 하나(2026-11-23). 같은 종류는 위로 쌓이고, 꼬리는 단추와 가장 가까운 맨 아래 것(.tail)만 단추를 가리킨다. 폭은 가장 긴 줄에 맞춘다(planner.js fit) ----
+   말풍선 안의 글 자리(.pl-line)에는 테두리 · 바탕을 두지 않는다. 누를 수 있는 표시는 pl-pick — 본체의 .pick(선택 상자)과 이름이 겹치면 그 상자 모양이 안으로 묻어 들어온다(verify:planner-ui 가 본다). */
+.pl-says { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+.pl-say { position: relative; width: max-content; max-width: 330px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--bd); border-radius: 18px; box-shadow: 0 16px 48px rgba(0,0,0,.55); cursor: default; --bg: var(--overlay); --bd: color-mix(in srgb, var(--tone) 50%, transparent); }
 .pl-say.in { animation: pl-pop .26s cubic-bezier(.2,.9,.3,1.2) both; transform-origin: 100% 85%; }
-.pl-say::after { content: ''; position: absolute; right: -6.5px; bottom: 18px; width: 12px; height: 12px; background: var(--overlay); border-top: 1px solid var(--bd); border-right: 1px solid var(--bd); border-radius: 0 3px 0 0; transform: rotate(45deg); }
+.pl-say.tail::after { content: ''; position: absolute; right: -6.5px; bottom: 18px; width: 12px; height: 12px; background: var(--bg); border-top: 1px solid var(--bd); border-right: 1px solid var(--bd); border-radius: 0 3px 0 0; transform: rotate(45deg); }
 .pl-over .pl-say::after { display: none; }
-.pl-line { display: flex; align-items: flex-start; gap: 6px; padding: 2px; border-radius: 10px; cursor: default; }
-.pl-line.pick { cursor: pointer; }
-.pl-line.pick:hover { background: color-mix(in srgb, var(--tone) 10%, transparent); }
-.pl-line + .pl-line { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; }
+.pl-say.pl-pick { cursor: pointer; }
+.pl-say.pl-pick:hover { --bg: color-mix(in srgb, var(--tone) 10%, var(--overlay)); }
+.pl-line { display: flex; align-items: flex-start; gap: 6px; }
 .pl-line p { margin: 0; flex: 1; min-width: 0; font-size: 14px; line-height: 1.55; color: var(--ink); word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; }
 .pl-line small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--ink-3); }
 .pl-x { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 6px; color: var(--ink-3); display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
@@ -157,8 +158,11 @@
 .pl-send[disabled] { opacity: .45; pointer-events: none; }
 
 /* 올렸을 때 뜨는 설명(화면 하나짜리 — 판 가장자리에서 잘리지 않게 body 에 둔다) */
-#pl-tip { position: fixed; z-index: 99; max-width: 260px; padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--base) 82%, #000); border: 1px solid var(--line-2); color: var(--ink); font-size: 12px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,.6); pointer-events: none; word-break: keep-all; }
+#pl-tip { position: fixed; z-index: 99; max-width: 300px; padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--base) 82%, #000); border: 1px solid var(--line-2); color: var(--ink); font-size: 12px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,.6); pointer-events: none; word-break: keep-all; overflow-wrap: anywhere; white-space: pre-line; max-height: calc(100vh - 16px); overflow: hidden; }
 #pl-tip[hidden] { display: none; }
+/* 이름 자리에 올렸을 때: 이름 전체(굵게) + 그 아래 메모 · 장소 · 상대 */
+#pl-tip b { display: block; font-weight: 650; }
+#pl-tip b + span { display: block; margin-top: 3px; color: var(--ink-2); }
 
 /* 설정 → 플래너(설계 조각 ⑧): 시각 칸 · 꺼진 칩 · 사용량 줄. 나머지는 설정 서랍의 공용 모양(.st-opt · .st-chip · .st-hint)을 그대로 쓴다 */
 .st-pl-time { height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--base); color: var(--ink); font: inherit; font-size: 13px; flex: none; color-scheme: dark; }

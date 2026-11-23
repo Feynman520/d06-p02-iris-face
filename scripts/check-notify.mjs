@@ -18,7 +18,7 @@ if (!pw) { console.log('SKIP: playwright 없음'); process.exit(0); }
 
 // 알림이 그려지는 곳(겉모습) — 이 객체만 화면 구조를 안다.
 // 2026-11-22(플래너 걸음 4) 바뀐 것: 네모 알림(#toasts) → 육각 단추의 말풍선(app/planner.js).
-//   · 무엇이 달라지나: 같은 종류(끝남끼리 등)는 한 말풍선에 줄로 쌓이고, 다른 종류는 앞의 말풍선이 닫힌 뒤 차례로 뜬다(전에는 종류와 상관없이 4장까지 함께 떴다).
+//   · 무엇이 달라지나: 같은 종류(끝남끼리 등)는 함께 뜨고(2026-11-23 부터 한 말풍선 안의 줄이 아니라 말풍선 하나씩 위로 쌓인다), 다른 종류는 앞의 말풍선이 닫힌 뒤 차례로 뜬다(전에는 종류와 상관없이 4장까지 함께 떴다).
 //     그래서 list 는 "떠 있는 줄 + 차례를 기다리는 줄"을 함께 센다 — 알림이 만들어졌는가(규칙)는 그대로 검사하고, 한꺼번에 보이는가는 더 묻지 않는다.
 //   · 세션의 상태 알림은 문장으로 말하고(「…」 작업이 끝났어요.) 걸린 시간 · 조합은 올렸을 때 설명으로 간다. 제목 · 아랫줄 자료는 그대로 따라온다(meta).
 //   · 그 밖의 규칙(언제 알리는가 · 보류 · 4개까지 · 8초 · 올리면 멈춤 · 누르면 그 세션 · × 는 닫기만 · 초점 · 윈도 알림)은 하나도 바뀌지 않았다 — 아래 시험이 그대로다.
@@ -29,8 +29,9 @@ const VIEW = {
   init: 'Planner.init({});',
   // 알림들(떠 있는 것 + 차례를 기다리는 것): [{ title, sub, status }]
   list: `Planner.bubbles().map((b) => ({ title: b.meta ? b.meta.title : b.text, sub: b.meta ? b.meta.sub : b.sub, status: b.meta ? b.meta.status : '' }))`,
-  item: (i) => `document.querySelectorAll('.pl-say .pl-line')[${i}]`,
-  closeBtn: (i) => `document.querySelectorAll('.pl-say .pl-line')[${i}].querySelector('.pl-x')`,
+  // 2026-11-23: 내용 하나에 말풍선 하나(같은 종류는 한 말풍선 안의 줄이 아니라 말풍선째 위로 쌓인다) — 알림 하나 = .pl-say 하나. 규칙은 그대로다.
+  item: (i) => `document.querySelectorAll('.pl-says > .pl-say')[${i}]`,
+  closeBtn: (i) => `document.querySelectorAll('.pl-says > .pl-say')[${i}].querySelector('.pl-x')`,
   hoverIn: () => `document.querySelector('.pl-say').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`,
   hoverOut: () => `document.querySelector('.pl-say').dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))`,
 };
@@ -265,12 +266,12 @@ try {
   // 7. 말풍선으로 옮긴 모양(2026-11-22) — 규칙이 아니라 겉모습
   { const t = await fresh();
     await t.status('a', 'busy'); await t.adv(134000); await t.status('a', 'idle', true);
-    const say = await t.ev(`(() => { const s = document.querySelector('.pl-say'); const l = s.querySelector('.pl-line'); return { tone: s.dataset.tone, text: l.querySelector('p').textContent, tip: l.dataset.tip, pick: l.classList.contains('pick'), hex: document.querySelector('#pl-hex').classList.contains('speak') }; })()`);
+    const say = await t.ev(`(() => { const s = document.querySelector('.pl-say'); return { tone: s.dataset.tone, text: s.querySelector('p').textContent, tip: s.dataset.tip, pick: s.classList.contains('pl-pick'), hex: document.querySelector('#pl-hex').classList.contains('speak') }; })()`);
     ok(say.tone === 'ok' && say.text === '「결과 보고서 초안」 작업이 끝났어요.' && say.tip === '작업이 끝났습니다 · 2분 14초 걸림 · Claude Opus' && say.pick && say.hex, '끝남 = 초록 말풍선의 한 문장 · 걸린 시간과 조합은 올렸을 때 · 누르면 그 세션');
     await t.status('c', 'busy'); await t.status('c', 'idle', true);
     await t.status('b', 'busy'); await t.status('b', 'attention', true);
     const two = await t.ev(`({ lines: [...document.querySelectorAll('.pl-say .pl-line p')].map((p) => p.textContent), all: Planner.bubbles().map((b) => b.group + (b.shown ? '*' : '')) })`);
-    ok(two.lines.length === 2 && two.lines[1] === '「가정통신문」 작업이 끝났어요.' && two.all.join() === 'done*,done*,attention', '같은 종류는 한 말풍선에 줄로 · 다른 종류(확인 필요)는 차례를 기다림');
+    ok(two.lines.length === 2 && two.lines[1] === '「가정통신문」 작업이 끝났어요.' && two.all.join() === 'done*,done*,attention' && (await t.ev(`document.querySelectorAll('.pl-says > .pl-say').length`)) === 2, '같은 종류는 말풍선이 하나씩 함께 뜸(내용 하나에 말풍선 하나, 2026-11-23) · 다른 종류(확인 필요)는 차례를 기다림');
     await t.adv(8100);
     const next = await t.ev(`({ tone: document.querySelector('.pl-say')?.dataset.tone, text: document.querySelector('.pl-say .pl-line p')?.textContent })`);
     ok(next.tone === 'warn' && next.text === '「채점」에서 확인을 기다려요.', '앞의 말풍선이 사라지면 다음 것(확인 필요 = 노랑)');

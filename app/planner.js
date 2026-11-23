@@ -3,7 +3,7 @@
    육각 단추 하나가 말풍선으로 말하고, 누르면 달력 한 화면이 펴진다. 다른 화면으로 넘어가지 않는다.
    · 셈은 하지 않는다 — 데몬이 준 한 장(GET /api/planner/view)을 그대로 그린다.
    · 손으로 하는 것은 「끝냄」 체크와 제안에 대한 답뿐. 넣기 · 고치기 · 지우기는 아래 칸에서 아이리스에게 말로(POST /api/planner/talk).
-   · 말풍선은 한 번에 하나. 같은 종류는 줄로 쌓고(최대 4줄), 다른 종류는 차례로(약속 직전 → 세션 확인 → 작업 완료 → 제안 → 인사).
+   · 내용 하나에 말풍선 하나(2026-11-23). 같은 종류는 말풍선을 위로 쌓고(최대 4개), 다른 종류는 차례로(약속 직전 → 세션 확인 → 작업 완료 → 제안 → 인사).
    · 말풍선은 초점을 뺏지 않는다(입력 중인 글 유지). 폭은 가장 긴 줄에 맞춘다.
    · 화면에 이모지를 쓰지 않는다. 아이콘은 app/icons.js 이름으로만. 모든 글자는 esc() 를 거친다.
    사용: Planner.init({ openFolder, chatIn, openSession, drawerOpen }) · Planner.onHello(p) · Planner.onMessage(m) · Planner.onEscape() → bool
@@ -74,14 +74,23 @@ window.Planner = (() => {
     const tip = `${longDay(p.start)}부터 ${longDay(p.end)}까지${p.last ? ' · 마감일' : ''}`;
     return `<span class="pl-pill span${r.red ? ' end' : ''}" data-tip="${esc(tip)}">${p.index ? `<b>${p.index}일차</b>` : ''}${esc(rangeText(p.start, p.end))}</span>`;
   }
+  /**
+   * 이름 자리에 올렸을 때의 전체 내용(2026-11-23): 이름은 한 줄만 보이고 길면 잘리므로, 올리면 이름 전체(굵게) + 메모 · 장소 · 상대가 풍선으로 뜬다.
+   * 덧붙일 것이 없고 이름도 잘리지 않았으면 풍선을 띄우지 않는다(showTip 이 그때의 폭을 재서 가른다).
+   */
+  const fullAttr = (title, o = {}) => {
+    const more = [o.note || '', o.place ? `장소: ${o.place}` : '', o.who ? `상대: ${o.who}` : '', o.extra || ''].filter(Boolean).join('\n');
+    return ` data-full="${esc(title)}"${more ? ` data-tip="${esc(more)}" aria-description="${esc(more)}"` : ''}`; // aria-description = 화면 낭독기에는 이름 뒤에 메모를 읽어 준다(풍선은 마우스를 올렸을 때만 뜬다)
+  };
+  const TIP_MAX = 400; // 풍선에 보이는 메모의 길이(넘으면 앞부분 + …) — 풍선은 스크롤할 수 없으므로 화면보다 길어지지 않게 한다
   function rowHtml(r) {
     const off = lock();
     const dateAttr = r.repeat ? ` data-date="${esc(r.date)}"` : '';
     const late = r.late && r.lateFrom ? `<span class="pl-pill" data-tip="${esc(longDay(r.lateFrom))}에 하려던 일">${r.lateFrom === addDays(view.today, -1) ? '어제' : esc(shortDay(r.lateFrom, view.today))}</span>` : '';
-    const title = `<span class="tx${r.done ? ' done' : ''}">${esc(r.title)}</span>`;
+    const title = `<span class="tx${r.done ? ' done' : ''}"${fullAttr(r.title, r)}>${esc(r.title)}</span>`;
     if (r.steps) {
       const isOpen = !folded.has(r.id), dn = r.steps.filter((s) => s.done).length;
-      const steps = isOpen ? `<div class="pl-steps">${r.steps.map((s) => `<div class="pl-r step${s.cur ? ' cur' : ''}${s.over ? ' over' : ''}"><span class="no" data-tip="${s.n}번째 단계">${s.n}</span>${ck(s.done, `data-ck="${esc(r.id)}" data-step="${esc(s.id)}"`, off)}<span class="tx${s.done ? ' done' : ''}">${esc(s.title)}</span><span class="dd" data-tip="하는 날 ${esc(longDay(s.day))}">${s.day === view.today ? '오늘' : esc(shortDay(s.day, view.day))}</span></div>`).join('')}</div>` : '';
+      const steps = isOpen ? `<div class="pl-steps">${r.steps.map((s) => `<div class="pl-r step${s.cur ? ' cur' : ''}${s.over ? ' over' : ''}"><span class="no" data-tip="${s.n}번째 단계">${s.n}</span>${ck(s.done, `data-ck="${esc(r.id)}" data-step="${esc(s.id)}"`, off)}<span class="tx${s.done ? ' done' : ''}"${fullAttr(s.title)}>${esc(s.title)}</span><span class="dd" data-tip="하는 날 ${esc(longDay(s.day))}">${s.day === view.today ? '오늘' : esc(shortDay(s.day, view.day))}</span></div>`).join('')}</div>` : '';
       return `<div class="pl-r${r.red ? ' end' : ''}">${ck(r.done, `data-ck="${esc(r.id)}"`, off)}${title}<button type="button" class="pl-pill fold" data-fold="${esc(r.id)}" aria-expanded="${isOpen}" data-tip="단계 ${r.steps.length}개 가운데 ${dn}개 끝남 · 눌러서 ${isOpen ? '접기' : '펴기'}">${I(isOpen ? 'chev-up' : 'chev-down')}${dn}/${r.steps.length}</button>${badge(r)}</div>${steps}`;
     }
     const folder = r.folder ? `<span class="hid">${ib('folder', '연결 폴더 열기', '', `data-folder="${esc(r.folder)}"`)}${ib('chat', '이 폴더에서 대화 시작', '', `data-chat="${esc(r.folder)}"`)}</span>` : '';
@@ -113,7 +122,7 @@ window.Planner = (() => {
       const when = p.start === view.today ? '오늘' : `${shortDay(p.start, view.today)} ${WD[wdOf(p.start)]}`;
       const tip = [p.session ? `「${p.session}」에서 올린 제안` : '아이리스의 제안', p.evidence ? `근거: ${p.evidence}` : ''].filter(Boolean).join(' · ');
       const act = p.action && p.action.kind === 'start-work' ? `<button type="button" class="pl-tb" data-work="${esc(p.id)}" data-tip="그 폴더에서 새 작업을 열고 요청문을 채워 둡니다(보내기는 직접)"${off ? ' disabled' : ''}>${I('arrow-right')}작업 시작</button>` : '';
-      return `<div class="pl-r"><span class="tx" data-tip="${esc(tip)}">${esc(p.title)}</span><span class="pl-pill">${esc(p.end ? rangeText(p.start, p.end) : when)}${p.time ? ` ${esc(p.time)}` : ''}</span>${act}${ib('check', '달력에 추가', 'main', `data-acc="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('chat', '말로 고치기', 'line', `data-fix="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('close', '추가 안 함', 'line', `data-dec="${esc(p.id)}"${off ? ' disabled' : ''}`)}</div>`;
+      return `<div class="pl-r"><span class="tx"${fullAttr(p.title, { ...p, extra: tip })}>${esc(p.title)}</span><span class="pl-pill">${esc(p.end ? rangeText(p.start, p.end) : when)}${p.time ? ` ${esc(p.time)}` : ''}</span>${act}${ib('check', '달력에 추가', 'main', `data-acc="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('chat', '말로 고치기', 'line', `data-fix="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('close', '추가 안 함', 'line', `data-dec="${esc(p.id)}"${off ? ' disabled' : ''}`)}</div>`;
     }).join('')}</div>` : '';
     return `<section class="pl-strip"><button type="button" class="pl-strip-h" data-strip aria-expanded="${strip}" data-tip="${strip ? '접기' : '눌러서 펴기'}">${I('bulb')}<b>아이리스 제안</b><em>${view.proposals.length}</em><span class="pl-sp"></span>${I(strip ? 'chev-up' : 'chev-down')}</button>${rows}</section>`;
   }
@@ -153,10 +162,18 @@ window.Planner = (() => {
     const talkPart = talk ? `<div class="pl-talk${talkFresh ? ' in' : ''}"><button type="button" class="pl-talk-x" data-talk-x data-tip="대화 접기" aria-label="대화 접기">${I('chev-down')}</button><div class="pl-thread" id="pl-thread" aria-live="polite">${threadHtml()}</div></div>` : '';
     return `<div class="pl-panel${fresh ? ' in' : ''}" role="dialog" aria-label="플래너">${head}${noteHtml()}${stripHtml()}${talk || compact ? week() : grid()}<div class="pl-list">${rows}</div>${talkPart}${footHtml()}</div>`;
   }
+  /**
+   * 말풍선들. 내용 하나에 말풍선 하나(2026-11-23 사용자 결정) — 같은 종류가 여럿이면 말풍선이 위로 쌓이고, 꼬리는 단추와 가장 가까운 맨 아래 것에만 둔다.
+   * 누를 수 있는 것의 표시는 pl-pick 이다. 본체의 .pick(선택 상자 모양)과 이름이 겹치면 그 테두리 · 바탕이 말풍선 안으로 묻어 들어온다(같은 날 신고의 원인).
+   */
   function sayHtml(b, isNew) {
-    const lines = b.lines.map((l, i) => `<div class="pl-line${l.pick ? ' pick' : ''}" data-line="${i}"${l.tip ? ` data-tip="${esc(l.tip)}"` : ''}><p>${esc(l.text)}${l.sub ? `<small>${esc(l.sub)}</small>` : ''}</p><button type="button" class="pl-x" data-line-x="${i}" tabindex="-1" aria-label="닫기">${I('close')}</button></div>`).join('');
     const acts = (b.actions || []).map((a, i) => (a.label ? `<button type="button" class="pl-tb${a.main ? ' main' : ''}" data-act="${i}"${a.tip ? ` data-tip="${esc(a.tip)}"` : ''}>${a.icon ? I(a.icon) : ''}${esc(a.label)}</button>` : `<button type="button" class="pl-ib line" data-act="${i}" data-tip="${esc(a.tip || '')}" aria-label="${esc(a.tip || '')}">${I(a.icon)}</button>`)).join('');
-    return `<div class="pl-say${isNew ? ' in' : ''}" data-tone="${esc(b.tone)}" role="status">${lines}${acts ? `<div class="pl-acts">${acts}</div>` : ''}</div>`;
+    const last = b.lines.length - 1;
+    const says = b.lines.map((l, i) => {
+      const pop = isNew || l.fresh; l.fresh = false;
+      return `<div class="pl-say${pop ? ' in' : ''}${i === last ? ' tail' : ''}${l.pick ? ' pl-pick' : ''}" data-tone="${esc(l.tone || b.tone)}" data-line="${i}"${l.tip ? ` data-tip="${esc(l.tip)}"` : ''} role="status"><div class="pl-line"><p>${esc(l.text)}${l.sub ? `<small>${esc(l.sub)}</small>` : ''}</p><button type="button" class="pl-x" data-line-x="${i}" tabindex="-1" aria-label="닫기">${I('close')}</button></div>${acts && i === last ? `<div class="pl-acts">${acts}</div>` : ''}</div>`;
+    }).join('');
+    return `<div class="pl-says">${says}</div>`;
   }
   let sayNew = false;
   /** 단추 줄(말풍선 + 육각 단추)만 다시 그린다 — 판은 건드리지 않는다. */
@@ -246,14 +263,25 @@ window.Planner = (() => {
   // ---- 설명 풍선 ----
   function hideTip() { if (tipEl) tipEl.hidden = true; }
   function showTip(el) {
-    if (!el.dataset.tip) return hideTip();
-    tipEl.textContent = el.dataset.tip; tipEl.hidden = false;
+    const full = el.dataset.full, more = el.dataset.tip || '';
+    if (full !== undefined) {
+      // 이름 자리: 이름 전체(굵게) + 메모 등. 덧붙일 것이 없고 이름이 잘리지도 않았으면 띄우지 않는다
+      if (!more && !(el.scrollWidth > el.clientWidth + 1)) return hideTip();
+      tipEl.textContent = '';
+      const head = document.createElement('b'); head.textContent = full; tipEl.appendChild(head);
+      if (more) { const body = document.createElement('span'); body.textContent = more.length > TIP_MAX ? `${more.slice(0, TIP_MAX)}…` : more; tipEl.appendChild(body); }
+    } else {
+      if (!more) return hideTip();
+      tipEl.textContent = more;
+    }
+    tipEl.hidden = false;
     const r = el.getBoundingClientRect(), t = tipEl.getBoundingClientRect();
     const x = Math.max(8, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 8));
-    const y = r.top - t.height - 8 < 8 ? r.bottom + 8 : r.top - t.height - 8;
+    // 위에 설 자리가 없으면 아래로, 아래도 넘치면 화면 안으로 끌어올린다(긴 메모의 풍선이 화면 밖으로 잘리지 않게)
+    const y = Math.max(8, Math.min(r.top - t.height - 8 < 8 ? r.bottom + 8 : r.top - t.height - 8, window.innerHeight - t.height - 8));
     tipEl.style.left = `${x}px`; tipEl.style.top = `${y}px`;
   }
-  const overTip = (e) => { const el = e.target.closest && e.target.closest('.pl [data-tip]'); if (el) showTip(el); else hideTip(); };
+  const overTip = (e) => { const el = e.target.closest && e.target.closest('.pl [data-tip], .pl [data-full]'); if (el) showTip(el); else hideTip(); };
 
   // ---- 말풍선(한 번에 하나) ----
   /**
@@ -268,12 +296,12 @@ window.Planner = (() => {
       const old = cur; for (const l of old.lines) clearTimeout(l.timer); cur = null; queue.unshift(old);
     }
     const group = b.group || 'info';
-    const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, meta: b.meta || null, ttl: b.ttl === 0 ? 0 : (b.ttl || TTL), timer: 0, closed: false };
+    const line = { text: String(b.text), sub: b.sub ? String(b.sub) : '', tip: b.tip ? String(b.tip) : '', id: b.id ?? null, pick: typeof b.pick === 'function' ? b.pick : null, meta: b.meta || null, ttl: b.ttl === 0 ? 0 : (b.ttl || TTL), timer: 0, closed: false, tone: b.tone || 'iris', fresh: false };
     line.close = () => closeLine(line);
     const one = { group, tone: b.tone || 'iris', lines: [line], actions: b.actions || null };
-    if (cur && cur.group === group && !cur.actions && !one.actions) {            // 같은 종류: 줄로 쌓는다(최대 4줄, 오래된 것부터 빠짐)
+    if (cur && cur.group === group && !cur.actions && !one.actions) {            // 같은 종류: 말풍선을 위로 쌓는다(최대 4개, 오래된 것부터 빠짐)
       while (cur.lines.length >= MAX_LINES) dropLine(cur.lines[0]);
-      cur.lines.push(line); cur.tone = one.tone; if (!hovering) arm(line); renderRow();
+      cur.lines.push(line); cur.tone = one.tone; line.fresh = true; if (!hovering) arm(line); renderRow();
       return line;
     }
     if (cur && away() && !hovering && (PRI[group] ?? 2) < (PRI[cur.group] ?? 2)) {
@@ -469,8 +497,9 @@ window.Planner = (() => {
       h.addEventListener('click', onClick);
       // 말풍선 · 단추는 초점을 뺏지 않는다(입력 중인 글 유지). 판 안의 입력칸만 초점을 받는다.
       h.addEventListener('pointerdown', (e) => { if (e.target.closest('button, .pl-say')) e.preventDefault(); });
-      h.addEventListener('mouseover', (e) => { if (e.target.closest('.pl-say')) pause(); });
-      h.addEventListener('mouseout', (e) => { if (e.target.closest('.pl-say') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.pl-say'))) resume(); });
+      // 말풍선 더미(.pl-says) 위에 있는 동안은 멈춘다 — 말풍선 사이의 틈을 지날 때 풀렸다 걸렸다 하지 않게 더미 전체로 본다
+      h.addEventListener('mouseover', (e) => { if (e.target.closest('.pl-says')) pause(); });
+      h.addEventListener('mouseout', (e) => { if (e.target.closest('.pl-says') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.pl-says'))) resume(); });
     }
     host.addEventListener('focusin', (e) => { if (e.target.id === 'pl-in' && !talk) { openTalk(); renderPanel(); } });
     // 키 경계: 플래너 안(입력칸 · 단추)에서 누른 키는 본체로 올려 보내지 않는다 — 본체의 확인 카드(1~9 · y · n · Enter)나 단축키가 대신 눌리지 않게.

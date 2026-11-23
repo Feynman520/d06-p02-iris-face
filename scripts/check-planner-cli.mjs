@@ -63,6 +63,8 @@ try {
   ok(cli.applyEnv({ PATH: 'C:\\a' }, 's1') === false && cli.note() === '', '플래너를 끄면 아무것도 더하지 않음');
   cfg.plannerEnabled = true;
   ok(cli.note() === CLI_NOTE && !/[\u00B7\u29C9\u2015]/.test(CLI_NOTE) && CLI_NOTE.includes('iris-planner') && CLI_NOTE.includes('--asked') && CLI_NOTE.includes('고치기, 끝냄 표시, 지우기는 사용자가 직접 시켰을 때만 한다'), '안내문: 명령 이름 · --asked · 고치기와 지우기는 시킨 것만(코덱스가 떨어뜨리는 글자 없음)');
+  // 2026-11-23 사용자 신고("등록된 내용이 길면 잘림"): 세션이 넣을 때 이름은 핵심만 짧게, 자세한 내용은 --note 에 — 안내문과 도움말 둘 다에 있어야 한다
+  ok(CLI_NOTE.includes('이름(--title)은 핵심만 짧게') && CLI_NOTE.includes('--note') && /^[\x20-\x7E가-힣ㄱ-ㅎㅏ-ㅣ]*$/.test(CLI_NOTE) && fs.readFileSync(path.join(BIN_DIR, 'iris-planner.mjs'), 'utf8').includes('--title 은 핵심만 짧게'), '안내문 · 도움말: 이름은 핵심만 짧게, 자세한 내용은 --note (안내문은 한글 · 영문 · ASCII 문장부호만)');
   const noted = withFaceNote('안녕', cli.note());
   ok(noted.includes(CLI_NOTE) && noted.endsWith('\n\n안녕') && stripFaceNote(noted) === '안녕' && withFaceNote('안녕') === `${FACE_NOTE}\n\n안녕` && withFaceNote('  ', cli.note()) === '', '안내문은 첫 요청 앞에만 · 대화 화면에서는 통째로 지워짐 · 덧붙임이 없으면 전과 같음');
   ok(stripFaceNote(noted.replace(/--/g, ' ')) === '안녕', '끝 표식의 장식이 떨어져도 지워짐');

@@ -79,6 +79,7 @@ export class Planner {
     return this.store.list('proposed').sort((a, b) => (a.no || 0) - (b.no || 0)).map((it) => ({
       id: it.id, no: it.no, title: it.title, start: it.start, end: it.end || null, time: it.time || null,
       evidence: it.source?.evidence || null, by: it.source?.by || 'iris', session: it.source?.session?.title || null, action: it.action || null,
+      note: it.note || null, place: it.place || null, who: it.who || null,
     }));
   }
   /** 화면이 그대로 그리는 한 장: 달력 점 + 고른 날의 줄 + 제안. */

@@ -10,6 +10,9 @@ const HELP = `iris-planner — 사용자의 플래너(달력)에 넣기 · 보�
   iris-planner add --title "이름" --start YYYY-MM-DD [--end YYYY-MM-DD] [--time HH:MM] [--time-end HH:MM]
                    [--step "단계 이름@YYYY-MM-DD"]... [--repeat daily|weekly|monthly] [--by-day 0-6,...] [--until YYYY-MM-DD]
                    [--note "메모"] [--place "장소"] [--why "근거"] [--asked]
+      --title 은 핵심만 짧게(15자 안팎, 명사로 끝나게) — 달력의 한 줄에 보이는 이름이라 길면 잘린다.
+      누구에게 · 무엇을 · 어떤 조건으로 같은 자세한 내용은 --note 에 적는다(사용자가 그 줄에 마우스를 올리면 이름 전체와 메모가 보인다).
+        예: --title "연구회 결과 보고서 전달" --note "교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달"
       --asked 가 있으면(사용자가 직접 시킨 것) 달력에 바로 넣고 사용자 화면에 알림 + 되돌리기를 띄운다.
       --asked 가 없으면(네가 판단한 것) 달력에 넣지 않고 「아이리스 제안」에 올린다 — --why 에 근거를 꼭 적는다.
       기간이 있는 일(마감이 있는 일)은 --start = 시작하는 날, --end = 마지막 날. 하루짜리는 --end 를 쓰지 않는다.

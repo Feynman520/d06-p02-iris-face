@@ -73,6 +73,7 @@ export function dayRows(items, date, today) {
       period, red: !done && !!period && date >= it.end,
       steps: hasSteps(it) ? it.steps.map((s, i) => ({ id: s.id, n: i + 1, title: s.title, day: s.day, done: !!s.done, cur: s.day === date, over: !s.done && s.day < today })) : null,
       folder: it.folder || null, repeat: !!it.repeat,
+      note: it.note || null, place: it.place || null, who: it.who || null, // 줄에 마우스를 올렸을 때의 전체 내용(이름은 한 줄만 보인다, 2026-11-23)
     });
   };
   const list = active(items);

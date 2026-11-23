@@ -37,6 +37,12 @@ add({ title: '공개수업 참관', start: '2026-11-27', time: '10:00' });
 add({ title: '<img src=x onerror="window.__xss=1">꺾쇠 이름', start: '2026-11-30' });
 add({ title: '해를 넘는 일', start: '2026-12-30', end: '2027-01-02' });
 const rep = add({ title: '학년 협의회', start: '2026-12-01', time: '15:00', repeat: { freq: 'weekly' } });
+// 2026-11-23 사용자 신고("등록된 내용이 길면 잘려서 안 보임"): 긴 이름 · 메모가 붙은 일 · 짧은 이름(28일 — 다른 날의 검사에 끼지 않는 날)
+const LONG = '교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달하고 예산 집행 내역 붙이기';
+add({ title: LONG, start: '2026-11-28' });
+add({ title: '연구회 결과 보고서 전달', start: '2026-11-28', note: '교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달', place: '교무실' });
+add({ title: '짧은 일', start: '2026-11-28' });
+add({ title: '메모가 아주 긴 일', start: '2026-11-28', note: Array.from({ length: 50 }, (_, i) => `${i + 1}번째 줄의 메모입니다. 준비물과 순서를 길게 적었습니다.`).join('\n') }); // 약 1,700자 · 50줄(장부의 메모 상한 2,000자 안)
 const p1 = pl.store.apply([{ op: 'propose', item: { title: '참관록 양식 확인', start: '2026-11-26' } }], { by: 'iris', via: 'check', evidence: '참관록 양식은 지난번 것을 그대로 쓰기로 함' }).items[0];
 const p2 = pl.store.apply([{ op: 'propose', item: { title: '협의회 안건 정리', start: '2026-11-23' } }], { by: 'session', via: 'cli', session: { id: 's1', title: '결과 보고서 초안', agent: 'claude' } }).items[0];
 
@@ -168,20 +174,26 @@ try {
   ok(geo.left && geo.gap > 6 && geo.gap < 24, `말풍선은 단추 왼쪽(간격 ${Math.round(geo.gap)})`);
   ok((await ev(`document.activeElement.id`)) === 'typing', '말풍선이 떠도 입력 중인 글의 초점 그대로');
   await shot('6-say');
+  // 2026-11-23 사용자 신고("말풍선 안에 내용이 한 번 더 감싸져 있음"): 누를 수 있는 말풍선의 안쪽에 본체의 다른 모양(.pick = 선택 상자)이 묻어 테두리 · 바탕이 생겼다 — 말풍선 안의 글 자리에는 상자가 없어야 한다
+  const inner = await ev(`[...document.querySelectorAll('.pl-say *')].filter((e) => !e.closest('button') && !e.closest('.pl-acts')).map((e) => { const c = getComputedStyle(e); return { cls: e.className, bw: c.borderTopWidth, bg: c.backgroundColor }; }).filter((x) => x.bw !== '0px' || !/^(rgba\\(0, 0, 0, 0\\)|transparent)$/.test(x.bg))`);
+  ok(inner.length === 0, `말풍선 안에 또 다른 상자(테두리 · 바탕)가 없음${inner.length ? ' — ' + JSON.stringify(inner[0]) : ''}`);
   await ev(`Planner.say({ group: 'done', tone: 'ok', text: '「가정통신문 정리」 작업이 끝났어요.', id: 's2', pick: (id) => __calls.push(['pick', id]) })`);
   await ev(`Planner.say({ group: 'attention', tone: 'warn', text: '「수행평가 채점 기준」이 확인을 기다려요.', id: 's3' })`);
   await ev(`Planner.say({ group: 'sched', tone: 'iris', text: '3시 협의회가 10분 남았어요.' })`); await settle();
-  ok((await text('.pl-say .pl-line p')).length === 2 && JSON.stringify((await ev('Planner.bubbles()')).map((b) => `${b.group}${b.shown ? '*' : ''}`)) === '["done*","done*","sched","attention"]', '같은 종류는 줄로 쌓고, 다른 종류는 차례로(약속 직전 → 세션 확인)');
+  ok((await text('.pl-say .pl-line p')).length === 2 && JSON.stringify((await ev('Planner.bubbles()')).map((b) => `${b.group}${b.shown ? '*' : ''}`)) === '["done*","done*","sched","attention"]', '같은 종류는 함께 뜨고, 다른 종류는 차례로(약속 직전 → 세션 확인)');
+  const stack = await ev(`(() => { const s = [...document.querySelectorAll('.pl-says > .pl-say')]; const r = s.map((e) => e.getBoundingClientRect()); return { n: s.length, ps: s.map((e) => e.querySelectorAll('p').length).join(), tails: s.map((e) => e.classList.contains('tail')).join(), above: r[0].bottom <= r[1].top, gap: r[1].top - r[0].bottom, right: Math.abs(r[0].right - r[1].right), tailShown: s.map((e) => getComputedStyle(e, '::after').content !== 'none').join() }; })()`);
+  ok(stack.n === 2 && stack.ps === '1,1' && stack.tails === 'false,true' && stack.tailShown === 'false,true' && stack.above && stack.gap > 2 && stack.gap < 16 && stack.right < 1, `내용 하나에 말풍선 하나: 위로 쌓이고(틈 ${Math.round(stack.gap)}) 꼬리는 맨 아래 것에만`);
+  await shot('6b-say-stack');
   for (let i = 0; i < 4; i++) await ev(`Planner.say({ group: 'done', tone: 'ok', text: '작업 ${i} 끝' })`);
   await settle();
-  ok((await text('.pl-say .pl-line p')).length === 4 && (await text('.pl-say .pl-line p'))[3] === '작업 3 끝', '한 말풍선에 최대 4줄(오래된 것부터 빠짐)');
+  ok((await text('.pl-say .pl-line p')).length === 4 && (await ev(`document.querySelectorAll('.pl-says > .pl-say').length`)) === 4 && (await text('.pl-say .pl-line p'))[3] === '작업 3 끝', '말풍선은 최대 4개(오래된 것부터 빠짐)');
   const pd = await ev(`(() => { const e = new PointerEvent('pointerdown', { bubbles: true, cancelable: true }); document.querySelector('.pl-say .pl-line').dispatchEvent(e); return e.defaultPrevented; })()`);
   ok(pd && (await ev(`document.activeElement.id`)) === 'typing', '말풍선을 눌러도 초점을 뺏지 않음');
   await ev(`Planner.say({ group: 'done', tone: 'ok', text: '고를 것', id: 'sX', pick: (id) => __calls.push(['pick', id]) })`); await settle();
-  await page.click('.pl-say .pl-line.pick'); await settle();
-  ok(JSON.stringify((await ev('window.__calls')).filter((c) => c[0] === 'pick')) === '[["pick","sX"]]' && (await text('.pl-say .pl-line p')).length === 3, '줄을 누르면 그 세션으로 + 그 줄만 닫힘');
+  await page.click('.pl-say.pl-pick'); await settle();
+  ok(JSON.stringify((await ev('window.__calls')).filter((c) => c[0] === 'pick')) === '[["pick","sX"]]' && (await text('.pl-say .pl-line p')).length === 3, '말풍선을 누르면 그 세션으로 + 그 말풍선만 닫힘');
   await page.hover('.pl-say'); await page.click('.pl-say [data-line-x="0"]'); await settle();
-  ok((await text('.pl-say .pl-line p')).length === 2 && (await ev('window.__calls')).filter((c) => c[0] === 'pick').length === 1, '× 는 그 줄만 닫음(세션으로 가지 않음)');
+  ok((await text('.pl-say .pl-line p')).length === 2 && (await ev('window.__calls')).filter((c) => c[0] === 'pick').length === 1, '× 는 그 말풍선만 닫음(세션으로 가지 않음)');
   // 줄을 하나 닫을 때마다 화면을 다시 그리므로, 매번 새로 찾아 누른다(초록 말풍선의 줄이 다 닫힐 때까지)
   await ev(`for (let i = 0; i < 9 && document.querySelector('.pl-say[data-tone="ok"] [data-line-x]'); i++) document.querySelector('.pl-say [data-line-x]').click()`); await settle();
   ok((await text('.pl-say .pl-line p'))[0] === '3시 협의회가 10분 남았어요.' && (await ev(`document.querySelector('.pl-say').dataset.tone`)) === 'iris', '앞의 말풍선이 닫히면 다음 차례(약속 직전이 먼저)');
@@ -241,6 +253,27 @@ try {
   ok((await ev(`!document.getElementById('pl-tip').hidden && document.getElementById('pl-tip').textContent`)).startsWith('11월 20일 금요일부터 11월 25일 수요일까지'), '뱃지에 올리면 설명 풍선');
   await page.mouse.move(10, 10); await settle();
   ok((await ev(`document.getElementById('pl-tip').hidden`)), '떼면 사라짐');
+  // 이름 자리에 올리면 전체 내용(2026-11-23): 잘린 이름은 이름 전체가, 메모가 있으면 이름 + 메모 · 장소가 뜬다. 짧고 메모도 없으면 뜨지 않는다
+  await ev(`Planner.open('2026-11-28')`); await settle();
+  const tx = (i) => `.pl-list > .pl-r:nth-child(${i}) .tx`;
+  const tipOf = () => ev(`(() => { const t = document.getElementById('pl-tip'); return t.hidden ? null : { head: t.querySelector('b')?.textContent ?? null, body: t.querySelector('span')?.textContent ?? null, w: t.getBoundingClientRect().width, in: t.getBoundingClientRect().left >= 0 && t.getBoundingClientRect().right <= innerWidth }; })()`);
+  ok((await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(1))}); return e.textContent === ${JSON.stringify(LONG)} && e.scrollWidth > e.clientWidth; })()`)), '긴 이름은 목록에서 한 줄로 잘림(전제)');
+  await page.hover(tx(1)); await settle();
+  const t1 = await tipOf();
+  ok(t1 && t1.head === LONG && t1.body === null && t1.w <= 300 && t1.in, '잘린 이름에 올리면 이름 전체가 풍선으로(화면 안 · 폭 300 이하)');
+  await page.hover(tx(2)); await settle();
+  const t2 = await tipOf();
+  await shot('12b-full-tip');
+  ok(t2 && t2.head === '연구회 결과 보고서 전달' && t2.body === '교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달\n장소: 교무실', '메모가 있는 일에 올리면 이름 + 메모 · 장소');
+  await page.hover(tx(3)); await settle();
+  ok((await tipOf()) === null, '짧고 메모도 없는 이름에는 풍선을 띄우지 않음');
+  // 코덱스 검토(2026-11-23) 2 · 3번: 아주 긴 메모의 풍선도 화면 안에 다 들어오고(앞부분 + …), 메모는 화면 낭독기가 읽을 수 있게 이름에 달려 있다
+  await page.hover(tx(4)); await settle();
+  const t4 = await ev(`(() => { const t = document.getElementById('pl-tip'); const r = t.getBoundingClientRect(); const s = t.querySelector('span'); return { top: r.top, bottom: r.bottom, vh: innerHeight, len: s.textContent.length, dots: s.textContent.endsWith('…'), clipped: t.scrollHeight > t.clientHeight + 1 }; })()`);
+  ok(t4.top >= 0 && t4.bottom <= t4.vh && t4.len === 401 && t4.dots && !t4.clipped, `아주 긴 메모: 풍선이 화면 안(위 ${Math.round(t4.top)} · 아래 ${Math.round(t4.bottom)}/${t4.vh}) · 앞 400자 + … · 잘린 줄 없음`);
+  ok((await ev(`document.querySelector(${JSON.stringify(tx(2))}).getAttribute('aria-description')`)) === '교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달\n장소: 교무실' && (await ev(`document.querySelector(${JSON.stringify(tx(3))}).hasAttribute('aria-description')`)) === false, '메모는 이름의 설명(aria-description)으로도 달림 · 메모가 없으면 달지 않음');
+  await page.mouse.move(10, 10); await settle();
+  await ev(`Planner.open('2026-11-23')`); await settle();
   ok((await ev(`[...document.querySelectorAll('.pl button')].every((b) => b.getAttribute('aria-label') || b.textContent.trim())`)), '단추마다 이름(aria-label 또는 글자)');
   ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(await ev(`document.querySelector('.pl').textContent`)), '화면에 이모지 없음');
 
@@ -273,7 +306,7 @@ try {
   // 13-4 차례를 기다리는 것끼리도 같은 종류는 합친다
   await ev(`Planner.say({ group: 'greet', tone: 'iris', text: '계속 떠 있는 말', ttl: 0 }); for (let i = 0; i < 6; i++) Planner.say({ group: 'done', tone: 'ok', text: '끝남 ' + i });`); await settle();
   const qd = (await ev('Planner.bubbles()')).filter((b) => b.group === 'done');
-  ok(qd.length === 4 && qd[0].text === '끝남 2' && qd.every((b) => !b.shown), '기다리는 같은 종류는 한 말풍선으로(최대 4줄, 오래된 것부터 빠짐)');
+  ok(qd.length === 4 && qd[0].text === '끝남 2' && qd.every((b) => !b.shown), '기다리는 같은 종류는 한 묶음으로(최대 4개, 오래된 것부터 빠짐)');
   await ev(`for (let i = 0; i < 9 && document.querySelector('.pl-say [data-line-x]'); i++) document.querySelector('.pl-say [data-line-x]').click()`); await settle();
   // 13-5 달을 빨리 두 번 넘겨도 두 달
   await ev(`Planner.close(); Planner.open('2026-11-23')`); await settle();
