@@ -158,9 +158,13 @@ async function child(mode, tmp) {
   const forms = (p) => [p, p.replace(/\\/g, '/'), p.replace(/\\/g, '\\\\')];
   const variants = tokens.flatMap(([p, t]) => [...forms(p).map((f) => [f, t]), ...forms(p.toLowerCase()).map((f) => [f, `${t}(lower)`]), ...forms(p.toUpperCase()).map((f) => [f, `${t}(upper)`]), [slugOf(p), `${t}(slug)`]])
     .sort((a, b) => b[0].length - a[0].length);
+  // 코덱스 기록의 날짜 폴더(sessions\YYYY\MM\DD)는 돌린 날에 따라 바뀌므로 오늘 · 어제를 자리 이름으로 바꾼다(11/23 — 날짜가 박힌 표본이 다음 날 깨짐)
+  const ymd = (d) => [String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')];
+  const dayNames = [[ymd(new Date()), '<TODAY>'], [ymd(new Date(Date.now() - 86400000)), '<YESTERDAY>']];
   const tok = (s) => {
     let t = String(s);
     for (const [p, name] of variants) t = t.replace(new RegExp(esc(p), 'g'), name);
+    for (const [[y, m, d], name] of dayNames) t = t.replace(new RegExp(`sessions(?<s>\\\\{1,2}|/)${y}\\k<s>${m}\\k<s>${d}`, 'g'), `sessions$<s>${name}`); // \1 뒤에 숫자가 붙으면 \111 로 읽히므로 이름 붙인 짝을 쓴다
     // 임시 폴더 자리·임시 파일의 PID·지금 시각만 바꾼다. 그 밖의 글자(역슬래시·따옴표·이스케이프)는 제품이 낸 그대로 비교한다.
     return t.replace(/\.\d+\.tmp\b/g, '.<pid>.tmp').replace(/(?!2026-01-01T00:)\d{4}-\d\d-\d\dT[\d:.]+Z/g, '<time>'); // 지어낸 기록의 시각(2026-01-01T00:…)은 그대로 둔다
   };
@@ -602,7 +606,7 @@ async function child(mode, tmp) {
       try {
         const w = new SubagentWatcher({ agent, recordPath, sessionId: SID }, (m) => lg.push(tok(m)));
         const parent = new TranscriptTail(recordPath, parentAgent); parent.poll();
-        const dirs = w.dirs().map((d) => (inTmp(d) ? path.relative(sdir, d) : '<날짜 폴더>'));
+        const dirs = w.dirs().map((d) => (inTmp(d) ? tok(path.relative(sdir, d)) : '<날짜 폴더>'));
         const r = { dirs, scan1: w.scan(true, true), version1: w.version, afterScan: strip(w.list()) };
         const p1 = w.poll(parent, true); r.poll1 = { changed: p1.changed, updates: p1.updates.map((u) => `${u.key}:${u.items.map((i) => i.kind).join(',')}`), list: strip(w.list()), running: w.running() };
         const p2 = w.poll(parent, false); r.poll2 = { changed: p2.changed, updates: p2.updates.length, list: strip(w.list()), running: w.running() };
