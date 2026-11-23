@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { agyExe } from './antigravity.mjs';
 import { soulRoot } from '../paths.mjs';
 import { cliHome } from './antigravity.setup.mjs';
+import { groupModels, fitDefault } from './antigravity.models.mjs';
 
 const FACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STATE = process.env.IRIS_FACE_STATE || path.join(FACE_ROOT, 'state');
@@ -133,6 +134,7 @@ export function tokenTotals(home = cliHome(), at = new Date()) {
 // ───────── 모델 목록(agy models) — 클로드 · 코덱스의 ModelCatalog(동기)와 따로, 기다리지 않고 뒤에서 ─────────
 // 출력 한 줄 = "<정확한 이름>\t<보이는 이름>". 실행 파일이 같으면(크기 · 수정 시각) 6시간에 한 번만.
 // 저장한 목록은 **같은 실행 파일에서 읽은 것일 때만** 쓴다. 읽지 못하면 목록을 바꾸지 않는다(손 표 = 1.5.14 실측 그대로 — agy 가 모르는 이름이면 세션 화면에 오류가 보인다).
+// 저장 파일 · parseModels 는 agy 가 준 줄 그대로(정확한 이름)이고, 화면 목록(모델 + 사고 깊이)으로 묶는 것은 applyModels 가 한다.
 const MODELS_FILE = path.join(STATE, 'agy-models.json');
 export function parseModels(stdout) {
   const out = [];
@@ -142,11 +144,17 @@ export function parseModels(stdout) {
   }
   return out;
 }
+/**
+ * agy models 의 줄들(정확한 이름 그대로)을 화면 목록(모델 + 사고 깊이, 다른 회사 모델 제외 — antigravity.models.mjs)으로 묶어 입힌다.
+ * 묶고 나서 남는 줄이 없으면(구글 모델이 하나도 없는 목록) 목록을 바꾸지 않는다. 기본값이 목록에 없으면 목록 안에서 다시 고른다.
+ */
 export function applyModels(table, list) {
-  if (!list.length) return false;
-  if (JSON.stringify(table.models) === JSON.stringify(list)) return false;
-  table.models.splice(0, table.models.length, ...list);
-  if (!list.some((m) => m.id === table.default.model)) table.default.model = (list.find((m) => /argon-high$/.test(m.id)) || list[0]).id;
+  const rows = groupModels(list);
+  if (!rows.length) return false;
+  const def = fitDefault(table.default, rows);
+  if (JSON.stringify(table.models) === JSON.stringify(rows) && def.model === table.default.model && def.effort === table.default.effort) return false;
+  table.models.splice(0, table.models.length, ...rows);
+  table.default.model = def.model; table.default.effort = def.effort;
   return true;
 }
 let modelsAt = 0, modelsKey = '', modelsRun = null, cacheTried = false;
@@ -168,7 +176,7 @@ export function refreshModels(table, { log = () => {} } = {}) {
     modelsKey = key; modelsAt = Date.now();
     try { fs.mkdirSync(STATE, { recursive: true }); fs.writeFileSync(MODELS_FILE, JSON.stringify({ at: now(), key, models: list }, null, 2) + '\n', 'utf8'); } catch {}
     const changed = applyModels(table, list);
-    if (changed) log(`models: antigravity ${list.length}개 ${list.map((m) => m.id).join(', ')}`);
+    if (changed) log(`models: antigravity ${list.length}개 읽음 → 화면 ${table.models.length}줄 ${table.models.map((m) => `${m.id}[${m.efforts.join('/')}]`).join(', ')}`);
     return changed || fromCache;
   });
   return modelsRun;

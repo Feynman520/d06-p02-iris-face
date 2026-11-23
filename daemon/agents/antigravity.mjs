@@ -2,7 +2,8 @@
 // 에이전트 어댑터 — Google Antigravity CLI(agy). 설계 = D09 안티그래비티-입점설계 4절 '노트북 단계 구현 기록'(2026-11-23).
 //   agy --model <정확한 모델 이름> --dangerously-skip-permissions --log-file <카드마다 새 파일>      (재개: --conversation <id>)
 //   · 실행 파일 = %LOCALAPPDATA%\agy\bin\agy.exe(공식 설치 자리)를 직접 띄운다. 없으면 PATH 의 agy 를 cmd.exe 로.
-//   · 모델 이름 꼬리가 사고 깊이다(gemini-4-argon-high) — 목록 한 줄 = agy models 의 정확한 이름 하나, 사고 깊이 칸은 없다(모델 이름 = 실제 모델).
+//   · 모델 이름 꼬리가 사고 깊이다(gemini-4-argon-high) — 화면은 「모델(머리) + 사고 깊이(꼬리)」 두 칸으로 고르고(antigravity.models.mjs),
+//     CLI 에는 그 둘이 가리키는 agy models 의 정확한 이름 하나를 --model 로 넘긴다(모델 이름 = 실제 모델, --effort 는 쓰지 않는다).
 //   · 권한 = 늘 묻지 않음(IRIS 기준선 bypass). 안전은 ~/.gemini/config/hooks.json 의 iris-safety 훅(경로 · 일괄 종료 가드)이 지킨다.
 //   · 대화 짝짓기 = 이 카드의 --log-file 에 agy 가 적는 "Created conversation <id>" 만 근거로 한다(폴더의 '마지막 대화' 캐시는 쓰지 않는다 —
 //     같은 폴더의 다른 카드 · 사용자가 직접 띄운 agy 와 섞일 수 있다는 코덱스 설계 검토 지적). 근거가 없으면 잇지 않는다.
@@ -13,6 +14,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { prepare, cliHome } from './antigravity.setup.mjs';
+import { groupModels, mapLegacySel, actualOf as rowActual, EFFORT_ORDER, HAND_LIST } from './antigravity.models.mjs';
 
 export const id = 'antigravity';
 export const connection = 'direct';
@@ -29,41 +31,25 @@ export function agyExe() {
 
 export const isFast = () => false;
 
-/** 목록 뼈대. models 는 agy models(1.5.14, 2026-11-23 이 PC 실측)의 정확한 이름 그대로 — daemon/models.mjs 가 그 PC 의 agy 에서 다시 읽어 제자리에서 바꾼다. */
+/**
+ * 목록 뼈대. 모델 한 줄 = agy models 의 이름에서 사고 깊이 꼬리를 뗀 머리(gemini-4-argon), 사고 깊이 = 그 모델이 가진 꼬리들(2026-11-23 사용자 요청 —
+ * 클로드 · 코덱스처럼 모델과 사고 깊이를 따로 고른다). CLI 에 넘기는 이름은 그 둘이 가리키는 agy models 의 정확한 이름 하나(actuals)다.
+ * models 는 antigravity.status.mjs refreshModels 가 그 PC 의 agy 에서 다시 읽어 제자리에서 바꾼다(아래는 못 읽었을 때의 1.5.14 손 표).
+ */
 export const table = {
   label: 'Antigravity',
-  models: [
-    { id: 'gemini-4-argon-high',          label: 'Gemini 4 Argon (High)' },
-    { id: 'gemini-4-argon-medium',        label: 'Gemini 4 Argon (Medium)' },
-    { id: 'gemini-4-argon-low',           label: 'Gemini 4 Argon (Low)' },
-    { id: 'gemini-4-neon-xhigh',          label: 'Gemini 4 Neon (XHigh)' },
-    { id: 'gemini-4-neon-high',           label: 'Gemini 4 Neon (High)' },
-    { id: 'gemini-4-neon-medium',         label: 'Gemini 4 Neon (Medium)' },
-    { id: 'gemini-4-neon-low',            label: 'Gemini 4 Neon (Low)' },
-    { id: 'gemini-4-hydrogen-xhigh',      label: 'Gemini 4 Hydrogen (XHigh)' },
-    { id: 'gemini-4-hydrogen-high',       label: 'Gemini 4 Hydrogen (High)' },
-    { id: 'gemini-4-hydrogen-medium',     label: 'Gemini 4 Hydrogen (Medium)' },
-    { id: 'gemini-4-hydrogen-low',        label: 'Gemini 4 Hydrogen (Low)' },
-    { id: 'gemini-pro-orchestrator-neon', label: 'Orchestrator (Neon)' },
-    { id: 'gemini-pro-orchestrator-g1-pro', label: 'Orchestrator (Argon)' },
-    { id: 'gemini-3.8-flash-high',        label: 'Gemini 3.8 Flash (High)' },
-    { id: 'gemini-3.8-flash-medium',      label: 'Gemini 3.8 Flash (Medium)' },
-    { id: 'gemini-3.8-flash-low',         label: 'Gemini 3.8 Flash (Low)' },
-    { id: 'claude-opus-5-5-high',         label: 'Claude Opus 5.5 (High)' },
-    { id: 'claude-opus-5-5-medium',       label: 'Claude Opus 5.5 (Medium)' },
-    { id: 'claude-opus-5-5-low',          label: 'Claude Opus 5.5 (Low)' },
-    { id: 'claude-sonnet-5-5-high',       label: 'Claude Sonnet 5.5 (High)' },
-    { id: 'claude-sonnet-5-5-medium',     label: 'Claude Sonnet 5.5 (Medium)' },
-    { id: 'claude-sonnet-5-5-low',        label: 'Claude Sonnet 5.5 (Low)' },
-    { id: 'gpt-oss-120b-medium',          label: 'GPT-OSS 120B (Medium)' },
-  ],
-  efforts: [],
-  default: { model: 'gemini-4-argon-high', effort: '' },
+  models: groupModels(HAND_LIST),
+  efforts: [...EFFORT_ORDER],
+  default: { model: 'gemini-4-argon', effort: 'high' },
 };
 
 /** 권한 칸 없음(늘 --dangerously-skip-permissions) */
 export const permissionFields = () => ({ permission: '', approval: '', sandbox: '' });
-/** 목록 이름 = 정확한 모델 이름 */
+/** 옛 선택값(모델 칸에 정확한 이름이 통째로 — 2026-11-23 오전 판의 카드 · 화면 값)을 「모델 + 사고 깊이」로 — agents.mjs normalize 가 목록을 찾기 전에 부른다 */
+export const mapSel = (sel, a) => mapLegacySel(sel, a.models);
+/** 목록의 한 줄 + 사고 깊이 → CLI 에 넘길 정확한 이름 */
+export const actualOf = (modelInfo, effort) => rowActual(modelInfo, effort);
+/** 목록 이름 = 정확한 모델 이름(사고 깊이가 없는 줄) */
 export const actualFallback = (model) => model;
 /** 재개가 지켜도 되는 정확한 이름의 머리 글자: 어떤 꼴이든(gemini- · claude- · gpt-) — 이름 모양 검사는 agents.mjs 가 먼저 한다 */
 export const actualPrefix = '';
@@ -75,8 +61,10 @@ export const logDir = () => path.join(STATE, 'agy-logs');
 export const transcriptOf = (conv) => path.join(cliHome(), 'brain', conv, '.system_generated', 'logs', 'transcript.jsonl');
 
 export function buildCommand(s, cwd, { resumeId } = {}) {
+  // 넘기는 이름은 언제나 정확한 이름(modelActual)이다. 찾지 못했으면(목록이 어긋남) 머리 이름을 대신 넘기지 않고 띄우지 않는다 — 모델 이름 = 실제 모델
+  if (!s.modelActual) { const e = new Error(`모델 목록에서 「${s.modelLabel || s.model}${s.effort ? ` · ${s.effort}` : ''}」의 정확한 이름을 찾지 못했습니다. 모델을 다시 골라 주세요.`); e.code = 'MODEL_CHANGED'; throw e; }
   const log = path.join(logDir(), `${randomUUID()}.log`);
-  const args = ['--model', s.modelActual || s.model, '--dangerously-skip-permissions', '--log-file', log, ...(resumeId ? ['--conversation', resumeId] : [])];
+  const args = ['--model', s.modelActual,'--dangerously-skip-permissions', '--log-file', log, ...(resumeId ? ['--conversation', resumeId] : [])];
   const exe = agyExe();
   const cmdline = ['agy', ...args].join(' ');
   if (!resumeId) { LOG_OF.set(cmdline, log); while (LOG_OF.size > 200) LOG_OF.delete(LOG_OF.keys().next().value); } // 재개는 id 를 이미 안다 · 띄우지 못한 명령이 쌓이지 않게 200개까지

@@ -35,21 +35,30 @@ export function normalize(sel = {}) {
   if (!hasAgent(agent)) throw unknownAgentError(agent);
   try { refreshModels(); } catch {}
   const a = AGENTS[agent];
+  const ad = ADAPTERS[agent];
+  // 어댑터가 옛 모양의 선택값을 지금 모양으로 옮긴다(안티그래비티: 모델 칸에 정확한 이름이 통째로 있던 카드 → 모델 + 사고 깊이). 없는 어댑터 = 받은 그대로.
+  if (ad.mapSel) sel = ad.mapSel(sel, a) || sel;
   const modelInfo = a.models.find(m => m.id === sel.model) || a.models.find(m => m.id === a.default.model);
   const model = modelInfo.id;
   const efforts = modelInfo.efforts || a.efforts;
   // 모델 변경 시 지원되는 가장 가까운 이하 깊이로 조정(luna: ultra → max).
   // 3차 검토 6번: 그 PC 코덱스가 사고깊이 목록을 비워 두었으면(지원 안 함) 깊이를 넘기지 않는다(effort = '')
-  const effort = efforts.length === 0 ? '' : (a.efforts.slice(0, a.efforts.indexOf(sel.effort) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort);
-  const ad = ADAPTERS[agent];
+  let effort = efforts.length === 0 ? '' : (a.efforts.slice(0, a.efforts.indexOf(sel.effort) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort);
+  // 사고 깊이가 모델 이름에 드는 에이전트(안티그래비티): 맞춘 깊이는 반드시 그 모델이 가진 것이어야 한다 — 공통 기본 깊이도 그 모델에 없으면
+  // 그 모델의 기본에 가장 가까운 것(기본 이하에서 가장 높은 것 → 가장 낮은 것)으로. 없는 조합으로 이름을 지어 넘기지 않는다(2026-11-23 코덱스 검토 1번).
+  if (ad.actualOf && efforts.length && !efforts.includes(effort)) effort = a.efforts.slice(0, a.efforts.indexOf(a.default.effort) + 1).reverse().find(e => efforts.includes(e)) || efforts[0];
   // 권한 칸은 에이전트마다 다르다(클로드 = permission, 코덱스 = approval·sandbox + 예전 readOnly 호환) — 쓰지 않는 칸은 빈 값
   const { permission, approval, sandbox } = ad.permissionFields(sel, a);
   const readOnly = sandbox === 'read-only';
   // modelActual = CLI 에 실제로 넘기는 정확한 모델 이름(클로드 별칭이 풀린 값, 코덱스는 그대로). 모르면 null(판 번호 없는 이름일 때).
-  const modelActual = modelInfo.actual !== undefined ? modelInfo.actual : ad.actualFallback(model);
+  // 사고 깊이가 모델 이름에 들어가는 에이전트(안티그래비티)는 어댑터가 「모델 + 사고 깊이」로 정확한 이름을 고른다(actualOf).
+  const modelActual = ad.actualOf ? ad.actualOf(modelInfo, effort) : (modelInfo.actual !== undefined ? modelInfo.actual : ad.actualFallback(model));
   // 재개가 쓰던 정확한 클로드 모델을 지키는 경우(keepResumeModel) — 다시 정규화(buildCommand)해도 그 모델·이름 그대로
   if (sel.keepActual && typeof sel.modelActual === 'string' && ACTUAL_NAME_RE.test(sel.modelActual) && sel.modelActual.startsWith(ad.actualPrefix)) {
-    return { agent, model: sel.model || model, modelLabel: sel.modelLabel || sel.modelActual, modelActual: sel.modelActual, keepActual: true, effort, permission, approval, sandbox, readOnly };
+    // 사고 깊이가 이름에 든 에이전트: 지키는 이름의 꼬리가 그 깊이일 때만 깊이를 보인다(옛 카드 = 모델 칸이 정확한 이름 통째 → 깊이 칸은 비움, 이름에 이미 들어 있다)
+    const tail = (ad.actualOf && typeof sel.model === 'string' && sel.model && sel.modelActual.startsWith(`${sel.model}-`)) ? sel.modelActual.slice(sel.model.length + 1) : '';
+    const keptEffort = !ad.actualOf ? effort : (a.efforts.includes(tail) ? tail : '');
+    return { agent, model: sel.model || model, modelLabel: sel.modelLabel || sel.modelActual, modelActual: sel.modelActual, keepActual: true, effort: keptEffort, permission, approval, sandbox, readOnly };
   }
   return { agent, model, modelLabel: modelInfo.label, modelActual, effort, permission, approval, sandbox, readOnly };
 }

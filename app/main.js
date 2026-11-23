@@ -74,7 +74,10 @@
   }
   const flushLead = () => { if (pendingLead && AGENTS) { const h = pendingLead; pendingLead = null; applyLeadAgent(h); } };
   // 권한 기본값은 설정(⚙ → 권한 기본값)에서 온다
-  function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: sel.effort[sel.agent], permission: sel.agent === 'claude' ? (st.permission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
+  // 안티그래비티의 사고 깊이가 없는 모델(Orchestrator — 목록의 efforts 가 빈 줄)은 깊이를 보내지 않는다 — 기억해 둔 깊이는 다른 모델로 돌아올 때 쓴다.
+  // 클로드 · 코덱스는 예전 그대로(저장된 깊이를 보낸다 — 데몬이 정리한다).
+  const effortFor = (agent) => { const m = agent === 'antigravity' ? AGENTS?.[agent]?.models?.find((x) => x.id === sel.model[agent]) : null; return (m && Array.isArray(m.efforts) && !m.efforts.length) ? '' : sel.effort[agent]; };
+  function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: effortFor(sel.agent), permission: sel.agent === 'claude' ? (st.permission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
   const fill = (el, list, val) => { el.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join(''); el.value = val ?? ''; };
   const AGENT_NAME = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
   // v2.96.2(2026-10-27 사용자 결정, 옛 v2.76 한 줄 안내 대체): 입력창 위 긴 안내 글은 없앴다. 프로그램이 없거나 계정이 0개인
@@ -104,16 +107,21 @@
     }
     if (!AGENTS[sel.agent] || (off[sel.agent] && setupMode !== 'switch')) { const on = Object.keys(AGENTS).find(k => !off[k]); if (on && on !== sel.agent) { sel.agent = on; saveSel(); } }
     const a = AGENTS[sel.agent];
-    const model = a.models.find(m => m.id === sel.model[sel.agent]) || a.models.find(m => m.id === a.default.model);
+    // 옛 값(안티그래비티: 모델 칸에 정확한 이름이 통째로 — gemini-4-argon-high)은 「모델 + 사고 깊이」로 옮겨 읽는다
+    const legacy = a.models.find(m => m.id === sel.model[sel.agent]) ? null : a.models.find(m => m.actuals && Object.values(m.actuals).includes(sel.model[sel.agent]));
+    if (legacy) sel.effort[sel.agent] = Object.keys(legacy.actuals).find(e => legacy.actuals[e] === sel.model[sel.agent]);
+    const model = legacy || a.models.find(m => m.id === sel.model[sel.agent]) || a.models.find(m => m.id === a.default.model);
     const efforts = model.efforts || a.efforts;
-    const effort = a.efforts.slice(0, a.efforts.indexOf(sel.effort[sel.agent]) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort;
+    let effort = a.efforts.slice(0, a.efforts.indexOf(sel.effort[sel.agent]) + 1).reverse().find(e => efforts.includes(e)) || a.default.effort;
+    // 사고 깊이가 모델 이름에 드는 목록(actuals — 안티그래비티): 맞춘 깊이는 반드시 그 모델이 가진 것으로(데몬 normalize 와 같은 규칙 — 기본 이하에서 가장 높은 것 → 가장 낮은 것)
+    if (model.actuals && efforts.length && !efforts.includes(effort)) effort = a.efforts.slice(0, a.efforts.indexOf(a.default.effort) + 1).reverse().find(e => efforts.includes(e)) || efforts[0];
     if (sel.model[sel.agent] !== model.id || sel.effort[sel.agent] !== effort) {
       sel.model[sel.agent] = model.id; sel.effort[sel.agent] = effort; saveSel();
     }
     for (const b of document.querySelectorAll('.seg-agent .seg-btn')) b.classList.toggle('active', b.dataset.agent === sel.agent);
     const sm = $('#sel-model'); sm.innerHTML = a.models.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join(''); sm.value = sel.model[sel.agent];
     const se = $('#sel-effort'); se.innerHTML = efforts.map(e => `<option value="${esc(e)}">${esc(e)}</option>`).join(''); se.value = sel.effort[sel.agent];
-    se.hidden = !efforts.length; // 사고 깊이 칸이 없는 에이전트(안티그래비티 — 깊이가 모델 이름에 들어 있음)만 감춘다
+    se.hidden = !efforts.length; // 사고 깊이가 없는 모델(안티그래비티 Orchestrator 등)만 감춘다
     const s = cur();
     // 세션 모드에서는 조합 줄을 감춘다. 입력창의 조합 아이콘을 누르면 '이어가기' 모드로 나타난다.
     $('#setup').hidden = !!s && setupMode !== 'switch';
@@ -215,7 +223,7 @@
       const li = document.createElement('li'); li.className = 'srow' + (s.id === current ? ' active' : ''); li.dataset.id = s.id; li.draggable = true;
       li.innerHTML = `<span class="dot ${viewStatus(s)}" title="${statusText(s)}"></span>
         <span class="sname" title="${esc(`${s.title || shortPath(s.cwd)}\n(두 번 클릭 · F2 = 이름 바꾸기)`)}"><span class="stitle">${esc(s.title || shortPath(s.cwd))}</span>${liveN(s.id) ? `<span class="subn${SubPanel.running(s.id) || bgN(s.id) ? '' : ' quiet'}" title="${esc([`살아 있는 보조 작업 ${SubPanel.alive(s.id)}개(실행 중 ${SubPanel.running(s.id)}) · 배경 작업 ${bgN(s.id)}개`, ...bgLines(s.id)].join('\n'))}">⁺${liveN(s.id)}</span>` : ''}</span><span class="sside"><span class="sidx">${i + 1}</span><button class="srename" title="이름 바꾸기 (F2)" aria-label="이름 바꾸기">${Icons.svg('pencil', 14)}</button></span>
-        <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)} · ${esc(s.effort)}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
+        <span class="smeta"><span class="chip ${s.agent}">${AGENT_KO[s.agent]}</span> ${s.title ? `<span class="sfold" title="${esc(s.cwd)}">${esc(shortPath(s.cwd))}</span> · ` : ''}${esc(s.modelLabel || s.model)}${s.effort ? ' · ' + esc(s.effort) : ''}${permText(s) ? ' · ' + esc(permText(s)) : ''} · ${statusText(s)}</span>`;
       li.onclick = () => { if (s.id === current && setupMode === 'new') return; select(s.id); }; // 이미 보는 줄은 다시 그리지 않는다 — 두 번 클릭의 둘째 클릭이 사라진 줄에 떨어지지 않게(v2.85)
       li.querySelector('.srename').onclick = (e) => { e.stopPropagation(); startRename(s.id, li.querySelector('.stitle')); }; // 연필(v2.86) = 선택하지 않고 그 자리에서 고친다
       // 끌어서 순서 바꾸기(HTML5 DnD): 놓는 위치는 대상 행의 위/아래 절반으로 판단
@@ -317,7 +325,8 @@
   // 🔴 모델 이름 = 실제 모델(v2.102, 사용자 지정): 세션 기록의 실제 응답 모델이 고른 모델과 다르면 머리에 경고.
   // 기대값 = 데몬이 CLI 에 넘긴 정확한 이름(modelActual). 그 전 판 세션은 표시 이름(「Fable 5.1」)에서 만든다.
   // 고른 순간 화면에 보이던 모델의 정확한 이름 — 데몬이 그 사이 목록이 바뀌었으면(자동 업데이트) 실행하지 않고 다시 고르게 한다(v2.102 코덱스 검토 3번)
-  const expectOf = (c) => AGENTS[c.agent]?.models?.find((m) => m.id === c.model)?.actual ?? null;
+  // 사고 깊이가 이름에 드는 에이전트(안티그래비티)는 「모델 + 사고 깊이」가 가리키는 정확한 이름(actuals)
+  const expectOf = (c) => { const m = AGENTS[c.agent]?.models?.find((x) => x.id === c.model); return (m?.actuals ? m.actuals[c.effort] : m?.actual) ?? null; };
   const normModel = (x) => String(x || '').toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   function expectedModel(s) {
     if (!s) return null;

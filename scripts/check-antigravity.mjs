@@ -26,13 +26,111 @@ const ad = await imp('daemon/agents/antigravity.mjs');
 const rec = await imp('daemon/agents/antigravity.records.mjs');
 const setup = await imp('daemon/agents/antigravity.setup.mjs');
 const st = await imp('daemon/agents/antigravity.status.mjs');
+const mdl = await imp('daemon/agents/antigravity.models.mjs');
 const { TranscriptTail } = await imp('daemon/transcript.mjs');
 
 // ── 1. 명부 · 선택값 · 명령 ──
 eq(Object.keys(agents.AGENTS), ['claude', 'codex', 'antigravity'], '명부 순서(기본 = 클로드 그대로)');
-const n = agents.normalize({ agent: 'antigravity', model: 'gemini-3.8-flash-low', effort: 'high', permission: 'plan', approval: 'never', sandbox: 'read-only' });
-eq([n.agent, n.model, n.modelActual, n.effort, n.permission, n.approval, n.sandbox, n.readOnly], ['antigravity', 'gemini-3.8-flash-low', 'gemini-3.8-flash-low', '', '', '', '', false], '정리: 깊이 · 권한 칸은 비움, 실제 이름 = 목록 이름');
-eq(agents.normalize({ agent: 'antigravity' }).model, 'gemini-4-argon-high', '기본 모델');
+// 모델 + 사고 깊이 두 칸(2026-11-23): 화면의 모델 = 꼬리를 뗀 머리, CLI 에 넘기는 이름 = 그 둘이 가리키는 agy models 의 정확한 이름
+{
+  const T = agents.AGENTS.antigravity;
+  eq(T.models.map((m) => `${m.id}[${m.efforts.join('/')}]`), ['gemini-4-neon[low/medium/high/xhigh]', 'gemini-4-argon[low/medium/high]', 'gemini-4-hydrogen[low/medium/high/xhigh]', 'gemini-pro-orchestrator-neon[]', 'gemini-pro-orchestrator-g1-pro[]', 'gemini-3.8-flash[low/medium/high]'], '목록: 모델 6줄 + 모델마다 가진 사고 깊이');
+  eq(T.models.map((m) => m.label), ['Gemini 4 Neon', 'Gemini 4 Argon', 'Gemini 4 Hydrogen', 'Orchestrator (Neon)', 'Orchestrator (Argon)', 'Gemini 3.8 Flash'], '목록: 보이는 이름에서 깊이 꼬리를 뗌(Orchestrator 의 괄호는 깊이가 아니라 그대로)');
+  ok(!T.models.some((m) => /claude|gpt/i.test(m.id + m.label)), '목록: 클로드 · GPT 모델 없음');
+  eq([T.efforts, T.default], [['low', 'medium', 'high', 'xhigh', 'max'], { model: 'gemini-4-argon', effort: 'high' }], '목록: 깊이 순서 · 기본 = Argon high');
+  const all = T.models.flatMap((m) => (m.actuals ? Object.values(m.actuals) : [m.actual]));
+  eq(all.slice().sort(), mdl.HAND_LIST.map((m) => m.id).sort(), '목록: 넘길 수 있는 이름 = 손 표의 정확한 이름 전부(지어낸 이름 0)');
+}
+let n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh', permission: 'plan', approval: 'never', sandbox: 'read-only' });
+eq([n.agent, n.model, n.modelLabel, n.modelActual, n.effort, n.permission, n.approval, n.sandbox, n.readOnly], ['antigravity', 'gemini-4-neon', 'Gemini 4 Neon', 'gemini-4-neon-xhigh', 'xhigh', '', '', '', false], '정리: 모델 + 깊이 → 정확한 이름, 권한 칸은 비움');
+n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-argon', effort: 'xhigh' });
+eq([n.effort, n.modelActual], ['high', 'gemini-4-argon-high'], '정리: 그 모델에 없는 깊이 = 가장 가까운 아래(xhigh → high)');
+n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-argon', effort: 'max' });
+eq([n.effort, n.modelActual], ['high', 'gemini-4-argon-high'], '정리: max 도 아래로');
+n = agents.normalize({ agent: 'antigravity', model: 'gemini-pro-orchestrator-neon', effort: 'high' });
+eq([n.model, n.effort, n.modelActual], ['gemini-pro-orchestrator-neon', '', 'gemini-pro-orchestrator-neon'], '정리: 깊이 없는 모델 = 깊이 빈 값, 이름 그대로');
+n = agents.normalize({ agent: 'antigravity' });
+eq([n.model, n.effort, n.modelActual], ['gemini-4-argon', 'high', 'gemini-4-argon-high'], '기본 모델 · 깊이');
+// 옛 선택값(모델 칸에 정확한 이름 통째 — 오전 판의 카드 · 화면 값)
+n = agents.normalize({ agent: 'antigravity', model: 'gemini-3.8-flash-low', effort: 'high' });
+eq([n.model, n.effort, n.modelActual, n.modelLabel], ['gemini-3.8-flash', 'low', 'gemini-3.8-flash-low', 'Gemini 3.8 Flash'], '옛 값: 정확한 이름 → 모델 + 깊이(이름의 깊이가 이긴다)');
+n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-neon-xhigh', effort: '' });
+eq([n.model, n.effort, n.modelActual], ['gemini-4-neon', 'xhigh', 'gemini-4-neon-xhigh'], '옛 값: 깊이 칸이 비어 있던 카드');
+n = agents.normalize({ agent: 'antigravity', model: 'claude-opus-5-5-high', effort: '' });
+eq([n.model, n.modelActual], ['gemini-4-argon', 'gemini-4-argon-high'], '새로 고르기: 목록에서 뺀 클로드 이름은 기본 모델로(조용히 클로드로 띄우지 않는다)');
+{ // 재개: 옛 카드(정확한 이름 통째)가 같은 모델로 다시 열리고 카드가 새 모양이 된다
+  const old = { agent: 'antigravity', model: 'gemini-4-argon-medium', modelActual: 'gemini-4-argon-medium', modelLabel: 'Gemini 4 Argon (Medium)', effort: '' };
+  const base = agents.normalize({ agent: old.agent, model: agents.modelForResume(old), effort: old.effort });
+  const kept = agents.keepResumeModel(base, old);
+  eq([kept.model, kept.effort, kept.modelActual, kept.modelLabel, !!kept.keepActual], ['gemini-4-argon', 'medium', 'gemini-4-argon-medium', 'Gemini 4 Argon', false], '재개: 옛 카드 = 같은 정확한 이름 · 새 모양');
+  // 재개: 목록에서 뺀 모델(클로드)로 열었던 옛 카드는 쓰던 이름 그대로(몰래 바꾸지 않는다)
+  const oc = { agent: 'antigravity', model: 'claude-opus-5-5-high', modelActual: 'claude-opus-5-5-high', modelLabel: 'Claude Opus 5.5 (High)', effort: '' };
+  const kc = agents.keepResumeModel(agents.normalize({ agent: oc.agent, model: agents.modelForResume(oc), effort: oc.effort }), oc);
+  const again = agents.normalize(kc); // buildCommand 가 다시 정리해도 그대로
+  eq([again.model, again.modelActual, again.modelLabel, again.effort, again.keepActual], ['claude-opus-5-5-high', 'claude-opus-5-5-high', 'Claude Opus 5.5 (High)', '', true], '재개: 뺀 모델의 옛 카드 = 쓰던 이름 그대로 · 깊이 칸 비움');
+  const ka = agents.buildCommand(kc, TMP, { resumeId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }).args;
+  eq(ka[ka.indexOf('--model') + 1], 'claude-opus-5-5-high', '재개: 명령에도 쓰던 이름');
+  // 재개: 새 모양 카드인데 그 깊이가 목록에서 사라짐 → 쓰던 이름 · 깊이 그대로
+  const gone = { agent: 'antigravity', model: 'gemini-4-argon', modelActual: 'gemini-4-argon-max', modelLabel: 'Gemini 4 Argon', effort: 'max' };
+  const kg = agents.normalize(agents.keepResumeModel(agents.normalize({ agent: gone.agent, model: agents.modelForResume(gone), effort: gone.effort }), gone));
+  eq([kg.model, kg.modelActual, kg.effort], ['gemini-4-argon', 'gemini-4-argon-max', 'max'], '재개: 사라진 깊이의 카드 = 쓰던 이름 · 깊이');
+}
+// 고른 순간의 이름과 실제로 넘길 이름이 다르면 거절(화면 expectOf = actuals[깊이])
+{
+  let code = null; try { agents.assertExpected(agents.normalize({ agent: 'antigravity', model: 'gemini-4-argon', effort: 'high' }), 'gemini-4-argon-high'); } catch (e) { code = e.code; }
+  eq(code, null, '기대 이름 같음 = 통과');
+  try { agents.assertExpected(agents.normalize({ agent: 'antigravity', model: 'gemini-4-argon', effort: 'xhigh' }), 'gemini-4-argon-xhigh'); } catch (e) { code = e.code; }
+  eq(code, 'MODEL_CHANGED', '기대 이름 다름(그 깊이가 없어 아래로 맞춰짐) = 거절');
+}
+// 코덱스 검토 1번(2026-11-23): 모델마다 가진 깊이가 다르고 공통 기본 깊이(high)도 그 모델에 없을 때 — 없는 조합으로 이름을 지어 넘기지 않는다
+{
+  const T = agents.AGENTS.antigravity;
+  st.applyModels(T, [{ id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)' }, { id: 'gemini-4-neon-xhigh', label: 'Gemini 4 Neon (XHigh)' }, { id: 'gemini-4-zinc-low', label: 'Gemini 4 Zinc (Low)' }, { id: 'gemini-4-zinc-max', label: 'Gemini 4 Zinc (Max)' }]);
+  let x = agents.normalize({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'high' });
+  eq([x.effort, x.modelActual], ['xhigh', 'gemini-4-neon-xhigh'], '깊이 맞추기: 고른 깊이 이하도 · 기본 깊이도 그 모델에 없으면 그 모델이 가진 깊이로(이름을 지어내지 않음)');
+  const cmdArgs = agents.buildCommand({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'high' }, TMP).args;
+  eq(cmdArgs[cmdArgs.indexOf('--model') + 1], 'gemini-4-neon-xhigh', '깊이 맞추기: 명령에도 목록에 있는 정확한 이름');
+  x = agents.normalize({ agent: 'antigravity', model: 'gemini-4-zinc', effort: 'medium' });
+  eq([x.effort, x.modelActual], ['low', 'gemini-4-zinc-low'], '깊이 맞추기: 고른 깊이 이하에 있으면 그것(medium → low)');
+  x = agents.normalize({ agent: 'antigravity', model: 'gemini-4-zinc', effort: 'nope' });
+  eq([x.effort, x.modelActual], ['low', 'gemini-4-zinc-low'], '깊이 맞추기: 모르는 깊이 값 = 기본(high) 이하에서 그 모델이 가진 것');
+  for (const m of T.models) for (const e of [...T.efforts, '', 'nope']) { const y = agents.normalize({ agent: 'antigravity', model: m.id, effort: e }); if (!y.modelActual || !['gemini-4-argon-high', 'gemini-4-neon-xhigh', 'gemini-4-zinc-low', 'gemini-4-zinc-max'].includes(y.modelActual)) ok(false, `깊이 맞추기: ${m.id} + ${e} → ${y.modelActual}`); }
+  ok(true, '깊이 맞추기: 모든 모델 × 모든 깊이 값이 목록에 있는 이름으로만 풀림');
+  let code = null; try { ad.buildCommand({ agent: 'antigravity', model: 'gemini-4-neon', modelLabel: 'Gemini 4 Neon', effort: '', modelActual: null }, TMP); } catch (e) { code = e.code; }
+  eq(code, 'MODEL_CHANGED', '정확한 이름이 없으면 띄우지 않음(머리 이름을 대신 넘기지 않는다)');
+  st.applyModels(T, mdl.HAND_LIST); // 손 표로 되돌린다(뒤 검사가 쓰는 목록)
+  eq([T.models.length, T.default], [6, { model: 'gemini-4-argon', effort: 'high' }], '(되돌림) 손 표 6줄 · 기본 Argon high');
+}
+// 묶기 함수(순수)
+{
+  const raw = st.parseModels('Fetching available models...\ngemini-4-neon-high\tGemini 4 Neon (High)\ngemini-4-neon-xhigh\tGemini 4 Neon (XHigh)\ngemini-9-solo\tGemini 9 Solo\nclaude-opus-5-5-low\tClaude Opus 5.5 (Low)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\ngemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)\ngemini-4-neon-low\tGemini 4 Neon (Low)\nllama-x-high\tLlama X (High)\n');
+  eq(mdl.groupModels(raw), [
+    { id: 'gemini-4-neon', label: 'Gemini 4 Neon', efforts: ['low', 'high', 'xhigh'], actuals: { high: 'gemini-4-neon-high', xhigh: 'gemini-4-neon-xhigh', low: 'gemini-4-neon-low' } },
+    { id: 'gemini-9-solo', label: 'Gemini 9 Solo', efforts: [], actual: 'gemini-9-solo' },
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', efforts: ['medium'], actuals: { medium: 'gemini-3.8-flash-medium' } },
+    { id: 'llama-x', label: 'Llama X', efforts: ['high'], actuals: { high: 'llama-x-high' } },
+  ], '묶기: 처음 나온 순서 · 깊이는 낮음 → 높음 · claude-/gpt- 만 뺌(그 밖의 새 이름은 보임)');
+  eq(mdl.groupModels([{ id: 'claude-x-high', label: 'C' }, { id: 'gpt-y', label: 'G' }, null, { id: '' }]), [], '묶기: 남는 것이 없으면 빈 목록');
+  const rows = mdl.groupModels(raw);
+  eq([mdl.actualOf(rows[0], 'xhigh'), mdl.actualOf(rows[0], 'medium'), mdl.actualOf(rows[1], 'high'), mdl.actualOf(rows[1], '')], ['gemini-4-neon-xhigh', null, 'gemini-9-solo', 'gemini-9-solo'], '정확한 이름: 있는 조합만(없는 조합 = null — 이름을 지어내지 않는다)');
+  eq(mdl.fitDefault({ model: 'gemini-4-argon', effort: 'high' }, rows), { model: 'gemini-4-neon', effort: 'high' }, '기본값: Argon 이 없는 목록 = 첫 줄');
+  eq(mdl.fitDefault({ model: 'gemini-4-argon', effort: 'high' }, mdl.groupModels([{ id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' }, { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' }])), { model: 'gemini-3.8-flash', effort: 'medium' }, '기본값: 무료 계정 꼴(Flash 만) = high 이하에서 가장 높은 깊이');
+  eq(mdl.fitDefault({ model: 'gemini-4-argon', effort: 'high' }, mdl.groupModels([{ id: 'gemini-pro-orchestrator-neon', label: 'Orchestrator (Neon)' }])), { model: 'gemini-pro-orchestrator-neon', effort: '' }, '기본값: 깊이 없는 모델뿐 = 깊이 빈 값');
+  // 그 PC 의 목록을 입힘: 목록 · 기본값이 함께 바뀌고, 같은 목록을 다시 입히면 바뀌지 않음
+  const tbl = { models: mdl.groupModels(mdl.HAND_LIST), default: { model: 'gemini-4-argon', effort: 'high' } };
+  eq(st.applyModels(tbl, raw), true, '입히기: 바뀜');
+  eq([tbl.models.map((m) => m.id), tbl.default], [['gemini-4-neon', 'gemini-9-solo', 'gemini-3.8-flash', 'llama-x'], { model: 'gemini-4-neon', effort: 'high' }], '입히기: 목록 · 기본값');
+  eq(st.applyModels(tbl, raw), false, '입히기: 같은 목록 = 안 바뀜');
+  eq([st.applyModels(tbl, [{ id: 'claude-opus-5-5-low', label: 'x' }]), tbl.models.length], [false, 4], '입히기: 구글 모델이 하나도 없는 목록 = 목록 그대로');
+}
+// 화면(소스 확인): 옛 값 옮겨 읽기 · 기대 이름 = actuals[깊이] · 깊이 없는 모델은 깊이를 보내지 않음
+{
+  const src = fs.readFileSync(path.join(ROOT, 'app', 'main.js'), 'utf8');
+  ok(/m\?\.actuals \? m\.actuals\[c\.effort\] : m\?\.actual/.test(src), '화면: 기대 이름 = actuals[사고 깊이]');
+  ok(/const legacy = a\.models\.find\(m => m\.id === sel\.model\[sel\.agent\]\) \? null : a\.models\.find\(m => m\.actuals && Object\.values\(m\.actuals\)\.includes\(sel\.model\[sel\.agent\]\)\)/.test(src), '화면: 옛 값(정확한 이름 통째)을 모델 + 깊이로 옮겨 읽음');
+  ok(/const effortFor = \(agent\) => \{ const m = agent === 'antigravity' \? /.test(src) && /effort: effortFor\(sel\.agent\)/.test(src), '화면: 깊이 없는 모델은 깊이를 보내지 않음 — 안티그래비티만(클로드 · 코덱스는 예전 그대로)');
+  ok(/if \(model\.actuals && efforts\.length && !efforts\.includes\(effort\)\) effort = /.test(src), '화면: 맞춘 깊이는 그 모델이 가진 것으로(데몬과 같은 규칙, actuals 가 있는 목록만)');
+}
 // 실행 파일 없음 → cmd.exe /c agy
 let c = agents.buildCommand({ agent: 'antigravity', model: 'gemini-4-neon-high' }, TMP);
 eq([c.file, c.args.slice(0, 5)], ['cmd.exe', ['/c', 'agy', '--model', 'gemini-4-neon-high', '--dangerously-skip-permissions']], '실행 파일 없으면 PATH 의 agy');
