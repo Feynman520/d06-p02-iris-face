@@ -34,7 +34,10 @@ window.Planner = (() => {
   const rangeText = (a, b) => (a.slice(0, 7) === b.slice(0, 7) ? `${parts(a).d}~${parts(b).d}일` : `${parts(a).m}/${parts(a).d}~${parts(b).m}/${parts(b).d}`);
 
   // ---- 상태 ----
-  let opts = { openFolder: () => {}, chatIn: () => {}, openSession: () => {}, openSettings: () => {}, drawerOpen: () => false, onCfg: () => {} };
+  let opts = { openFolder: () => {}, chatIn: () => {}, openSession: () => {}, hasSession: () => false, openSettings: () => {}, drawerOpen: () => false, onCfg: () => {} };
+  let edit = null;            // 이름을 고치는 중인 줄 { id, date, title(고치기 전), value(적던 글) } — 한 번에 하나
+  let swapping = false;       // 판을 다시 그리는 중(입력칸이 바뀌며 나는 초점 잃음을 "고치기 끝"으로 읽지 않게)
+  let editEscAt = 0;          // 방금 Esc 로 고치기를 취소한 때(Esc 가 두 길로 올 때 두 번째가 판을 닫지 않게)
   let cfg = { plannerEnabled: true, plannerTalk: true, notifyDone: true };
   let host = null, over = null, tipEl = null, panelEl = null, rowEl = null;
   let open = false, talk = false, strip = false, fresh = false, talkFresh = false, focusIn = false;
@@ -87,14 +90,21 @@ window.Planner = (() => {
     const off = lock();
     const dateAttr = r.repeat ? ` data-date="${esc(r.date)}"` : '';
     const late = r.late && r.lateFrom ? `<span class="pl-pill" data-tip="${esc(longDay(r.lateFrom))}에 하려던 일">${r.lateFrom === addDays(view.today, -1) ? '어제' : esc(shortDay(r.lateFrom, view.today))}</span>` : '';
-    const title = `<span class="tx${r.done ? ' done' : ''}"${fullAttr(r.title, r)}>${esc(r.title)}</span>`;
+    // 이름: 두 번 클릭하면 그 자리에서 고친다(2026-11-23 사용자 요청). 고치는 중인 줄은 입력칸으로 그린다.
+    const title = edit && edit.id === r.id && edit.date === r.date
+      ? `<input type="text" class="pl-edit" id="pl-edit" value="${esc(edit.value)}" maxlength="200" aria-label="일정 이름 고치기" autocomplete="off">`
+      : `<span class="tx${r.done ? ' done' : ''}"${fullAttr(r.title, r)}${off ? '' : ` data-edit="${esc(r.id)}" data-edit-date="${esc(r.date)}"`}>${esc(r.title)}</span>`;
+    // 줄 끝의 숨은 단추(올리면 보임): 대화 열기(이 일을 넣은 대화가 살아 있으면 그 대화로, 아니면 연결 폴더에서 새 대화) · 일정 삭제(휴지통으로)
+    const goSession = r.session && opts.hasSession(r.session);
+    const chat = goSession ? ib('chat', '대화 열기 · 이 일정을 넣은 대화로', '', `data-session="${esc(r.session)}"${r.folder ? ` data-chat="${esc(r.folder)}"` : ''}`)
+      : r.folder ? ib('chat', '대화 열기 · 연결 폴더에서 새 대화', '', `data-chat="${esc(r.folder)}"`) : '';
+    const acts = `<span class="hid">${chat}${ib('trash', r.repeat ? '일정 삭제 · 반복하는 일 전체' : '일정 삭제', 'del', `data-del="${esc(r.id)}"${off ? ' disabled' : ''}`)}</span>`;
     if (r.steps) {
       const isOpen = !folded.has(r.id), dn = r.steps.filter((s) => s.done).length;
       const steps = isOpen ? `<div class="pl-steps">${r.steps.map((s) => `<div class="pl-r step${s.cur ? ' cur' : ''}${s.over ? ' over' : ''}"><span class="no" data-tip="${s.n}번째 단계">${s.n}</span>${ck(s.done, `data-ck="${esc(r.id)}" data-step="${esc(s.id)}"`, off)}<span class="tx${s.done ? ' done' : ''}"${fullAttr(s.title)}>${esc(s.title)}</span><span class="dd" data-tip="하는 날 ${esc(longDay(s.day))}">${s.day === view.today ? '오늘' : esc(shortDay(s.day, view.day))}</span></div>`).join('')}</div>` : '';
-      return `<div class="pl-r${r.red ? ' end' : ''}">${ck(r.done, `data-ck="${esc(r.id)}"`, off)}${title}<button type="button" class="pl-pill fold" data-fold="${esc(r.id)}" aria-expanded="${isOpen}" data-tip="단계 ${r.steps.length}개 가운데 ${dn}개 끝남 · 눌러서 ${isOpen ? '접기' : '펴기'}">${I(isOpen ? 'chev-up' : 'chev-down')}${dn}/${r.steps.length}</button>${badge(r)}</div>${steps}`;
+      return `<div class="pl-r${r.red ? ' end' : ''}">${ck(r.done, `data-ck="${esc(r.id)}"`, off)}${title}<button type="button" class="pl-pill fold" data-fold="${esc(r.id)}" aria-expanded="${isOpen}" data-tip="단계 ${r.steps.length}개 가운데 ${dn}개 끝남 · 눌러서 ${isOpen ? '접기' : '펴기'}">${I(isOpen ? 'chev-up' : 'chev-down')}${dn}/${r.steps.length}</button>${badge(r)}${acts}</div>${steps}`;
     }
-    const folder = r.folder ? `<span class="hid">${ib('folder', '연결 폴더 열기', '', `data-folder="${esc(r.folder)}"`)}${ib('chat', '이 폴더에서 대화 시작', '', `data-chat="${esc(r.folder)}"`)}</span>` : '';
-    return `<div class="pl-r${r.red ? ' end' : ''}">${ck(r.done, `data-ck="${esc(r.id)}"${dateAttr}`, off)}${r.time ? `<span class="tm"${r.timeEnd ? ` data-tip="${esc(r.time)}부터 ${esc(r.timeEnd)}까지"` : ''}>${esc(r.time)}</span>` : ''}${title}${late}${badge(r)}${folder}</div>`;
+    return `<div class="pl-r${r.red ? ' end' : ''}">${ck(r.done, `data-ck="${esc(r.id)}"${dateAttr}`, off)}${r.time ? `<span class="tm"${r.timeEnd ? ` data-tip="${esc(r.time)}부터 ${esc(r.timeEnd)}까지"` : ''}>${esc(r.time)}</span>` : ''}${title}${late}${badge(r)}${acts}</div>`;
   }
   function cell(d, out) {
     const dot = view.dots[d]; const n = dot ? dot.n : 0, due = dot ? dot.due : 0;
@@ -196,14 +206,19 @@ window.Planner = (() => {
     if (!host) return;
     if (composing) { panelDirty = true; return; }
     panelDirty = false;
-    if (!open) { panelEl.innerHTML = ''; fresh = false; talkFresh = false; threadLen = 0; return; }
+    if (!open) { edit = null; swapping = true; panelEl.innerHTML = ''; swapping = false; fresh = false; talkFresh = false; threadLen = 0; return; }
     const inp0 = $('#pl-in', panelEl); const list0 = $('.pl-list', panelEl); const strip0 = $('.pl-strip-b', panelEl); const th0 = $('#pl-thread', panelEl);
+    // 이름을 고치는 중이면 적던 글 · 커서를 들고 다시 그린다(그사이 달력이 바뀌어 다시 그려져도 고치기가 끊기지 않게)
+    const ed0 = $('#pl-edit', panelEl);
+    const edKeep = edit && ed0 ? { a: ed0.selectionStart, b: ed0.selectionEnd } : null;
+    if (edit && ed0) edit.value = ed0.value;
     const keep = {
       value: inp0 ? inp0.value : '', a: inp0 ? inp0.selectionStart : 0, b: inp0 ? inp0.selectionEnd : 0, focused: !!inp0 && document.activeElement === inp0,
       list: list0 ? list0.scrollTop : 0, strip: strip0 ? strip0.scrollTop : 0, th: th0 ? th0.scrollTop : 0, thBottom: !th0 || th0.scrollTop + th0.clientHeight >= th0.scrollHeight - 4,
     };
     hideTip();
-    panelEl.innerHTML = panelHtml();
+    if (edit && lock()) edit = null;            // 고치는 사이 플래너가 꺼졌거나 볼 수만 있게 됐다 — 고치기를 접는다(저장하지 않는다)
+    swapping = true; panelEl.innerHTML = panelHtml(); swapping = false;
     fresh = false; talkFresh = false;
     const inp = $('#pl-in', panelEl);
     if (inp) {
@@ -216,6 +231,11 @@ window.Planner = (() => {
     const th = $('#pl-thread', panelEl);
     if (th) { th.scrollTop = keep.thBottom || thread.length !== threadLen ? th.scrollHeight : keep.th; }
     threadLen = thread.length;
+    if (edit) {
+      const ed = $('#pl-edit', panelEl);
+      if (!ed) edit = null;                     // 그 줄이 사라졌다(다른 날로 갔거나 지워짐) — 고치기를 접는다
+      else { ed.focus(); try { if (edKeep) ed.setSelectionRange(edKeep.a, edKeep.b); else ed.select(); } catch { /* 잠긴 칸 */ } }
+    }
     fit(panelEl);
   }
   function render() { renderPanel(); renderRow(); }
@@ -429,6 +449,47 @@ window.Planner = (() => {
     for (const m of thread) if (m.undo === changeId) m.undo = null;
     load();
   }
+  // ---- 줄에서 손으로: 이름 고치기(두 번 클릭) · 일정 삭제 · 대화 열기 (2026-11-23 사용자 요청) ----
+  /** 이름을 그 자리에서 고치기 시작한다. Enter · 다른 곳 누르기 = 저장, Esc = 취소. */
+  function startEdit(id, date) {
+    if (lock() || !view) return;
+    const row = view.rows.find((r) => r.id === id && r.date === date); if (!row) return;
+    if (edit) commitEdit();
+    edit = { id, date, title: row.title, value: row.title };
+    renderPanel();
+  }
+  function cancelEdit() { if (!edit) return; edit = null; renderPanel(); }
+  async function commitEdit() {
+    if (!edit) return;
+    const e = edit; const inp = $('#pl-edit', panelEl); edit = null;
+    const v = String(inp ? inp.value : e.value).replace(/\s+/g, ' ').trim();
+    if (!v || v === e.title) return renderPanel();            // 비었거나 그대로 = 바꾸지 않는다
+    for (const r of (view ? view.rows : [])) if (r.id === e.id) r.title = v; // 답을 기다리는 동안 새 이름으로 보인다(실패하면 다시 읽어 되돌아온다)
+    renderPanel();
+    const r = await api('/api/planner/ops', { ops: [{ op: 'update', id: e.id, patch: { title: v } }] });
+    if (!r.ok) say({ group: 'info', tone: 'warn', text: r.error || '이름을 바꾸지 못했어요.' });
+    load();
+  }
+  /** 일정 삭제: 휴지통으로 옮기고 되돌리기를 함께 보인다. 반복하는 일은 전체가 지워지므로 먼저 묻는다. */
+  function removeItem(id) {
+    if (lock() || !view) return;
+    const row = view.rows.find((r) => r.id === id); if (!row) return;
+    if (!row.repeat) return doRemove(id, row.title);
+    say({ group: 'attention', tone: 'warn', ttl: 0, text: `「${row.title}」 일정은 반복하는 일이에요. 전체를 지울까요?`, sub: '이 날 것만 빼려면 아이리스에게 말해 주세요.', actions: [{ label: '전체 지우기', icon: 'trash', main: true, run: () => doRemove(id, row.title) }, { label: '그대로 두기', icon: 'close', run: () => {} }] });
+  }
+  async function doRemove(id, title) {
+    const r = await api('/api/planner/ops', { ops: [{ op: 'remove', id }] });
+    if (!r.ok) say({ group: 'info', tone: 'warn', text: r.error || '일정을 지우지 못했어요.' });
+    else say({ group: 'info', tone: 'iris', text: `「${title}」 일정을 지웠어요.`, sub: '휴지통에 30일 동안 남아 있어요.', actions: r.changeId ? [{ label: '되돌리기', icon: 'undo', run: () => undoChange(r.changeId) }] : null });
+    load();
+  }
+  /** 대화 열기: 이 일을 넣은 대화가 아직 있으면 그 대화로, 없으면 연결 폴더에서 새 대화(요청문은 비워 둔다). */
+  function openChat(session, folder) {
+    if (session && opts.hasSession(session)) return opts.openSession(session);
+    if (folder) return opts.chatIn(folder, '');
+    say({ group: 'info', tone: 'warn', text: '이 일정을 넣은 대화가 이제 없어요.' });
+  }
+
   /** 아이리스에게 말하기. extra = { proposal?, confirm?, yes?, quick? } */
   async function talkSend(text, extra = {}) {
     const t = String(text || '').trim();
@@ -459,6 +520,7 @@ window.Planner = (() => {
   function onClick(e) {
     const q = (s) => e.target.closest(s);
     let el;
+    if (edit && !q('#pl-edit')) commitEdit();   // 이름을 고치다 다른 곳을 눌렀다 = 저장(단추는 초점을 뺏지 않으므로 여기서 닫는다) — 누른 것은 이어서 그대로 한다
     if ((el = q('[data-line-x]'))) { const l = cur && cur.lines[Number(el.dataset.lineX)]; if (l) closeLine(l); return; }
     if ((el = q('[data-act]'))) { const a = cur && cur.actions && cur.actions[Number(el.dataset.act)]; const b = cur; if (a) { for (const l of [...b.lines]) closeLine(l); a.run(); } return; }
     if ((el = q('[data-line]'))) { const l = cur && cur.lines[Number(el.dataset.line)]; if (l && l.pick) { closeLine(l); l.pick(l.id); } return; }
@@ -480,8 +542,16 @@ window.Planner = (() => {
     if (q('[data-today]')) { sel = view.today; month = sel.slice(0, 7); return load(); }
     if ((el = q('[data-month]'))) { month = monthAdd(month || view.month, Number(el.dataset.month)); sel = month === view.today.slice(0, 7) ? view.today : `${month}-01`; return load(); } // 응답 전에 또 눌러도 한 달씩 더 간다
     if (q('[data-settings]')) return opts.openSettings('planner');
-    if ((el = q('[data-folder]'))) return opts.openFolder(el.dataset.folder);
-    if ((el = q('[data-chat]'))) return opts.chatIn(el.dataset.chat, '');
+    if ((el = q('[data-del]'))) return removeItem(el.dataset.del);
+    if ((el = q('[data-session]')) || (el = q('[data-chat]'))) return openChat(el.dataset.session || null, el.dataset.chat || null);
+  }
+  /** 이름을 두 번 클릭 = 그 자리에서 고치기(단계 이름 · 제안은 아님) */
+  function onDblClick(e) {
+    const el = e.target.closest('[data-edit]');
+    if (!el || !open || !view) return;
+    e.preventDefault();
+    try { window.getSelection()?.removeAllRanges(); } catch { /* 고른 글자 없음 */ }
+    startEdit(el.dataset.edit, el.dataset.editDate);
   }
 
   function init(o) {
@@ -502,6 +572,9 @@ window.Planner = (() => {
       h.addEventListener('mouseout', (e) => { if (e.target.closest('.pl-says') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.pl-says'))) resume(); });
     }
     host.addEventListener('focusin', (e) => { if (e.target.id === 'pl-in' && !talk) { openTalk(); renderPanel(); } });
+    host.addEventListener('dblclick', onDblClick);
+    // 이름 입력칸이 초점을 잃으면 저장한다(판을 다시 그리느라 입력칸이 바뀌는 순간은 빼고)
+    host.addEventListener('focusout', (e) => { if (e.target.id === 'pl-edit' && !swapping && edit) commitEdit(); });
     // 키 경계: 플래너 안(입력칸 · 단추)에서 누른 키는 본체로 올려 보내지 않는다 — 본체의 확인 카드(1~9 · y · n · Enter)나 단축키가 대신 눌리지 않게.
     // Esc 만 올려 보낸다(본체 onEscape 한 곳에서 "대화 → 판" 순서로 닫는다).
     for (const h of [host, over]) h.addEventListener('keydown', (e) => {
@@ -509,6 +582,7 @@ window.Planner = (() => {
       e.stopPropagation();
       if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter' && e.target.id === 'pl-in') { e.preventDefault(); const c = talkCtx; talkCtx = null; talkSend(e.target.value, c || {}); }
+      if (e.key === 'Enter' && e.target.id === 'pl-edit') { e.preventDefault(); commitEdit(); }
     });
     // 한글을 조합하는 동안에는 판을 다시 그리지 않는다(조합이 끊기지 않게) — 끝나면 미뤄 둔 것을 그린다
     host.addEventListener('compositionstart', () => { composing = true; });
@@ -550,6 +624,9 @@ window.Planner = (() => {
   }
   /** Esc: 대화 → 판 순서로 한 단계씩만 닫는다. 닫은 것이 있으면 true(본체는 다른 일을 하지 않는다). */
   function onEscape() {
+    // 이름을 고치는 중 Esc = 고치기 취소만(판을 닫지 않는다). Esc 는 두 길(페이지 · Electron 중계)로 올 수 있어 바로 뒤의 한 번도 삼킨다.
+    if (edit) { editEscAt = Date.now(); cancelEdit(); return true; }
+    if (Date.now() - editEscAt < 400) return true;
     if (!open) return false;
     if (talk) { foldTalk(); return true; }
     closePanel(); return true;
@@ -564,5 +641,5 @@ window.Planner = (() => {
   }
   /** 서랍이 열리거나 닫혔을 때(본체가 알려 준다) */
   function refresh() { place(); renderRow(); }
-  return { init, onHello, onMessage, onEscape, say, bubbles, applySettings, refresh, isOpen: () => open, open: (day) => openPanel(day || null), close: closePanel };
+  return { init, onHello, onMessage, onEscape, say, bubbles, applySettings, refresh, editing: () => !!edit, isOpen: () => open, open: (day) => openPanel(day || null), close: closePanel };
 })();

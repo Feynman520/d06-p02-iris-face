@@ -113,6 +113,10 @@
 .pl-r .tx { flex: 1; min-width: 0; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pl-r .tx.done { color: var(--ink-3); text-decoration: line-through; }
 .pl-r.end .tx:not(.done) { color: var(--bad); }
+/* 이름 고치기(두 번 클릭): 이름 자리에 그대로 서는 입력칸 */
+.pl-r .tx[data-edit] { cursor: text; }
+.pl-r .pl-edit { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: inherit; font-size: 13.5px; color: var(--ink); background: var(--base); border: 1px solid var(--iris); border-radius: 7px; outline: none; }
+.pl-ib.del:hover { color: var(--bad); }
 .pl-r .hid { display: inline-flex; opacity: 0; transition: opacity .12s; }
 .pl-r:hover .hid, .pl-r:focus-within .hid { opacity: 1; }
 /* 단계: 번호 = 순서 */

@@ -712,6 +712,7 @@
   function onEscape() {
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
     if (renaming) { renaming.cancel(); return; }      // 이름 고치는 중 Esc = 고치기 취소만(작업 중단 아님, v2.85)
+    if (window.Planner?.editing?.()) { window.Planner.onEscape(); return; } // 플래너에서 일정 이름을 고치는 중 Esc = 그 고치기 취소만(다른 서랍 · 판을 닫지 않는다)
     if (Tutorial.isOpen()) { Tutorial.back(); return; } // 튜토리얼 위에서 Esc = 그 안의 한 단계 뒤로만(크게 보기 닫기·역할 다시 고르기) — 작업 중단으로 새지 않는다(v2.90 → v2.93)
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
     if (Settings.isOpen() && window.OntologyView?.back?.()) return; // 온톨로지에서 역할을 골랐거나 검색 중이면 Esc = 한 단계 뒤로만(서랍은 그대로, v2.91)
@@ -756,6 +757,7 @@
       render(); const box = $('#composer-text'); if (text) { box.value = text; box.dispatchEvent(new Event('input', { bubbles: true })); } box.focus(); box.setSelectionRange(box.value.length, box.value.length);
     },
     openSession: (id) => { if (sessions.some(s => s.id === id)) select(id); },
+    hasSession: (id) => sessions.some(s => s.id === id),   // 줄의 「대화 열기」: 그 일을 넣은 대화가 아직 목록에 있는가
     openSettings: (pane) => { Settings.show(pane); },
     onCfg: (patch, at) => { Settings.applyRemote(patch, at); },   // 데몬이 바꾼 플래너 설정(말로 한 「잠시 조용히」)
     drawerOpen: () => Settings.isOpen() || !$('#dash').hidden,

@@ -55,7 +55,7 @@ const HARNESS = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><lin
 <script>
   window.__calls = []; window.__drawer = false; window.__keys = [];
   document.addEventListener('keydown', (e) => window.__keys.push(e.key)); // 본체의 단축키 자리(여기까지 올라온 키만 센다)
-  Planner.init({ openFolder: (p) => __calls.push(['folder', p]), chatIn: (p, t) => __calls.push(['chat', p, t]), openSession: (id) => __calls.push(['session', id]), openSettings: (p) => __calls.push(['settings', p]), drawerOpen: () => window.__drawer });
+  Planner.init({ openFolder: (p) => __calls.push(['folder', p]), chatIn: (p, t) => __calls.push(['chat', p, t]), openSession: (id) => __calls.push(['session', id]), hasSession: (id) => (window.__live || []).includes(id), openSettings: (p) => __calls.push(['settings', p]), drawerOpen: () => window.__drawer });
 </script></body></html>`;
 const server = http.createServer(async (q, s) => {
   const url = new URL(q.url, 'http://x'); const u = url.pathname;
@@ -482,6 +482,89 @@ try {
   ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => `${b.text}${b.shown ? '*' : ''}`)) === '["보고 있을 때 뜬 인사*","보고 있을 때 끝난 작업"]', '보고 있을 때는 읽던 말풍선을 바꿔치지 않음(전과 같음)');
   await clearSays();
   ok((await ev(`(() => { try { Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, cfg: { plannerQuietUntil: null } }); return true; } catch { return false; } })()`)), '설정을 맞추라는 방송(cfg)은 받는 쪽이 없어도 오류 없이 넘어감');
+  // ---- 줄에서 손으로(2026-11-23 사용자 요청): 연결 폴더 열기 없음 · 대화 열기 · 일정 삭제 · 이름 두 번 클릭으로 고치기 ----
+  {
+    const D = '2026-11-29'; // 다른 검사에 끼지 않는 날
+    const A = pl.store.apply([{ op: 'add', item: { title: '세션이 넣은 일', start: D, folder: 'C:\\w\\a' } }], { by: 'session', via: 'cli', session: { id: 's-live', title: '살아 있는 대화', agent: 'claude' } }).items[0];
+    const C = pl.store.apply([{ op: 'add', item: { title: '폴더 없는 일', start: D } }], U).items[0];
+    const S = pl.store.apply([{ op: 'add', item: { title: '단계 있는 줄', start: D, end: '2026-11-30', steps: [{ title: '하나', day: D }] } }], U).items[0];
+    const reload = async () => { await ev(`Planner.onMessage({ type: 'planner', rev: ${pl.store.rev}, proposals: ${pl.store.list('proposed').length} })`); await settle(); await page.waitForTimeout(150); };
+    const stateOf = (id) => pl.store.list().find((x) => x.id === id);
+    await clearSays();
+    await ev(`window.__live = ['s-live']; window.__calls.length = 0; Planner.open(${JSON.stringify(D)})`); await settle(); await page.waitForTimeout(200);
+    const rowOf = (id) => `.pl-list .pl-r:has([data-del="${id}"])`;
+    ok((await ev(`document.querySelectorAll('.pl-panel [data-folder]').length`)) === 0 && !(await ev(`[...document.querySelectorAll('.pl-list [data-tip]')].some((e) => /연결 폴더 열기/.test(e.dataset.tip))`)), '줄: 「연결 폴더 열기」 단추 없음');
+    ok((await ev(`document.querySelectorAll('.pl-list > .pl-r [data-del]').length`)) === 3 && (await ev(`!!document.querySelector(${JSON.stringify(`${rowOf(S.id)} [data-del]`)})`)), '줄: 모든 일정(단계 있는 줄 포함)에 「일정 삭제」');
+    ok((await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} [data-session]`)})?.dataset.tip`)) === '대화 열기 · 이 일정을 넣은 대화로' && (await ev(`!document.querySelector(${JSON.stringify(`${rowOf(C.id)} [data-session], ${rowOf(C.id)} [data-chat]`)})`)), '줄: 넣은 대화가 있으면 「대화 열기」 · 대화도 폴더도 없으면 그 단추 없음');
+    await page.hover(rowOf(A.id)); await page.waitForTimeout(200); await shot('12-row-actions');
+    await page.click(`${rowOf(A.id)} [data-session]`); await settle();
+    ok(JSON.stringify(await ev('window.__calls')) === '[["session","s-live"]]', '대화 열기: 이 일정을 넣은 대화로 감');
+    await ev(`window.__live = []; window.__calls.length = 0`); await reload();
+    ok((await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} [data-chat]`)})?.dataset.tip`)) === '대화 열기 · 연결 폴더에서 새 대화' && !(await ev(`!!document.querySelector(${JSON.stringify(`${rowOf(A.id)} [data-session]`)})`)), '줄: 넣은 대화가 없어졌으면 연결 폴더에서 새 대화');
+    await page.hover(rowOf(A.id)); await page.click(`${rowOf(A.id)} [data-chat]`); await settle();
+    ok(JSON.stringify(await ev('window.__calls')) === '[["chat","C:\\\\w\\\\a",""]]', '대화 열기: 연결 폴더에서 새 대화(요청문은 비움 — 보내기는 직접)');
+
+    // 이름 두 번 클릭 → 그 자리 입력칸 → Enter 저장
+    const tx = (id) => `.pl-list .tx[data-edit="${id}"]`;
+    await page.dblclick(tx(C.id)); await settle();
+    ok((await ev(`(() => { const e = document.getElementById('pl-edit'); return !!e && document.activeElement === e && e.value === '폴더 없는 일' && e.selectionStart === 0 && e.selectionEnd === e.value.length && Planner.editing(); })()`)), '이름 두 번 클릭: 그 자리에 입력칸 · 초점 · 글 전체 고름');
+    await shot('13-row-edit');
+    await page.fill('#pl-edit', '  새   이름  '); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(250);
+    ok(stateOf(C.id).title === '새 이름' && (await text(tx(C.id)))[0] === '새 이름' && !(await ev(`!!document.getElementById('pl-edit')`)) && !(await ev('Planner.editing()')), 'Enter: 이름 저장(앞뒤 · 겹친 빈칸 정리) · 입력칸 닫힘');
+    ok((await ev(`document.querySelector('.pl-panel') !== null`)) && !(await ev('window.__keys')).includes('Enter'), 'Enter 는 본체로 올라가지 않음 · 판은 그대로');
+    // Esc = 고치기 취소만(판을 닫지 않는다 — Esc 가 두 길로 와도)
+    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '버릴 이름');
+    const esc1 = await ev('Planner.onEscape()'); const esc2 = await ev('Planner.onEscape()'); await settle();
+    ok(esc1 === true && esc2 === true && stateOf(C.id).title === '새 이름' && (await ev(`!!document.querySelector('.pl-panel') && !document.getElementById('pl-edit')`)), 'Esc: 고치기만 취소 · 바로 뒤의 Esc 한 번도 판을 닫지 않음');
+    await page.waitForTimeout(450);
+    // 비우고 Enter = 그대로
+    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '   '); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(200);
+    ok(stateOf(C.id).title === '새 이름' && (await text(tx(C.id)))[0] === '새 이름', '빈 이름은 저장하지 않음');
+    // 고치는 중 달력이 다시 그려져도 적던 글 · 초점이 남는다
+    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '적던 글'); await reload();
+    ok((await ev(`(() => { const e = document.getElementById('pl-edit'); return !!e && e.value === '적던 글' && document.activeElement === e; })()`)), '고치는 중 다시 그려져도 적던 글 · 초점 유지');
+    // 다른 곳을 누르면 저장
+    await page.click('.pl-head strong'); await page.waitForTimeout(250);
+    ok(stateOf(C.id).title === '적던 글' && !(await ev(`!!document.getElementById('pl-edit')`)), '다른 곳을 누르면 저장');
+    // 단추를 누르면(초점을 뺏지 않는 것) 저장하고 그 단추의 일도 한다
+    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '단추로 닫음'); await page.click(`${rowOf(A.id)} .pl-ck`); await page.waitForTimeout(300);
+    ok(stateOf(C.id).title === '단추로 닫음' && stateOf(A.id).done === true, '고치다 다른 줄의 체크를 누르면: 이름 저장 + 체크도 됨');
+    ok((await ev(`document.querySelectorAll('.pl-steps [data-edit], .pl-strip [data-edit]').length`)) === 0, '단계 이름 · 제안에는 두 번 클릭 고치기 없음');
+    // 코덱스 검토가 짚은 경우: 꺾쇠 · 따옴표가 든 이름을 적고 저장 → 글자 그대로(HTML 로 읽히지 않음) · 다시 고칠 때 입력칸에도 그대로
+    const evilName = `<img src=x onerror="window.__xss3=1">'따옴표"`;
+    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', evilName); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(250);
+    ok(stateOf(C.id).title === evilName && (await text(tx(C.id)))[0] === evilName && !(await ev('window.__xss3')) && (await ev(`document.querySelectorAll('.pl-list img').length`)) === 0, '꺾쇠 · 따옴표가 든 이름: 글자 그대로 저장 · 그림으로 읽히지 않음');
+    await page.dblclick(tx(C.id)); await settle();
+    ok((await ev(`document.getElementById('pl-edit')?.value`)) === evilName && !(await ev('window.__xss3')), '그 이름을 다시 고칠 때 입력칸에도 글자 그대로');
+    // 고치는 사이 플래너가 꺼지면: 고치기를 접고 저장하지 않는다
+    await page.fill('#pl-edit', '꺼지는 사이 적던 글'); cfg.plannerEnabled = false; await reload();
+    ok(!(await ev(`!!document.getElementById('pl-edit')`)) && !(await ev('Planner.editing()')) && stateOf(C.id).title === evilName, '고치는 사이 플래너가 꺼지면 고치기를 접음(저장 안 함)');
+    cfg.plannerEnabled = true; await reload();
+    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '단추로 닫음'); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(250);
+
+    // 일정 삭제 → 휴지통 + 되돌리기
+    await clearSays();
+    await page.hover(rowOf(C.id)); await page.click(`${rowOf(C.id)} [data-del]`); await page.waitForTimeout(300);
+    ok(stateOf(C.id).state === 'trash' && !(await ev(`!!document.querySelector(${JSON.stringify(rowOf(C.id))})`)) && (await text('.pl-say .pl-line p'))[0].startsWith('「단추로 닫음」 일정을 지웠어요.'), '일정 삭제: 휴지통으로 · 줄에서 사라짐 · 말풍선');
+    await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(300);
+    ok(stateOf(C.id).state === 'active' && (await ev(`!!document.querySelector(${JSON.stringify(rowOf(C.id))})`)), '말풍선의 「되돌리기」로 되살아남');
+    await clearSays();
+    // 반복하는 일: 먼저 묻는다
+    await ev(`Planner.open('2026-12-01')`); await settle(); await page.waitForTimeout(200);
+    await page.hover(rowOf(rep.id)); await page.click(`${rowOf(rep.id)} [data-del]`); await page.waitForTimeout(250);
+    ok(stateOf(rep.id).state === 'active' && /반복하는 일이에요\. 전체를 지울까요\?/.test((await text('.pl-say .pl-line p'))[0] || '') && (await text('.pl-say .pl-tb')).join() === '전체 지우기,그대로 두기', '반복하는 일의 삭제: 바로 지우지 않고 먼저 물음');
+    await page.click('.pl-say [data-act="1"]'); await page.waitForTimeout(200);
+    ok(stateOf(rep.id).state === 'active' && !(await text('.pl-say')).length, '「그대로 두기」 = 아무 일도 없음');
+    await page.hover(rowOf(rep.id)); await page.click(`${rowOf(rep.id)} [data-del]`); await page.waitForTimeout(200); await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(300);
+    ok(stateOf(rep.id).state === 'trash', '「전체 지우기」 = 휴지통으로');
+    await clearSays(); pl.store.apply([{ op: 'restore', id: rep.id }], U);
+    // 볼 수만 있을 때(플래너 꺼짐): 삭제 단추는 잠기고 이름 고치기도 없다
+    cfg.plannerEnabled = false; await ev(`Planner.open(${JSON.stringify(D)})`); await reload();
+    ok((await ev(`document.querySelectorAll('.pl-list [data-del]:not([disabled])').length`)) === 0 && (await ev(`document.querySelectorAll('.pl-list [data-edit]').length`)) === 0, '플래너가 꺼져 있으면 삭제 단추 잠김 · 이름 고치기 없음');
+    cfg.plannerEnabled = true; await reload();
+    await ev(`Planner.close()`); await settle(); await clearSays();
+  }
+
   // 준비(init) 전에 온 말: 버리지 않고 모아 두었다가 준비되면 말한다 — 새 인스턴스로 확인(끝에서, 화면에 판이 하나 더 생긴다)
   const early = await ev(`(async () => { const src = await (await fetch('/planner.js')).text(); const keep = window.Planner; new Function(src)(); const P2 = window.Planner; window.Planner = keep; const h = P2.say({ group: 'done', tone: 'ok', text: '준비 전에 온 말' }); const before = P2.bubbles().length; P2.init({}); return { handle: !!h && typeof h.close === 'function', before, after: P2.bubbles().map((b) => b.text) }; })()`);
   ok(early.handle && early.before === 0 && early.after.join() === '준비 전에 온 말', '준비 전에 온 말은 버리지 않고 준비되면 말함');

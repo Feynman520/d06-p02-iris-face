@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
-import { Planner, PLANNER_DEFAULTS, josa, dayLabel } from '../daemon/planner.mjs';
+import { Planner, PLANNER_DEFAULTS, josa, dayLabel, panelOpsOk } from '../daemon/planner.mjs';
 import { PlannerStore, PlannerError } from '../daemon/planner-store.mjs';
 import { plannerDir } from '../daemon/paths.mjs';
 import { addDays, localDate, mondayOf } from '../daemon/planner-core.mjs';
@@ -135,7 +135,21 @@ try {
   ok(v.rows[1].steps[1].done && !v.rows[1].done && v.undo === c1.body.changeId, '체크가 보기에 반영 · 되돌리기 번호');
   const c2 = await post('/api/planner/ops', { ops: [{ op: 'add', item: { title: '몰래 넣기', start: today } }] });
   const c3 = await post('/api/planner/ops', { ops: [{ op: 'check', id: sTimed.id, done: true }, { op: 'remove', id: sTimed.id }] });
-  ok(c2.status === 400 && c2.body.code === 'panel-check-only' && c3.status === 400 && (await api('/api/planner/view')).body.rev === 4, '판에서는 끝냄만 — 넣기 · 지우기는 이 길로 안 받음');
+  ok(c2.status === 400 && c2.body.code === 'panel-check-only' && c3.status === 400 && (await api('/api/planner/view')).body.rev === 4, '판에서는 넣기를 안 받음 · 지우기를 다른 조작과 묶어 보내도 안 받음');
+  // 2026-11-23: 판의 줄에서 손으로 하는 것 = 끝냄 + 일정 삭제(하나) + 이름만 고치기(하나). 그 밖은 여전히 거절(실제로 되는 것은 verify:planner-ui 가 끝까지 본다).
+  {
+    const tries = [
+      [{ op: 'update', id: sTimed.id, patch: { title: '새 이름', start: addDays(today, 3) } }],   // 이름 말고 다른 칸이 섞임
+      [{ op: 'update', id: sTimed.id, patch: { start: addDays(today, 3) } }],                      // 날짜 고치기
+      [{ op: 'update', id: sTimed.id, patch: { title: 7 } }], [{ op: 'update', id: sTimed.id }], [{ op: 'update', id: sTimed.id, patch: {} }],
+      [{ op: 'remove', id: sTimed.id }, { op: 'remove', id: sBig.id }],                             // 한 번에 둘
+      [{ op: 'update', id: sTimed.id, patch: { title: 'a' } }, { op: 'update', id: sBig.id, patch: { title: 'b' } }],
+      [{ op: 'purge', id: sTimed.id }], [{ op: 'restore', id: sTimed.id }], [{ op: 'remove' }], [], [null], ['remove'],
+    ];
+    const got2 = []; for (const ops of tries) got2.push(await post('/api/planner/ops', { ops }));
+    ok(got2.every((r) => r.status === 400 && r.body.code === 'panel-check-only') && (await api('/api/planner/view')).body.rev === 4, `판에서 안 받는 조작 ${tries.length}가지(다른 칸 고치기 · 둘 이상 · 완전히 지우기 · 되살리기 · 모양이 틀린 것) — 장부 그대로`);
+    ok(panelOpsOk([{ op: 'check', id: 'a', done: true }, { op: 'check', id: 'b', done: false }]) && panelOpsOk([{ op: 'remove', id: 'a' }]) && panelOpsOk([{ op: 'update', id: 'a', patch: { title: '새 이름' } }]), '판에서 받는 조작: 끝냄(여럿) · 지우기 하나 · 이름만 고치기 하나');
+  }
   const c4 = await post('/api/planner/ops', { ops: [{ op: 'check', id: sTimed.id, done: true }] }, { origin: 'http://evil.example' });
   const c5 = await api('/api/planner/ops', { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }, body: JSON.stringify({ ops: [{ op: 'check', id: sTimed.id, done: true }] }) });
   ok(c4.status === 403 && c5.status === 403 && (await api('/api/planner/view')).body.rev === 4, '다른 출처의 쓰기는 403');

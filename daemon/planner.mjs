@@ -48,6 +48,21 @@ export function dayLabel(date, today) {
   return `${today && date.slice(0, 7) === today.slice(0, 7) ? '' : `${m}월 `}${d}일 ${WD[weekday(date)]}요일`;
 }
 
+/**
+ * 판(화면)이 /api/planner/ops 로 보낼 수 있는 조작인가: 끝냄 체크(여럿 가능) 또는 지우기 하나 또는 이름만 고치기 하나.
+ * 이름 고치기의 patch 는 title 한 칸뿐이어야 한다(다른 칸이 섞여 오면 거절 — 날짜 · 시각 · 단계는 말로 고친다).
+ */
+export function panelOpsOk(ops) {
+  const isObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
+  if (!Array.isArray(ops) || !ops.every(isObj)) return false;
+  if (ops.every((o) => o.op === 'check')) return true;
+  if (ops.length !== 1) return false;
+  const o = ops[0];
+  if (o.op === 'remove') return typeof o.id === 'string' && !!o.id;
+  if (o.op === 'update') return typeof o.id === 'string' && !!o.id && isObj(o.patch) && Object.keys(o.patch).length === 1 && typeof o.patch.title === 'string';
+  return false;
+}
+
 export class Planner {
   /**
    * @param {{ dir: string, stateDir: string, settings: { get: () => object }, broadcast?: (o: object) => void, log?: (m: string) => void, now?: () => Date }} o
@@ -277,8 +292,9 @@ export class Planner {
         let b; try { b = await h.readBody(req); } catch { b = null; }
         if (!b || typeof b !== 'object' || Array.isArray(b)) return h.json(res, 400, { ok: false, code: 'bad-json', error: '요청을 알아볼 수 없습니다.' });
         if (p === '/api/planner/ops') {
-          // 판에서 손으로 하는 것은 「끝냄」 체크뿐이다(설계 조각 ② — 넣기·고치기·지우기는 말로). 다른 조작은 이 길로 받지 않는다.
-          if (!Array.isArray(b.ops) || b.ops.some((o) => !o || o.op !== 'check')) throw new PlannerError('panel-check-only', '판에서는 끝냄 표시만 바꿀 수 있습니다. 넣기와 고치기는 아이리스에게 말해 주세요.');
+          // 판에서 손으로 하는 것: 「끝냄」 체크 + (2026-11-23 사용자 요청) 줄의 「일정 삭제」(휴지통으로 — 되돌릴 수 있다) · 이름 두 번 클릭으로 이름 고치기.
+          // 그 밖(넣기 · 날짜 · 시각 · 단계 고치기 · 완전히 지우기)은 이 길로 받지 않는다 — 아이리스에게 말로. 지우기 · 이름 고치기는 한 번에 하나만.
+          if (!Array.isArray(b.ops) || !b.ops.length || !panelOpsOk(b.ops)) throw new PlannerError('panel-check-only', '판에서는 끝냄 표시 · 이름 고치기 · 일정 삭제만 할 수 있습니다. 넣기와 그 밖의 고치기는 아이리스에게 말해 주세요.');
           return h.json(res, 200, this.apply(b.ops, { by: 'user', via: 'panel' }));
         }
         if (p === '/api/planner/undo') return h.json(res, 200, this.undo(typeof b.changeId === 'string' ? b.changeId : null));

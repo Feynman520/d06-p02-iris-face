@@ -73,6 +73,7 @@ export function dayRows(items, date, today) {
       period, red: !done && !!period && date >= it.end,
       steps: hasSteps(it) ? it.steps.map((s, i) => ({ id: s.id, n: i + 1, title: s.title, day: s.day, done: !!s.done, cur: s.day === date, over: !s.done && s.day < today })) : null,
       folder: it.folder || null, repeat: !!it.repeat,
+      session: (it.source && it.source.session && it.source.session.id) || null, // 이 일을 넣은 세션(카드 번호) — 줄의 「대화 열기」가 그 대화로 간다(2026-11-23)
       note: it.note || null, place: it.place || null, who: it.who || null, // 줄에 마우스를 올렸을 때의 전체 내용(이름은 한 줄만 보인다, 2026-11-23)
     });
   };
