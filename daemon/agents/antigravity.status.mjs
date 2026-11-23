@@ -98,7 +98,7 @@ export function refresh({ force = false } = {}) {
       const j = await gate.refresh();
       if (!j.ok) { const r = { state: 'gate', groups: [], at: now(), detail: j.why }; last = r; running = null; writeStatus(r); return r; }
     }
-    try { gate.applyRoute(env, connection, { sync: false }); }
+    try { gate.applyRoute(env, connection); }
     catch (e) { const r = { state: 'gate', groups: [], at: now(), detail: String(e?.message || e) }; last = r; running = null; writeStatus(r); return r; }
     const x = await run(exe, ['--print', '/usage', '--output-format', 'json'], { cwd, env });
     const r = x.error ? { state: 'unknown', groups: [], at: now(), detail: x.error } : parseUsage(x.out, { code: x.code, stderr: x.err });
@@ -187,7 +187,7 @@ export function refreshModels(table, { log = () => {} } = {}) {
   if (modelsRun) return modelsRun.then((ch) => ch || fromCache);
   // gate 면 중계기를 쓸 수 있을 때만 묻는다(못 쓰면 목록을 바꾸지 않는다 — 이 PC 로그인으로 묻지 않는다)
   const env = { ...process.env };
-  try { gate.applyRoute(env, connection, { sync: false }); } catch { return Promise.resolve(fromCache); }
+  try { gate.applyRoute(env, connection); } catch { return Promise.resolve(fromCache); }
   modelsRun = run(exe, ['models'], { env }).then((x) => {
     modelsRun = null;
     const list = parseModels(x.out);

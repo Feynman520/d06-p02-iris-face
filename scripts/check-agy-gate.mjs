@@ -57,8 +57,12 @@ ok(threw?.code === 'AGY_GATE_DOWN' && /몰래 돌리지 않습니다/.test(threw
 env = { CLOUD_CODE_URL: 'x' };
 ok(gate.applyRoute(env, 'direct').route === 'direct' && !('CLOUD_CODE_URL' in env), 'applyRoute direct: CLOUD_CODE_URL 을 지운다');
 gate._setLast(null);
-threw = null; try { gate.applyRoute({}, 'gate', { sync: false }); } catch (e) { threw = e; }
-ok(threw?.code === 'AGY_GATE_DOWN', 'applyRoute gate · 판정 모름(sync 아님) = 막음');
+threw = null; try { gate.applyRoute({}, 'gate'); } catch (e) { threw = e; }
+ok(threw?.code === 'AGY_GATE_DOWN' && /아직 확인하지 못했습니다/.test(threw.message), 'applyRoute gate · 판정 모름(데몬이 막 켜짐) = 막음, 기다리지 않음');
+gate._setLast({ ok: true, why: '', at: Date.now() - 61_000, accounts: [] });
+threw = null; try { gate.applyRoute({}, 'gate'); } catch (e) { threw = e; }
+ok(threw?.code === 'AGY_GATE_DOWN' && /1분 넘게/.test(threw.message), 'applyRoute gate · 1분 넘은 통과 판정 = 막음(옛 값으로 보내지 않음)');
+ok(!/execFileSync|spawnSync|execSync/.test(fs.readFileSync(path.join(ROOT, 'daemon/agents/antigravity.gate.mjs'), 'utf8')), '판정 모듈에 동기 실행 없음(데몬을 멈추지 않음 — 코덱스 검토 F-1)');
 
 // 3. 실제로 묻기(가짜 중계기)
 reply = { code: 200, body: NEW([G('google-1')]) };
@@ -68,12 +72,15 @@ ok(!(await gate.refresh()).ok, 'refresh: 옛 중계기 모양 = 막음');
 reply = { code: 503, body: { error: 'x' } };
 ok(!(await gate.refresh()).ok, 'refresh: 중계기 오류 응답 = 막음');
 reply = { code: 200, body: NEW([G('google-1')]) };
-// checkSync 는 자식 프로세스로 묻는다(이 프로세스의 가짜 서버는 그동안 멈춰 있으므로 다른 프로세스의 가짜 서버가 필요) — 여기서는 닫힌 포트로 '닿지 않음'만 본다
+// 꺼진 중계기(닫힌 포트) = 막음, 몇 초 안에
 process.env.IRIS_AGY_GATE_URL = 'http://127.0.0.1:9';
 const gate2 = await import(`${pathToFileURL(path.join(ROOT, 'daemon/agents/antigravity.gate.mjs')).href}?closed`);
-const t0 = Date.now(); const cs = gate2.checkSync({ maxAgeMs: 0 });
-ok(!cs.ok && /닿지 않습니다/.test(cs.why) && Date.now() - t0 < 8000, 'checkSync: 꺼진 중계기 = 막음(몇 초 안에)', `${Date.now() - t0}ms`);
+const t0 = Date.now(); const cs = await gate2.refresh();
+ok(!cs.ok && /닿지 않습니다/.test(cs.why) && Date.now() - t0 < 8000, 'refresh: 꺼진 중계기 = 막음(몇 초 안에)', `${Date.now() - t0}ms`);
 process.env.IRIS_AGY_GATE_URL = GATE;
+// 데몬이 15초마다 미리 읽는다(세션 시작 때 기다리지 않게)
+const srv = fs.readFileSync(path.join(ROOT, 'daemon/server.mjs'), 'utf8');
+ok(/setInterval\(\(\) => \{ agyGate\.refresh\(\)\.catch\(\(\) => \{\}\); \}, 15_000\)/.test(srv) && /agyConnection === 'gate'/.test(srv), '데몬: gate 일 때 15초마다 중계기 판정을 미리 읽음');
 
 // 4. 어댑터
 ok(ad.connection === 'gate', '어댑터 연결 방식 = gate(되돌리기 = 이 한 줄)');

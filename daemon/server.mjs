@@ -42,6 +42,8 @@ import { ToolManager, makeRunner } from './toolinstall.mjs';
 import { childEnv } from './sessions.mjs';
 import { CLAUDE_CONFIG_DIR, CODEX_HOME } from './agents.mjs';
 import * as agyStatus from './agents/antigravity.status.mjs';
+import * as agyGate from './agents/antigravity.gate.mjs'; // 2026-11-23 중계기 길 판정
+import { connection as agyConnection } from './agents/antigravity.mjs';
 import { taskkillTree, pidAlive } from './proctree.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -124,6 +126,12 @@ const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeA
       .then(() => agyStatus.refreshModels(AGENTS.antigravity, { log })).then((ch) => { if (ch) broadcast(agentsMsg()); }).catch(() => {});
   };
   setTimeout(tickAgy, 3000).unref?.();
+  // 중계기 판정(2026-11-23 코덱스 코드 검토 F-1 · F-2): 세션을 띄울 때 기다리지 않도록 15초마다 미리 읽어 둔다(127.0.0.1 짧은 요청 하나) —
+  // 중계기가 꺼졌다 켜져도 15초 안에 따라온다. 시작 직후 한 번 바로.
+  if (AGENTS.antigravity && agyConnection === 'gate') {
+    agyGate.refresh().catch(() => {});
+    setInterval(() => { agyGate.refresh().catch(() => {}); }, 15_000).unref();
+  }
   // 1분마다 부른다(2026-11-23 중계기 길) — 한도 · 모델은 각자의 저장 시간(5분 · 6시간) 안이면 다시 묻지 않으므로 agy 를 더 자주 띄우지 않는다.
   // 중계기를 못 쓰는 판정만 50초 뒤 다시 보아, 중계기를 다시 켜면 1분 안에 단추가 살아난다.
   setInterval(tickAgy, 60_000).unref();
