@@ -690,7 +690,7 @@
   "titlerHelpers": {
    "lastAnswer": ["b","x","","","한 줄"],
    "constants": {"TITLE_MODEL":"haiku","CODEX_TITLE_MODEL":"gpt-6-luna"},
-   "exports": ["CODEX_TITLE_MODEL","TITLE_MODEL","cleanTitle","findClaudeExe","generateTitle","lastAnswer","titleSource"]
+   "exports": ["CODEX_TITLE_MODEL","TITLE_MODEL","childEnv","cleanTitle","findClaudeExe","generateTitle","lastAnswer","titleSource"]
   },
   "switchGuard": [
    {"id":"s1","agent":"<undefined>","result":false,"events":[]},
