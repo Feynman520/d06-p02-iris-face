@@ -82,7 +82,8 @@ window.Settings = (() => {
         const R = (b) => (b?.remaining == null ? '?' : Math.round(b.remaining * 100) + '%');
         const when = (t) => { const d = t ? new Date(t) : null; return d && !isNaN(d) ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '?'; };
         const tip = `Antigravity 남은 한도 — ${all.map((b) => `${b.group} ${b.window === '5h' ? '5시간' : b.window === 'weekly' ? '주간' : b.window} ${R(b)}(다시 참 ${when(b.reset)})`).join(' · ')}`;
-        if (h) $('#limits').insertAdjacentHTML('beforeend', battery('Antigravity', null, h.remaining == null ? null : 1 - h.remaining, tip));
+        $('#limits').querySelectorAll('.batt-agy').forEach((e) => e.remove()); // 두 번 불려도 하나만
+        if (h) $('#limits').insertAdjacentHTML('beforeend', battery('Antigravity', null, h.remaining == null ? null : 1 - h.remaining, tip).replace('class="batt ', 'class="batt batt-agy '));
       }
     } catch {}
   }

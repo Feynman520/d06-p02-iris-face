@@ -219,6 +219,7 @@ export class SessionManager {
     const base = normalize({ agent: rec.agent, model: model ?? modelForResume(rec), effort: effort ?? rec.effort, readOnly: readOnly ?? rec.readOnly, permission: permission ?? rec.permission, approval: approval ?? rec.approval, sandbox: sandbox ?? rec.sandbox });
     const sel = model == null ? keepResumeModel(base, rec) : base; // 쓰던 정확한 모델이 목록에서 사라져도 재개는 그 모델 그대로(2차 검토 3번)
     assertExpected(sel, expectModel);
+    strictAdapter(sel.agent)?.readyCheck?.(rec.cwd); // 띄울 준비가 안 되면 지금 프로세스를 끄기 **전에** 멈춘다(안티그래비티만 가짐 — 2026-11-23 코덱스 재검토)
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
     if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
@@ -242,6 +243,7 @@ export class SessionManager {
     if (!adapterOrDefault(rec.agent)) throw new Error(unsupportedReason(rec.agent)); // 열 수 없는 카드는 그대로 둔다(새 세션은 새 카드로)
     const sel = normalize({ agent, model, effort, readOnly, permission, approval, sandbox });
     assertExpected(sel, expectModel);
+    strictAdapter(sel.agent)?.readyCheck?.(rec.cwd); // 띄울 준비가 안 되면 지금 프로세스를 끄기 **전에** 멈춘다(안티그래비티만 가짐)
     const st = this.live.get(id); clearTimeout(st?.timer);
     const cols = st?.pty.cols || 120, rows = st?.pty.rows || 36;
     if (pidAlive(rec.pid)) spawnSync('taskkill', ['/PID', String(rec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });

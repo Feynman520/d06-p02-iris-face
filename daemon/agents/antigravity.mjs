@@ -96,6 +96,8 @@ export function preTrust(cwd) {
   if (!r.ok) { const e = new Error(`안티그래비티 안전 준비가 안 되어 세션을 열지 않았습니다 — ${r.why}`); e.code = 'AGY_NOT_READY'; throw e; }
   return { agent: id, result: r.line };
 }
+/** 바꾸기 · 재개에서 지금 프로세스를 끄기 전에 부른다 — 준비가 안 되면 던진다(끈 뒤에 실패해 세션을 잃지 않게). 결과는 preTrust 와 같다. */
+export const readyCheck = (cwd) => { preTrust(cwd); };
 
 // ───────────────────────── 화면 신호(에이전트별 — 클로드 · 코덱스의 공용 식은 그대로) ─────────────────────────
 // 1.5.14 실측: 일하는 중 = 맨 아래 상태줄 "esc to cancel" + 위 "⡿  Generating..." / 기다림 = "? for shortcuts" / 중단 뒤 = "⎿  Interrupted · What should …"(그 뒤 기다림)

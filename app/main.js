@@ -86,10 +86,13 @@
     const off = {};
     for (const k of ACCT?.missing || []) if (AGENTS[k]) off[k] = 'missing';
     const acc = ACCT?.accounts;
-    if (acc) for (const k of Object.keys(AGENTS)) if (!off[k] && acc[k] === 0) off[k] = 'account';
+    // "모두 꺼졌으면 막지 않는다"는 클로드 · 코덱스 둘만으로 예전과 똑같이 셈한다(셋째 에이전트가 생겨도 두 단추의 판정이 바뀌지 않게 — 2026-11-23 코덱스 재검토)
+    const relayKeys = Object.keys(AGENTS).filter((k) => k !== 'antigravity');
+    if (acc) for (const k of relayKeys) if (!off[k] && acc[k] === 0) off[k] = 'account';
+    const base = Object.keys(off).length >= relayKeys.length ? {} : off;
     // 안티그래비티(중계기 밖)는 위 상태 객체에 없다 — 데몬이 따로 보내는 판정(AGY)으로만 끈다. 모름(unknown)이면 끄지 않는다.
-    if (AGENTS.antigravity && !off.antigravity) { if (AGY?.state === 'missing') off.antigravity = 'missing'; else if (AGY?.state === 'auth') off.antigravity = 'account'; }
-    return Object.keys(off).length >= Object.keys(AGENTS).length ? {} : off;
+    if (AGENTS.antigravity) { if (AGY?.state === 'missing') return { ...base, antigravity: 'missing' }; if (AGY?.state === 'auth') return { ...base, antigravity: 'account' }; }
+    return base;
   }
   function renderSetup() {
     if (!AGENTS) return;

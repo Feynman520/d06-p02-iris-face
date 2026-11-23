@@ -139,7 +139,7 @@ fs.mkdirSync(path.join(fakeRoot, '_agent', 'claude', 'scripts'), { recursive: tr
 eq(setup.ensureHooks(fakeRoot, 'py'), 'created', '훅: 없음 → 만듦');
 const hfile = path.join(GEM, 'config', 'hooks.json');
 let hj = JSON.parse(fs.readFileSync(hfile, 'utf8'));
-eq([Object.keys(hj), hj['iris-safety'].PreToolUse[0].matcher], [['iris-safety'], 'run_command|write_to_file|replace_file_content|multi_replace_file_content'], '훅: 이름 붙인 항목 하나 · 도구 넷');
+eq([Object.keys(hj), hj['iris-safety'].PreToolUse[0].matcher], [['iris-safety'], '.*'], '훅: 이름 붙인 항목 하나 · 도구 넷');
 eq(setup.ensureHooks(fakeRoot, 'py'), 'unchanged', '훅: 같으면 그대로');
 fs.writeFileSync(hfile, JSON.stringify({ mine: { Stop: [{ type: 'command', command: 'x' }] } }), 'utf8');
 eq(setup.ensureHooks(fakeRoot, 'py'), 'set', '훅: 남의 항목이 있으면 우리 항목만 더함');
@@ -153,8 +153,13 @@ ok(!p.ok && /가드 파일 없음/.test(p.why) && /안전 훅을 넣지 못함/.
 for (const f of ['guard-iris-path.py', 'block-blanket-kill.ps1']) fs.writeFileSync(path.join(fakeRoot, '_agent', 'claude', 'scripts', f), '', 'utf8');
 fs.writeFileSync(hfile, '{}', 'utf8');
 fs.writeFileSync(path.join(GEM, 'AGENTS.md'), '# 사용자가 쓴 지침\n', 'utf8');
-p = setup.prepare(cwdA, fakeRoot);
-ok(p.ok, `준비: 가드 · 훅 · (사용자 지침 존중) = 띄움 (${p.why || p.line})`);
+p = setup.prepare(cwdA, fakeRoot, { selfTest: () => '' });
+ok(p.ok, `준비: 가드 · 훅 · 시험 호출 통과 · (사용자 지침 존중) = 띄움 (${p.why || p.line})`);
+p = setup.prepare(cwdA, fakeRoot, { selfTest: () => '안전 다리 시험 호출이 막지 않음(allow)' });
+ok(!p.ok && /시험 호출/.test(p.why), '준비: 다리가 실제로 막지 않으면 막음');
+p = setup.prepare(cwdA, fakeRoot); // 진짜 시험 호출 — 빈 가짜 다리는 아무것도 출력하지 않으므로 막혀야 한다
+ok(!p.ok && /시험 호출/.test(p.why), `준비: 빈 다리 = 시험 호출 실패로 막음 (${p.why})`);
+if (fs.existsSync('C:\\IRIS\\_agent\\claude\\scripts\\agy-hook-bridge.py')) eq(setup.bridgeWorks('C:\\IRIS'), '', '이 PC 의 진짜 다리 = 시험 호출에서 막음(통과)');
 fs.rmSync(path.join(GEM, 'AGENTS.md'));
 p = setup.prepare(cwdA, path.join(TMP, 'no-such-root'));
 ok(!p.ok, '준비: 루트 지침을 못 읽으면 막음');

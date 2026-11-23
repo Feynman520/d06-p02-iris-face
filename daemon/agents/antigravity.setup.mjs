@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { soulRoot } from '../paths.mjs';
 
 /** ~/.gemini (시험은 IRIS_GEMINI_DIR 로 임시 폴더를 준다) */
@@ -119,8 +120,10 @@ function findPython() {
 export const bridgeScript = (root = soulRoot()) => path.join(root, '_agent', 'claude', 'scripts', 'agy-hook-bridge.py');
 export function hookEntry(root = soulRoot(), python = findPython()) {
   return {
+    // 모든 도구에 건다 — 도구 이름이 문서(write_to_file)와 실제 1.5.14(write_file · edit_file)가 달라, 이름을 골라 걸면 새어 나갔다(2026-11-23 실측).
+    // 어느 도구를 가드에 보낼지는 다리가 이름으로 가른다(읽기 도구는 바로 통과).
     PreToolUse: [{
-      matcher: 'run_command|write_to_file|replace_file_content|multi_replace_file_content',
+      matcher: '.*',
       hooks: [{ type: 'command', command: `"${python}" "${bridgeScript(root)}"`, timeout: 30 }],
     }],
   };
@@ -155,11 +158,32 @@ export function guardsPresent(root = soulRoot()) {
  * 막는 경우 = 가드 파일이 없음 · 훅을 넣지 못함(skipped:*) · 지침을 만들지 못함(루트를 못 읽음 등 — 사용자가 직접 쓴 전역 지침 파일은 존중해 막지 않음).
  * 폴더 신뢰를 못 적은 것은 막지 않는다(그러면 agy 가 화면에서 묻고 창은 노란불로 보인다).
  */
-export function prepare(cwd, root = soulRoot()) {
+/**
+ * 다리가 **실제로 막는지** 시험 호출(코덱스 재검토: 파일이 있다 ≠ 돈다). IRIS 루트에 낱개 파일을 쓰는 가짜 호출을 넣어 deny 가 나오면 통과.
+ * 파이썬 · 가드 둘을 띄우므로 약 1초 — 30분 동안 결과를 기억한다. 실패하면 이유 글자, 통과면 ''.
+ */
+let selfTestAt = 0, selfTestKey = '', selfTestWhy = '';
+export function bridgeWorks(root = soulRoot(), python = findPython()) {
+  const key = `${root}|${python}`;
+  if (key === selfTestKey && Date.now() - selfTestAt < 30 * 60_000) return selfTestWhy;
+  let why = '';
+  try {
+    // 이름은 루트 허용 목록(IRIS-* · AGENTS.md …)에 걸리지 않는 것으로(가드 ROOT_ALLOW_NEW). 실제로 쓰지는 않는다 — 판정만 받는다.
+    const probe = { toolCall: { name: 'write_file', args: { Path: JSON.stringify(path.join(root, 'agy-selftest-probe.txt')), Content: '"x"' } }, workspacePaths: [root] };
+    const r = spawnSync(python, [bridgeScript(root)], { input: JSON.stringify(probe), encoding: 'utf8', timeout: 30000, windowsHide: true });
+    const line = String(r.stdout || '').trim().split(/\r?\n/).pop() || '';
+    let d; try { d = JSON.parse(line).decision; } catch { d = null; }
+    if (d !== 'deny') why = `안전 다리 시험 호출이 막지 않음(${d ?? (r.error ? r.error.message : `exit ${r.status}`)})`;
+  } catch (e) { why = `안전 다리 시험 호출 실패(${e.message})`; }
+  selfTestAt = Date.now(); selfTestKey = key; selfTestWhy = why;
+  return why;
+}
+export function prepare(cwd, root = soulRoot(), { selfTest = bridgeWorks } = {}) {
   const results = { trust: trustFolder(cwd), rules: ensureRules(root), hooks: ensureHooks(root) };
   const missing = guardsPresent(root);
   const why = [];
   if (missing.length) why.push(`가드 파일 없음(${missing.join(', ')})`);
+  else { const w = selfTest(root); if (w) why.push(w); }
   if (String(results.hooks).startsWith('skipped:')) why.push(`안전 훅을 넣지 못함(${results.hooks})`);
   if (String(results.rules).startsWith('skipped:') && results.rules !== 'skipped:user-file') why.push(`전역 지침을 만들지 못함(${results.rules})`);
   const changed = Object.entries(results).filter(([, v]) => v !== 'unchanged');
