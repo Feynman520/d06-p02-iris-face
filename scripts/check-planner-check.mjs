@@ -196,6 +196,8 @@ try {
     w.pl.decide(p.id, true);
     clock = new Date(2026, 10, 24, 8, 10, 0); w.rules.tick();
     ok(!w.check.targets('2026-11-24').some((it) => it.id === s.big.id), '한 번 제안한 일은 승인 뒤에도 다시 대상이 아님');
+    w.pl.store.apply([{ op: 'update', id: s.big.id, patch: { end: '2026-11-26' } }], U);
+    ok(w.check.targets('2026-11-24').some((it) => it.id === s.big.id), '마감을 옮기면(사정이 달라지면) 다시 봄 — 영영 빼지 않음');
     clock = new Date(2026, 10, 23, 8, 10, 0); }
   { const w = world({ cfg: {} }); const s = seed(w);
     w.reply(J({ say: '살펴볼게요.', ops: [{ op: 'prepare', no: s.big.no }] }), J({ items: [{ no: s.big.no, need: true, title: '초안 쓰기', day: '2026-11-24', why: '확인한 폴더에서 초안을 찾지 못했어요' }] }));
@@ -219,6 +221,19 @@ try {
     w.reply(J({ items: [] }));
     await check2.run(w.check.targets('2026-11-23'));
     ok(w.calls.length === 1 && !w.calls[0].prompt.includes('결과 보고서 제출') && w.calls[0].prompt.includes('가정통신문 회신 정리') && w.calls[0].prompt.includes('(비어 있음)'), '읽지 못한 폴더의 일은 넘기지 않음 · 정말 빈 폴더는 "비어 있음"'); void s; }
+  { const w = world(); const s = seed(w); w.rules.tick();
+    // 답이 오지 않는 느린 폴더: 붙잡히지 않고 그 일만 건너뛴다(훑기 안의 상한은 파일 시스템이 답을 줄 때만 지켜지므로 바깥에서도 끊는다)
+    const stuck = new PlannerCheck({ planner: w.pl, stateDir: w.dir, now: () => new Date(clock), log: () => {}, giveUpMs: 60, list: (f) => (f === w.work ? new Promise(() => {}) : { files: [{ name: '회신 정리.xlsx', modified: '2026-11-22' }], more: 0, partial: false }) });
+    w.reply(J({ items: [] }));
+    const t0 = Date.now(); const r = await stuck.run(w.check.targets('2026-11-23'));
+    ok(r.called && Date.now() - t0 < 3000 && w.calls.length === 1 && !w.calls[0].prompt.includes('결과 보고서 제출') && w.calls[0].prompt.includes('가정통신문 회신 정리'), `답이 오지 않는 폴더에 붙잡히지 않음 — ${Date.now() - t0}ms`); void s; }
+  { const w = world(); const s = seed(w); w.rules.tick();
+    // 답을 기다리는 사이 그 일의 이름 · 단계 · 마감이 바뀌었으면: 옛 모습을 보고 낸 답이라 쓰지 않는다
+    w.reply(async () => { w.pl.store.apply([{ op: 'update', id: s.big.id, patch: { title: '전혀 다른 일' } }], U); return { ok: true, text: J({ items: [{ no: s.big.no, need: true, title: '옛 이름을 보고 낸 제안', day: '2026-11-23', why: 'x' }] }), tokens: 1, ms: 1 }; });
+    ok((await w.check.tick()) === 0 && w.pl.store.list('proposed').length === 0, '답을 기다리는 사이 이름이 바뀐 일에는 옛 답을 쓰지 않음'); }
+  { const w = world({ cfg: { plannerTalk: false } }); const s = seed(w);
+    const r = await w.check.run([s.big], { manual: true });
+    ok(!r.called && r.reason === 'off' && w.calls.length === 0, '말로 시킨 살펴보기는 말하기의 한 갈래 — 말하기를 끄면 하지 않음'); }
 } catch (e) { fail++; console.log(`FAIL 예외: ${e?.stack || e}`); }
 finally { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} }
 console.log(`${pass} PASS / ${fail} FAIL`);

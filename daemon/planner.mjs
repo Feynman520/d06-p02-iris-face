@@ -30,6 +30,8 @@ export const PLANNER_DEFAULTS = Object.freeze({
   plannerCheck: false,         // 준비 점검(AI 가 스스로 도는 유일한 기능 — 알고 켜도록 끔)
   plannerQuietUntil: null,     // 잠시 조용히(이 시각까지)
 });
+export const QUIET_MAX_MS = 48 * 3600_000; // 이보다 먼 「잠시 조용히」는 믿지 않는다(걸 수 있는 가장 긴 것이 하루)
+export const MUTED_MAX = 20;               // 조용히 하는 동안 미뤄 두는 말의 수(넘으면 오래된 것부터 버린다 — 장부의 변경 기록에는 남는다)
 export const CROWD_MIN = 4;
 export const BODY_MAX = 64 * 1024; // /api/planner/* 가 받는 요청 본문의 상한    // 한 주(월~일)에 마감(기간의 마지막 날)이 이만큼이면 "몰렸다"고 말한다
 
@@ -53,7 +55,7 @@ export class Planner {
   constructor({ dir, stateDir, settings, broadcast = () => {}, log = () => {}, now = () => new Date(), openDir = null }) {
     this.now = now; this.log = log; this.settings = settings; this.stateDir = stateDir; this.dir = dir;
     this.cast = broadcast; this.openDir = openDir; // openDir(dir) = 탐색기로 그 폴더 열기(server.mjs 가 꽂는다 — 시험에서는 없음)
-    this.muted = 0;                                 // 「잠시 조용히」 동안 하지 않은 말의 수(끝나면 규칙 알림이 한 번에 말한다)
+    this.muted = 0; this.mutedSays = null;          // 「잠시 조용히」 동안 미뤄 둔 말(끝나면 규칙 알림이 다시 말한다) — 처음 쓸 때 파일에서 읽는다
     this.store = new PlannerStore({ dir, now, log, autoload: false });
     this.secret = null; this.started = false; this.failed = false;
     this.rules = null;    // 규칙 알림(planner-rules.mjs) — server.mjs 가 꽂는다
@@ -145,13 +147,24 @@ export class Planner {
   #changed(say) { const s = say && !this.#mute() ? say : null; this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, ...(s ? { say: s } : {}) }); }
   #send(o) { try { this.cast(o); } catch (e) { this.log(`planner: 화면에 알리지 못했습니다 (${e?.code || e?.name || 'error'})`); } }
   /** 말풍선으로 한마디(장부는 그대로) — 규칙 알림 · 세션이 넣었을 때. 「잠시 조용히」 동안에는 말하지 않고 개수만 센다(달력 · 제안 숫자는 그대로 바뀐다). */
-  say(say) { if (this.#mute()) return this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length }); this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, say }); }
-  #mute() { if (!this.quietNow()) return false; this.muted++; return true; }
-  /** 조용히 하는 동안 하지 않은 말의 수를 돌려주고 0 으로(규칙 알림이 조용히가 끝났을 때 부른다). */
-  takeMuted() { const n = this.muted; this.muted = 0; return n; }
+  say(say) { if (this.#mute(say)) return this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length }); this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, say }); }
+  // 조용히 하는 동안의 말은 버리지 않고 모아 둔다(되돌리기 · 확인 단추까지) — 끝나면 규칙 알림이 다시 말한다. 꺼졌다 켜져도 남게 파일에도 적는다.
+  #mutedFile() { return path.join(this.stateDir, 'planner-muted.json'); }
+  #mutedLoad() { if (this.mutedSays) return; this.mutedSays = []; try { const a = JSON.parse(fs.readFileSync(this.#mutedFile(), 'utf8')); if (Array.isArray(a)) this.mutedSays = a.filter((s) => s && typeof s.text === 'string').slice(-MUTED_MAX); } catch { /* 없음 */ } this.muted = this.mutedSays.length; }
+  #mutedSave() { try { const f = this.#mutedFile(); if (!this.mutedSays.length) { try { fs.unlinkSync(f); } catch { /* 없음 */ } return; } fs.mkdirSync(this.stateDir, { recursive: true }); const tmp = `${f}.tmp-${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(this.mutedSays), 'utf8'); fs.renameSync(tmp, f); } catch (e) { this.log(`planner: 미뤄 둔 말을 적지 못했습니다 (${e?.code || 'error'})`); } }
+  #mute(say) {
+    if (!this.quietNow()) return false;
+    this.#mutedLoad();
+    if (say && typeof say.text === 'string') { this.mutedSays.push(say); if (this.mutedSays.length > MUTED_MAX) this.mutedSays.splice(0, this.mutedSays.length - MUTED_MAX); this.#mutedSave(); }
+    this.muted = this.mutedSays.length;
+    return true;
+  }
+  /** 조용히 하는 동안 미뤄 둔 말들을 돌려주고 비운다(규칙 알림이 조용히가 끝났을 때 부른다). */
+  takeMuted() { this.#mutedLoad(); const list = this.mutedSays; this.mutedSays = []; this.muted = 0; if (list.length) this.#mutedSave(); return list; }
 
   // ---- 잠시 조용히(설계 조각 ⑧): 끝나는 시각 하나(settings.plannerQuietUntil). 플래너의 말풍선만 멈춘다 — 달력과 작업 완료 알림은 그대로. ----
-  quietNow(nowMs = this.now().getTime()) { const u = this.cfg().plannerQuietUntil; const t = u ? Date.parse(u) : NaN; return Number.isFinite(t) && nowMs < t; }
+  //   화면 · 말로 걸 수 있는 가장 긴 조용히는 하루다. 그보다 훨씬 먼 값(설정 파일을 손으로 고쳤거나 시계가 바뀐 경우)은 조용히로 보지 않는다 — 영영 말하지 않게 되는 것을 막는다.
+  quietNow(nowMs = this.now().getTime()) { const u = this.cfg().plannerQuietUntil; const t = u ? Date.parse(u) : NaN; return Number.isFinite(t) && nowMs < t && t - nowMs <= QUIET_MAX_MS; }
   /**
    * 말로 시킨 조용히("1시간 동안 알리지 마"): minutes(1~1440) · until:'today'(오늘 하루 = 내일 0시까지) · off:true(다시 알리기).
    * 설정에 적고 화면의 설정 사본도 맞춘다(방송의 cfg). 던지지 않는다 — { ok, say }.
@@ -164,8 +177,9 @@ export class Planner {
     }
     const iso = t ? t.toISOString() : null;
     if (typeof this.settings.set !== 'function') return { ok: false, say: '지금은 설정을 바꿀 수 없어요. 설정 → 플래너에서 바꿔 주세요.' };
-    try { this.settings.set({ plannerQuietUntil: iso }); } catch (e) { this.log(`planner: 설정을 적지 못했습니다 (${e?.code || 'error'})`); return { ok: false, say: '설정을 적지 못했어요. 설정 → 플래너에서 바꿔 주세요.' }; }
-    this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, cfg: { plannerQuietUntil: iso } });
+    let saved; try { saved = this.settings.set({ plannerQuietUntil: iso }); } catch (e) { this.log(`planner: 설정을 적지 못했습니다 (${e?.code || 'error'})`); return { ok: false, say: '설정을 적지 못했어요. 설정 → 플래너에서 바꿔 주세요.' }; }
+    // 화면의 설정 사본을 맞추는 방송: 바뀐 키와 데몬이 적은 시각(updatedAt)을 함께 — 화면이 자기 시각으로 "최신"을 만들지 않게
+    this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, cfg: { plannerQuietUntil: iso }, cfgAt: (saved && saved.updatedAt) || null });
     this.log(`planner: quiet ${iso ? 'on' : 'off'}`);
     if (!t) return { ok: true, say: '네, 다시 알릴게요.', quietUntil: null };
     const h = t.getHours(), mi = t.getMinutes();
@@ -234,6 +248,16 @@ export class Planner {
         if (!b || typeof b !== 'object' || Array.isArray(b)) return h.json(res, 400, { ok: false, code: 'bad-json', error: '요청을 알아볼 수 없습니다.' });
         if (!this.talkSvc) return h.json(res, 200, { ok: false, say: '지금은 아이리스를 부를 수 없어요.' });
         return h.json(res, 200, await this.talkSvc.talk(b));
+      }
+      if (req.method === 'POST' && (p === '/api/planner/intro-seen' || p === '/api/planner/confirm')) {
+        if (!h.sameOrigin(req)) { this.log(`planner: 403 ${where} (다른 출처)`); return h.json(res, 403, { ok: false, code: 'forbidden', error: 'forbidden origin' }); }
+        let b; try { b = await h.readBody(req); } catch { b = null; }
+        if (!b || typeof b !== 'object' || Array.isArray(b)) return h.json(res, 400, { ok: false, code: 'bad-json', error: '요청을 알아볼 수 없습니다.' });
+        // 처음 한 번 소개: 화면이 말풍선을 실제로 보여 줬을 때 알려 온다 — 그때 "소개했다"고 적는다(방송만 하고 적으면 아무도 못 본 채 지나갈 수 있다)
+        if (p === '/api/planner/intro-seen') { try { this.rules?.introSeen(); } catch { /* 적지 못해도 화면은 그대로 */ } return h.json(res, 200, { ok: true }); }
+        // 세션이 지우려는 것에 대한 사용자의 답(말풍선의 「지우기」 · 「그대로 두기」)
+        if (!this.cliSvc) return h.json(res, 503, { ok: false, say: '플래너를 지금 쓸 수 없습니다.' });
+        return h.json(res, 200, this.cliSvc.confirm(typeof b.token === 'string' ? b.token : '', b.yes === true));
       }
       if (req.method === 'POST' && p === '/api/planner/open-folder') {
         // 설정의 「수첩 폴더 열기」: 같은 출처만, 요청이 준 경로는 쓰지 않는다(여는 곳은 언제나 수첩 폴더 하나). 쓰기 전에는 폴더가 없다 — 만들지 않고 그렇게 말한다.

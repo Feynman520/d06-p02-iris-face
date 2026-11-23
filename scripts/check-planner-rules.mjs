@@ -253,11 +253,21 @@ try {
   { const w = world(null, {}, { intro: true });
     const t = w.tick();
     ok(t.length === 1 && t[0].startsWith('일정은 저한테 말해 주세요') && w.sent[0].say.intro === true && w.sent[0].say.actions[0].label === '열어 보기', `수첩이 비어 있어도 처음 한 번은 소개함 — ${t.join(' / ')}`);
-    step(30); ok(w.tick().length === 0, '소개는 한 번뿐');
+    step(30); ok(w.tick().length === 0, '곧바로 되풀이하지 않음');
+    // 방송했다고 "소개했다"고 적지 않는다 — 화면이 실제로 보여 줬다고 알려 와야(introSeen) 적는다
+    const st0 = JSON.parse(fs.readFileSync(path.join(w.dir, 'planner-rules.json'), 'utf8'));
+    ok(!st0.intro && w.rules.state.intro === null, '방송만으로는 "소개했다"고 적지 않음(아무도 못 본 채 지나가지 않게)');
+    step(11 * 60); const again = w.tick();
+    ok(again.length === 1 && again[0].startsWith('일정은 저한테'), '화면이 보여 줬다고 알려 오지 않으면 10분 뒤 다시 보냄');
+    ok(w.rules.introSeen() === true && w.rules.introSeen() === false, '화면이 보여 줬다고 알려 오면 그때 적음(한 번)');
     const st = JSON.parse(fs.readFileSync(path.join(w.dir, 'planner-rules.json'), 'utf8'));
     ok(st.intro === '2026-11-23', '소개한 날을 적어 둠(다시 켜도 또 하지 않게)');
+    step(11 * 60); ok(w.tick().length === 0, '적은 뒤로는 다시 보내지 않음');
     const r2 = new PlannerRules({ planner: w.pl, stateDir: w.dir, now: () => new Date(clock), log: () => {} });
-    ok(r2.tick().length === 0, '다시 켜도 소개하지 않음'); }
+    ok(r2.tick().length === 0, '다시 켜도 소개하지 않음');
+    const w0 = world(null, {}, { intro: true }); w0.tick();
+    const r3 = new PlannerRules({ planner: w0.pl, stateDir: w0.dir, now: () => new Date(clock), log: () => {} });
+    ok(r3.tick().length === 1, '못 본 채 꺼졌으면(알림이 오지 않았으면) 다음에 켤 때 다시 소개'); at(23, 9, 0); }
   { const w = world(null, {}, { intro: true }); w.gate.ready = false;
     ok(w.tick().length === 0 && w.rules.state.intro === null, '받을 창이 없으면 소개도 하지 않고 남겨 둠');
     w.gate.ready = true; ok(w.tick().length === 1, '창이 붙으면 그때 소개'); }
@@ -268,13 +278,43 @@ try {
     ok(w.tick().length === 0 && w.rules.state.intro === null, '조용히 하는 동안에는 소개도 미룸');
     // 조용히 하는 동안 세션이 넣은 것 · 제안의 말풍선은 하지 않고 세기만 한다(달력 · 제안 숫자는 방송으로 그대로 바뀐다)
     const before = w.sent.length;
-    w.pl.say({ group: 'info', tone: 'iris', text: '세션에서 추가했어요.' }); w.pl.say({ group: 'proposal', tone: 'iris', text: '제안했어요.' });
+    w.pl.say({ group: 'info', tone: 'iris', text: '세션에서 추가했어요.', actions: [{ kind: 'undo', changeId: 'c1' }] }); w.pl.say({ group: 'proposal', tone: 'iris', text: '제안했어요.' });
     ok(w.sent.length === before + 2 && w.sent.slice(before).every((m) => m.type === 'planner' && !m.say) && w.pl.muted === 2, '조용히 하는 동안: 말풍선 없이 방송만 · 하지 않은 말의 수를 셈');
     ok(w.pl.quietNow() === true && w.rules.quiet(clock.getTime()) === true, '조용히 판정은 창구 한 곳(quietNow)');
+    // 미뤄 둔 말은 파일에도 남는다 — 조용히 하는 동안 꺼졌다 켜져도 되돌리기 단추까지 그대로 돌아오게
+    const keptFile = path.join(w.dir, 'planner-muted.json');
+    const pl2 = new Planner({ dir: path.join(w.dir, 'planner'), stateDir: w.dir, settings: { get: () => cfg }, now: () => new Date(clock) }); pl2.start();
+    ok(fs.existsSync(keptFile) && pl2.takeMuted().length === 2, '미뤄 둔 말은 꺼졌다 켜져도 남음(파일)');
+    fs.writeFileSync(keptFile, JSON.stringify(w.pl.mutedSays), 'utf8'); // (위에서 다른 창구가 비운 것을 되돌려 놓는다)
+    at(23, 10, 0, 30);
+    w.sent.length = 0;
+    const t = w.tick();
+    ok(JSON.stringify(t.slice(0, 2)) === '["세션에서 추가했어요.","제안했어요."]' && w.sent[0].say.actions[0].changeId === 'c1' && t.some((x) => x.startsWith('일정은 저한테')) && w.pl.muted === 0 && !fs.existsSync(keptFile), `조용히가 끝나면 미뤄 둔 말을 그대로 다시 말함(되돌리기 단추 포함) + 미룬 소개 — ${t.join(' / ')}`);
+    step(30); ok(w.tick().length === 0, '그 뒤로는 되풀이하지 않음'); }
+  { const cfg = { plannerQuietUntil: new Date(2026, 10, 23, 10, 0, 0).toISOString() };
+    at(23, 9, 0); const w = world(null, cfg); w.tick();
+    for (let i = 1; i <= 5; i++) w.pl.say({ group: 'info', tone: 'iris', text: `소식 ${i}` });
     at(23, 10, 0, 30);
     const t = w.tick();
-    ok(t.some((x) => x === '조용히 하는 동안 플래너 소식이 2개 있었어요.') && t.some((x) => x.startsWith('일정은 저한테')) && w.pl.muted === 0, `조용히가 끝나면 그사이 소식을 한 번에 + 미룬 소개 — ${t.join(' / ')}`);
-    step(30); ok(w.tick().length === 0, '그 뒤로는 되풀이하지 않음'); }
+    ok(JSON.stringify(t) === '["조용히 하는 동안 플래너 소식이 5개 있었어요. 최근 것부터 알려 드릴게요.","소식 3","소식 4","소식 5"]', `미뤄 둔 말이 많으면 개수를 먼저 말하고 최근 것 셋만 — ${t.join(' / ')}`); }
+  { // 「오늘 하루」 조용히: 아침에 지나간 약속도 조용히가 끝난 자정에 모아 말한다(평소의 12시간보다 오래됐어도)
+    at(23, 8, 0);
+    const cfg = { plannerQuietUntil: new Date(2026, 10, 24, 0, 0, 0).toISOString() };
+    const w = world((add) => { add({ title: '아침 협의회', start: '2026-11-23', time: '09:00' }); }, cfg);
+    w.rules.state.morning = '2026-11-23'; w.rules.state.evening = '2026-11-23';
+    ok(w.tick().length === 0, '(준비) 조용히 시작');
+    at(23, 9, 30); ok(w.tick().length === 0, '조용히 하는 동안 지나간 약속은 말하지 않음');
+    at(23, 23, 59, 30); w.tick();
+    at(24, 0, 0, 30); w.rules.state.evening = '2026-11-24';
+    const t = w.tick();
+    ok(t.length === 1 && t[0] === '오전 9시 「아침 협의회」 시간이 지났어요.', `하루 내내 조용히 한 뒤: 아침에 지나간 약속을 자정에 말함 — ${t.join(' / ')}`);
+    step(30); ok(w.tick().length === 0, '한 번만'); }
+  { // 걸 수 있는 가장 긴 조용히는 하루 — 훨씬 먼 값(설정 파일을 손으로 고친 경우)은 조용히로 보지 않는다
+    at(23, 9, 0);
+    const w = world(null, { plannerQuietUntil: new Date(2027, 5, 1).toISOString() });
+    ok(w.pl.quietNow() === false, '아주 먼 「잠시 조용히」는 믿지 않음(영영 말하지 않게 되지 않게)');
+    const w2 = world(null, { plannerQuietUntil: '엉뚱한 글' }); const w3 = world(null, { plannerQuietUntil: new Date(2026, 10, 23, 8, 0).toISOString() });
+    ok(w2.pl.quietNow() === false && w3.pl.quietNow() === false, '형식 밖 · 이미 지난 값도 조용히가 아님'); }
   // 말로 시킨 조용히(setQuiet): 설정에 적고 화면의 설정 사본을 맞추는 방송(cfg)을 보낸다
   at(23, 13, 20);
   { const store = { v: {} }; const sent = [];

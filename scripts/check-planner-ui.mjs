@@ -382,13 +382,41 @@ try {
   ok(work.length === 1 && work[0][0] === 'chat' && work[0][1] === 'C:\\IRIS\\R01\\결과 보고서' && work[0][2].startsWith('「결과 보고서 제출」을 준비하려고 해요') && pl.store.get(prep.id).state === 'proposed', '「작업 시작」 = 그 폴더 + 요청문을 본체에 넘기기만 함(보내기는 사용자 · 제안은 그대로 남음)');
   await ev(`Planner.close()`); await settle(); await clearSays();
   // 처음 한 번 소개: 첫 실행 튜토리얼이 덮고 있는 동안에는 띄우지 않고, 닫히면 띄운다
+  const introAcks = []; page.on('request', (rq) => { if (rq.method() === 'POST' && rq.url().endsWith('/api/planner/intro-seen')) introAcks.push(rq.url()); });
   await ev(`window.__tut = true; window.Tutorial = { isOpen: () => window.__tut }; Planner.onMessage({ type: 'planner', rev: ${pl.store.rev}, proposals: 0, say: { group: 'greet', tone: 'iris', intro: true, text: '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.', actions: [{ kind: 'open', day: '2026-11-23', label: '열어 보기' }] } })`); await settle();
   ok((await ev('Planner.bubbles().length')) === 0, '소개 말풍선: 튜토리얼이 덮고 있는 동안에는 띄우지 않음');
   await ev(`window.__tut = false`); await page.waitForTimeout(2600);
   ok((await text('.pl-say .pl-line p'))[0] === '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.' && (await text('.pl-say [data-act="0"]'))[0].includes('열어 보기'), '튜토리얼이 닫히면 소개 말풍선 + 「열어 보기」');
+  // 실제로 보인 뒤에야 데몬에 "소개했다"고 알린다(POST /api/planner/intro-seen) · 이미 들고 있으면 같은 소개를 겹쳐 띄우지 않는다
+  ok(introAcks.length === 1, `소개가 실제로 보였을 때 한 번 알림(튜토리얼에 가려 있던 동안에는 알리지 않음) — ${introAcks.length}`);
+  await ev(`Planner.onMessage({ type: 'planner', rev: ${pl.store.rev}, proposals: 0, say: { group: 'greet', tone: 'iris', intro: true, text: '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.' } })`); await settle();
+  ok((await ev(`Planner.bubbles().filter((b) => b.meta && b.meta.intro).length`)) === 1 && introAcks.length === 1, '데몬이 다시 보낸 소개는 겹쳐 띄우지 않음');
   await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(400);
   ok((await ev('Planner.isOpen()')) === true, '「열어 보기」 = 달력 판이 펴짐');
   await ev(`Planner.close(); delete window.Tutorial`); await settle(); await clearSays();
+  // 창이 뒤에 있을 때 온 소개: 돌아와서 보일 때 알린다
+  await ev(`window.__rf3 = document.hasFocus; document.hasFocus = () => false; Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', intro: true, text: '뒤에 있을 때 온 소개' } })`); await settle();
+  ok(introAcks.length === 1, '창이 뒤에 있는 동안에는 "보여 줬다"고 알리지 않음');
+  await ev(`document.hasFocus = window.__rf3; window.dispatchEvent(new Event('focus'))`); await page.waitForTimeout(300);
+  ok(introAcks.length === 2, '창으로 돌아와 보이면 그때 알림');
+  await clearSays();
+  // 「잠시 조용히」를 켜면: 화면에 이미 와 있던 플래너의 말도 멈춘다. 답을 기다리는 물음(세션이 지우려는 것)과 세션의 작업 알림은 남긴다
+  const soon = new Date(Date.now() + 3600_000).toISOString();
+  await ev(`Planner.say({ group: 'done', tone: 'ok', text: '세션 작업 알림 2', ttl: 0 });
+    Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', text: '조용히 전에 온 인사' } });
+    Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'attention', tone: 'warn', sticky: true, text: '「가정통신문 정리」 세션이 「협의회」를 지우려고 해요.', actions: [{ kind: 'confirm', token: 'tok-1', yes: true, label: '지우기' }, { kind: 'confirm', token: 'tok-1', yes: false, label: '그대로 두기' }] } })`); await settle();
+  await ev(`Planner.applySettings({ plannerQuietUntil: ${JSON.stringify(soon)} })`); await settle();
+  ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => b.text).sort()) === JSON.stringify(['「가정통신문 정리」 세션이 「협의회」를 지우려고 해요.', '세션 작업 알림 2'].sort()), '「잠시 조용히」를 켜면 와 있던 플래너의 인사는 거두고, 지우기 확인과 세션 알림은 남김');
+  await ev(`Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', intro: true, text: '조용히 중에 온 소개' } })`); await settle();
+  ok(!(await ev('Planner.bubbles()')).some((b) => b.text === '조용히 중에 온 소개'), '조용히 하는 동안 온 소개는 받지 않음(데몬이 끝난 뒤 다시 보낸다)');
+  await ev(`Planner.applySettings({ plannerQuietUntil: null })`); await settle();
+  // 세션이 지우려는 것의 확인: 「지우기」를 누르면 데몬에 답을 보내고(POST /api/planner/confirm) 결과를 되돌리기와 함께 말한다
+  const confirms = []; pl.cliSvc = { confirm: (token, yes) => { confirms.push([token, yes]); return yes ? { ok: true, say: '「협의회」를 지웠어요. 휴지통에 30일 남아요.', changeId: 'chg-1' } : { ok: true, say: '「협의회」는 그대로 두었어요.' }; } };
+  await ev(`document.querySelector('.pl-say [data-line-x]').click()`); await settle(); // 떠 있던 세션 알림을 닫으면 다음 차례 = 지우기 확인
+  ok((await text('.pl-say .pl-line p'))[0] === '「가정통신문 정리」 세션이 「협의회」를 지우려고 해요.' && (await text('.pl-say [data-act]')).join('|').replace(/\s+/g, '') === '지우기|그대로두기', '지우기 확인 말풍선: 누가 · 무엇을 + 단추 둘(스스로 사라지지 않음)');
+  await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(500);
+  ok(JSON.stringify(confirms) === '[["tok-1",true]]' && (await text('.pl-say .pl-line p'))[0] === '「협의회」를 지웠어요. 휴지통에 30일 남아요.' && (await text('.pl-say [data-act="0"]'))[0].includes('되돌리기'), '「지우기」 = 데몬에 답을 보내고 결과 + 「되돌리기」를 말함');
+  await clearSays();
   // 플래너를 끄면: 플래너가 하던 말 · 차례를 기다리던 말만 거둔다(세션의 작업 알림은 그대로)
   await ev(`Planner.say({ group: 'done', tone: 'ok', text: '세션 작업 알림', ttl: 0 }); Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, say: { group: 'greet', tone: 'iris', text: '플래너가 한 말(차례 대기)' } })`); await settle();
   ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => b.text)) === '["세션 작업 알림","플래너가 한 말(차례 대기)"]', '(준비) 세션 알림이 떠 있고 플래너의 말이 차례를 기다림');

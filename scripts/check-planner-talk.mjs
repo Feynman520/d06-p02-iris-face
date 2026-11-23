@@ -443,6 +443,26 @@ try {
     ok((await w.talk.drain()) === 0 && w.talk.inbox().length === 1 && w.calls.length === 2, '「잠시 조용히」 동안에도 정리하지 않음');
     w.cfg.plannerQuietUntil = null;
     ok((await w.talk.drain()) === 1 && w.talk.inbox().length === 0 && w.sent.some((m) => m.say && m.say.text.startsWith('적어 두신 말을 정리했어요')), '창이 있고 조용히가 아니면 정리하고 알림'); }
+  { const w = world({ agents: ['claude', 'codex'] }); seed(w);
+    w.reply({ ok: false, reason: 'limit' }, { ok: false, reason: 'limit' });
+    await w.talk.talk({ text: '26일 출장' });
+    // 받아 둔 말을 정리하는 도중에: 끄면 다음 에이전트로 넘어가지 않고, 창이 닫히면 적지 않는다 — 어느 쪽이든 말은 남겨 둔다
+    w.reply(async () => { w.cfg.plannerTalk = false; return { ok: false, reason: 'limit', ms: 1 }; }, J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]));
+    ok((await w.talk.drain()) === 0 && w.calls.length === 3 && w.talk.inbox().length === 1, '받아 둔 말을 정리하는 도중에 끄면 다음 에이전트로 넘어가지 않고 말은 남겨 둠');
+    w.cfg.plannerTalk = true; w.script.length = 0; const rev = w.pl.store.rev;
+    w.reply(async () => { w.gate.ready = false; return { ok: true, text: J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]), tokens: 1, ms: 1 }; });
+    ok((await w.talk.drain()) === 0 && w.pl.store.rev === rev && w.talk.inbox().length === 1, '답을 기다리는 사이 창이 닫히면 적지 않고 남겨 둠(결과를 볼 사람이 없다)');
+    w.gate.ready = true;
+    w.reply(async () => { w.cfg.plannerQuietUntil = new Date(2026, 10, 23, 12, 0).toISOString(); return { ok: true, text: J('넣었어요.', [{ op: 'add', title: '출장', start: '2026-11-26' }]), tokens: 1, ms: 1 }; });
+    ok((await w.talk.drain()) === 0 && w.pl.store.rev === rev && w.talk.inbox().length === 1, '답을 기다리는 사이 「잠시 조용히」가 켜져도 적지 않고 남겨 둠'); }
+  { const leftover = await runAgent({ agent: 'codex', system: 's', prompt: 'p', exe: process.execPath, env: { ...process.env, NODE_OPTIONS: `--require ${path.join(base, 'hang.cjs').replace(/\\/g, '/')}` }, timeoutMs: 400, kill: () => false });
+    ok(leftover.ok === false && leftover.reason === 'timeout' && leftover.leftover > 0, '시간이 넘었는데 끝내지 못한 숨은 호출은 그 PID 를 결과에 실어 줌(나중에 다시 끝내고 보고하려고)');
+    killTree(leftover.leftover);
+    const w = world(); const seen = [];
+    const t3 = new PlannerTalk({ planner: w.pl, stateDir: w.dir, kill: (pid, o) => { seen.push([pid, !!(o && o.deep)]); return pid !== 111; }, log: (m) => w.logs.push(m) });
+    t3.leftovers.add(111); t3.proc = { pid: 222, exitCode: null };
+    const res = t3.stop();
+    ok(JSON.stringify(seen) === '[[111,true],[222,true]]' && res.gone === false && JSON.stringify(res.left) === '[111]', '전부 종료: 앞서 못 끝낸 것까지 다시 끝내 보고(자손까지 확인), 남은 PID 를 돌려줌'); }
   { const r0 = killTree(0); const child = (await import('node:child_process')).spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
     await new Promise((r) => setTimeout(r, 300));
     const gone = killTree(child.pid);

@@ -14,7 +14,8 @@ window.Settings = (() => {
   // ---- 저장/불러오기 ----
   function load() { try { const s = JSON.parse(localStorage.getItem('iris.settings') || 'null'); if (s) cfg = { ...DEF, ...s }; } catch {} }
   async function pullServer() { try { const r = await fetch('/api/settings'); const s = await r.json(); if (s && s.updatedAt) { const local = JSON.parse(localStorage.getItem('iris.settings') || '{}'); if (!local.updatedAt || s.updatedAt > local.updatedAt) cfg = { ...DEF, ...s }; } } catch {} }
-  function save() { cfg.updatedAt = new Date().toISOString(); try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {} return fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).catch(() => {}); }
+  const CLIENT = Math.random().toString(36).slice(2, 12); // 이 화면이 보낸 저장인지 가리는 표(데몬이 방송에 그대로 실어 준다 — 자기 저장의 메아리로 값을 되돌리지 않게)
+  function save() { cfg.updatedAt = new Date().toISOString(); try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {} return fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-iris-client': CLIENT }, body: JSON.stringify(cfg) }).catch(() => {}); }
 
   // ---- 적용 ----
   function applyTheme() {
@@ -185,14 +186,24 @@ window.Settings = (() => {
     const until = v === 'off' ? null : v === 'today' ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : new Date(now.getTime() + Number(v) * 60000);
     pick({ plannerQuietUntil: until ? until.toISOString() : null });
   }
-  /** 데몬이 바꾼 설정(말로 "1시간 동안 알리지 마")을 화면의 사본에 맞춘다 — 데몬에는 이미 적혀 있으므로 다시 보내지 않는다. */
-  function applyRemote(patch) {
-    if (!patch || typeof patch !== 'object') return;
-    for (const k of Object.keys(patch)) if (k in PL_DEF) cfg[k] = patch[k];
-    cfg.updatedAt = new Date().toISOString(); try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {}
-    if (open) { renderPlanner(); renderNav(); }
+  /**
+   * 데몬이 알려 온 설정 변화를 화면의 사본에 맞춘다 — 말로 한 「잠시 조용히」(데몬이 바꿈)와, 어느 창에서든 저장한 설정(PUT 뒤의 방송).
+   * 데몬에는 이미 적혀 있으므로 다시 보내지 않는다. 사본의 시각(updatedAt)은 화면의 지금 시각이 아니라 데몬이 적은 시각(at)으로 맞춘다 —
+   * 일부 키만 받은 사본이 "가장 새것"인 척해서 나중에 데몬의 값을 밀어내지 않게.
+   */
+  function applyRemote(patch, at, from) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return;
+    if (from && from === CLIENT) return;   // 이 화면이 방금 보낸 저장의 메아리 — 그 뒤에 또 바꾼 값을 옛 값으로 되돌리지 않는다
+    let changed = false;
+    for (const [k, v] of Object.entries(patch)) { if (k === 'updatedAt') continue; if (JSON.stringify(cfg[k]) !== JSON.stringify(v)) { cfg[k] = v; changed = true; } }
+    if (typeof at === 'string' && at) cfg.updatedAt = at;
+    try { localStorage.setItem('iris.settings', JSON.stringify(cfg)); } catch {}
+    if (!changed) return;
+    applyAll(); if (open) renderPanel();
     opts.onChange?.(cfg);
   }
+  /** 데몬과 다시 붙었을 때(웹소켓 hello): 그사이 놓친 설정 변화를 데몬에서 다시 읽는다. */
+  async function resync() { const before = JSON.stringify(cfg); await pullServer(); if (JSON.stringify(cfg) === before) return; applyAll(); if (open) renderPanel(); opts.onChange?.(cfg); }
   const optText = (id) => $(id)?.selectedOptions?.[0]?.textContent || '';
   /** 목차 아래 작은 글씨 = 지금 값 한 줄, 노란·빨간 숫자 = 갱신이 필요한 로그인 열쇠, 청보라 = 새 판. */
   function renderNav() {
@@ -547,5 +558,5 @@ window.Settings = (() => {
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); opts.onChange?.(cfg); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, showPane, pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth, applyRemote };
+  return { init, show, hide, about, showPane, pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth, applyRemote, resync };
 })();

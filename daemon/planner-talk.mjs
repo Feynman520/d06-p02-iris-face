@@ -18,6 +18,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { PlannerError } from './planner-store.mjs';
 import { isDate, localDate, localTime, addDays, weekday, endOf, isPeriod, itemDone, occursOn } from './planner-core.mjs';
 import { findClaudeExe, childEnv, TITLE_MODEL, CODEX_TITLE_MODEL } from './titler.mjs';
+import { readTableSync, descendants } from './proctree.mjs';
 
 export const TALK_TIMEOUT_MS = 45_000;
 export const TEXT_MAX = 500;
@@ -248,10 +249,14 @@ export function looksLikeQuestion(text) {
 }
 
 /** 우리가 띄운 그 프로세스와 그 자식들만 끝낸다(PID 로만 — 이름으로 고르지 않는다). 돌려주는 것: 그 프로세스가 더는 없으면 true, 아직 살아 있으면 false. */
-export function killTree(pid) {
+export function killTree(pid, { deep = false, table = readTableSync } = {}) {
   if (!pid) return true;
+  // deep(전부 종료 때): 끝내기 전에 그 프로세스의 자손을 적어 둔다 — 부모만 사라지고 자손(CLI 가 띄운 것)이 남는 경우를 놓치지 않으려는 것.
+  //   프로세스 표를 읽는 데 몇 초가 걸려 평소(시간 초과 · 출력 넘침)에는 하지 않는다 — 데몬이 그동안 멈추기 때문이다. 표를 못 읽으면 부모만 본다.
+  let family = []; if (deep) { try { const t = table({ timeoutMs: 3000 }); if (t) family = descendants(t, pid).map((p) => p.pid); } catch { /* 표를 못 읽음 */ } }
   try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 }); } catch { /* 이미 끝남 */ }
-  try { process.kill(pid, 0); return false; } catch (e) { return e?.code !== 'EPERM'; } // 신호 0 = 있는지만 본다(ESRCH = 없음)
+  const alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e?.code === 'EPERM'; } }; // 신호 0 = 있는지만 본다(ESRCH = 없음)
+  return ![...new Set([pid, ...family])].some(alive);
 }
 
 /**
@@ -279,10 +284,12 @@ export function runAgent({ agent, system, prompt, timeoutMs = TALK_TIMEOUT_MS, e
     try { proc = spawn(file, args, { env, cwd, windowsHide: true, stdio: [stdinText == null ? 'ignore' : 'pipe', 'pipe', 'ignore'] }); }
     catch { return finish({ ok: false, reason: 'spawn-failed' }); }
     try { onSpawn?.(proc); } catch { /* 알림 실패는 넘어간다 */ }
-    timer = setTimeout(() => { kill(proc.pid); finish({ ok: false, reason: 'timeout' }); }, timeoutMs);
+    // 끝내지 못했으면(kill 이 false) 그 PID 를 결과에 실어 준다 — 부른 쪽이 기억했다가 전부 종료 때 다시 끝내고 보고한다
+    const cut = (reason) => { const gone = kill(proc.pid); finish({ ok: false, reason, ...(gone === false ? { leftover: proc.pid } : {}) }); };
+    timer = setTimeout(() => cut('timeout'), timeoutMs);
     proc.on('error', () => finish({ ok: false, reason: 'spawn-failed' }));
     if (stdinText != null && proc.stdin) { proc.stdin.on('error', () => { /* 읽기 전에 끝난 프로세스 */ }); try { proc.stdin.end(stdinText); } catch { /* 닫힘 */ } }
-    proc.stdout?.on('data', (d) => { out += d; if (out.length > OUT_MAX) { kill(proc.pid); finish({ ok: false, reason: 'too-big' }); } });
+    proc.stdout?.on('data', (d) => { out += d; if (out.length > OUT_MAX && !done) cut('too-big'); });
     proc.on('exit', (code) => {
       if (agent === 'codex') {
         let text = ''; try { if (fs.statSync(outFile).size <= OUT_MAX) text = fs.readFileSync(outFile, 'utf8'); } catch { /* 답 파일이 없음 */ }
@@ -312,6 +319,7 @@ export class PlannerTalk {
     this.pl = planner; this.stateDir = stateDir; this.agents = agents; this.run = run; this.now = now; this.log = log; this.kill = kill;
     this.ready = ready;         // 지금 말을 받을 창이 있는가 — 받아 둔 말의 정리 결과는 말풍선 한 번으로만 알리므로, 볼 창이 없을 때는 정리하지 않는다
     this.busy = false; this.stopped = false; this.proc = null;
+    this.leftovers = new Set(); // 끝내려 했지만 살아남은 숨은 호출의 PID(전부 종료 때 다시 끝내고 보고한다)
     this.pending = new Map();   // 물어 둔 큰 변경: id → { ops, text, at, rev }
     this.settled = new Set();   // 이번 실행에서 이미 정리한 받아 둔 말(파일에서 지우지 못했어도 다시 적지 않게)
     this.inboxFile = path.join(stateDir, 'planner-inbox.json'); this.usageFile = path.join(stateDir, 'planner-usage.json');
@@ -319,8 +327,12 @@ export class PlannerTalk {
   /** 전부 종료: 새로 부르지 않고, 돌고 있는 숨은 호출이 있으면 그 가계도만 끝낸다. */
   stop() {
     this.stopped = true; const p = this.proc; this.proc = null;
-    if (p && p.pid && p.exitCode == null) { const gone = this.kill(p.pid); if (gone === false) this.log(`planner-talk: 숨은 호출을 끝내지 못했습니다 pid=${p.pid}`); return { pid: p.pid, gone: gone !== false }; }
-    return null;
+    const pids = [...this.leftovers]; this.leftovers.clear();      // 앞서(시간 초과 등) 끝내지 못한 것도 한 번 더 끝내 본다
+    if (p && p.pid && p.exitCode == null) pids.push(p.pid);
+    if (!pids.length) return null;
+    const left = [];
+    for (const pid of new Set(pids)) { const gone = this.kill(pid, { deep: true }); if (gone === false) { left.push(pid); this.log(`planner-talk: 숨은 호출을 끝내지 못했습니다 pid=${pid}`); } }
+    return { pid: pids[pids.length - 1], gone: left.length === 0, left };
   }
 
   // ---- 사용량(설정 화면의 한 줄) ----
@@ -366,6 +378,7 @@ export class PlannerTalk {
       if (alive && !alive()) return { ok: false, reason: 'off' };   // 부르는 사이에 설정에서 껐다 — 다음 에이전트로 넘어가지 않는다
       const r = await this.run({ agent, system, prompt, onSpawn: (p) => { this.proc = p; }, kill: this.kill });
       this.proc = null;
+      if (r.leftover) { this.leftovers.add(r.leftover); this.log(`planner-${what}: 숨은 호출을 끝내지 못했습니다 pid=${r.leftover}`); }
       this.log(`planner-${what}: ${agent} ${r.ok ? 'ok' : `fail(${r.reason})`} ${((r.ms || 0) / 1000).toFixed(1)}s${r.tokens ? ` tokens=${r.tokens}` : ''}`);
       this.#count(r, agent);                                         // 실패한 시도도 "부른 횟수"다
       if (r.ok) return { ...r, agent };
@@ -502,9 +515,10 @@ export class PlannerTalk {
         if (item.state === 'applying') { this.settled.add(item.id); drop(); n++; tell(`적어 두신 「${short(item.text)}」을 정리하던 중에 꺼졌어요. 달력에 들어갔는지 확인해 주세요.`); continue; }
         if (Number.isNaN(at.getTime()) || this.now().getTime() - at.getTime() > INBOX_KEEP_DAYS * 86400_000) { this.settled.add(item.id); drop(); n++; tell(`적어 두신 「${short(item.text)}」은 오래돼서 정리하지 않았어요. 필요하면 다시 말해 주세요.`); continue; }
         const rev0 = pl.store.rev;
-        const r = await this.#ask(item.text, at, null, item.recent || null);
+        const still = () => on() && this.ready() && !pl.quietNow();                 // 지금도 정리해도 되는가(켜져 있고 · 볼 창이 있고 · 조용히가 아님)
+        const r = await this.#ask(item.text, at, null, item.recent || null, still); // 부르는 사이에 꺼지면 다음 에이전트로 넘어가지 않는다
         if (!r.ok) break;                                                           // 아직 못 부른다 — 남겨 둔다
-        if (!on()) break;                                                           // 부르는 사이에 꺼짐 — 적지 않고 남겨 둔다
+        if (!still()) break;                                                        // 부르는 사이에 꺼짐 · 창이 닫힘 · 조용히 — 적지 않고 남겨 둔다
         let res;
         try {
           res = this.#act(item.text, r.text, { via: 'talk', auto: true, nos: r.nos, rev0, before: () => { item.state = 'applying'; return this.#saveInbox(list); } });

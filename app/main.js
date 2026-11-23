@@ -144,7 +144,7 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); window.Planner?.onHello(m.planner); render();}
+      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); window.Planner?.onHello(m.planner); Settings.resync(); render();} // resync = 데몬과 (다시) 붙었을 때 그사이 놓친 설정 변화를 다시 읽는다
       else if (m.type === 'shutdown') showQuitting();                                                       // 전부 종료 시작(v2.97) — 어느 창·탭이 시작했든 「종료하는 중」
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
@@ -158,6 +158,7 @@
         else if (m.phase === 'error' || m.phase === 'resume-failed') Notify.push({ title: '세팅 마무리 오류', sub: m.error || '', status: 'attention', force: true });
       }
       else if (m.type === 'modules') setModules(m.list);                                                   // 모듈 콘센트: 상태·panel·배지
+      else if (m.type === 'settings') Settings.applyRemote(m.patch, m.updatedAt, m.from);                            // 설정이 바뀜(이 창이든 다른 창이든) — 화면의 사본을 데몬의 값 · 시각에 맞춘다
       else if (m.type === 'planner') window.Planner?.onMessage(m);                                        // 플래너: 장부가 바뀜 · 말풍선 한마디(2026-11-22)
       else if (m.type === 'tools') window.ToolsView?.onTools(m);                                          // 도구 설치·제거 진행(판 B, 2026-11-10)
       else if (m.type === 'module-notify') Notify.external({ id: `mod:${m.module}:${m.target || ''}`, title: m.title, sub: m.sub });
@@ -736,7 +737,7 @@
     },
     openSession: (id) => { if (sessions.some(s => s.id === id)) select(id); },
     openSettings: (pane) => { Settings.show(pane); },
-    onCfg: (patch) => { Settings.applyRemote(patch); },   // 데몬이 바꾼 플래너 설정(말로 한 「잠시 조용히」)
+    onCfg: (patch, at) => { Settings.applyRemote(patch, at); },   // 데몬이 바꾼 플래너 설정(말로 한 「잠시 조용히」)
     drawerOpen: () => Settings.isOpen() || !$('#dash').hidden,
   });
   Planner.applySettings(Settings.get());

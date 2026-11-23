@@ -34,6 +34,7 @@ export const CHECK_SYSTEM = [
 const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').replace(/#(?=\d)/g, '＃').trim();
 export const SCAN_ENTRIES_MAX = 2000; // 한 폴더에서 훑는 항목 수의 상한(파일 100개를 채웠어도 훑는 비용은 따로 든다)
 export const SCAN_MS_MAX = 1500;      // 한 폴더에 쓰는 시간의 상한
+export const SCAN_GIVE_UP_MS = 5000;  // 한 폴더의 훑기를 기다려 주는 가장 긴 시간(넘으면 그 일은 건너뛴다)
 export const PROMPT_MAX = 16_000;     // 아이리스에게 넘기는 글의 상한(일 하나의 묶음 단위로 넣는다 — 중간에서 자르지 않는다)
 const inside = (child, base) => { const c = path.resolve(child).toLowerCase(), b = path.resolve(base).toLowerCase(); return c === b || c.startsWith(b.endsWith(path.sep) ? b : b + path.sep); };
 
@@ -65,6 +66,7 @@ export async function listFolder(dir, { max = FILES_MAX, depth = 2, root = null,
     files.sort((a, b) => a.localeCompare(b)); dirs.sort((a, b) => a.localeCompare(b));
     for (const name of files) {
       if (out.length >= max) { more++; continue; }
+      if (clock() - t0 > msMax) { partial = true; more++; continue; }             // 고친 날짜를 읽다가 시간이 다 됐다
       let m = ''; try { m = localDate((await fs.promises.stat(path.join(d, name))).mtime); } catch { /* 날짜 모름 */ }
       out.push({ name: rel ? `${rel}/${name}` : name, modified: m });
     }
@@ -82,8 +84,9 @@ export class PlannerCheck {
    * @param {{ planner: import('./planner.mjs').Planner, stateDir: string, now?: () => Date, log?: (m: string) => void, list?: typeof listFolder }} o
    *   숨은 AI 는 planner.talkSvc.call(system, prompt) 로 부른다(말하기와 같은 실행기 · 같은 사용량 장부 · 한 번에 하나).
    */
-  constructor({ planner, stateDir, now = () => new Date(), log = () => {}, list = listFolder, root = null }) {
+  constructor({ planner, stateDir, now = () => new Date(), log = () => {}, list = listFolder, root = null, giveUpMs = SCAN_GIVE_UP_MS }) {
     this.pl = planner; this.now = now; this.log = log; this.list = list; this.root = root; // root = 영혼 폴더(그 안의 폴더만 훑는다). 시험에서는 임시 폴더.
+    this.giveUpMs = giveUpMs;                                                              // 한 폴더의 훑기를 기다려 주는 가장 긴 시간
     this.file = path.join(stateDir, 'planner-check.json'); this.state = null; this.running = false;
   }
   // state: day = 스스로 돈 마지막 날 · seen = 일마다 마지막으로 본 날 · proposed = 일마다 준비 작업을 제안한 날(승인 · 거절 뒤에도 같은 일을 또 제안하지 않게)
@@ -93,7 +96,9 @@ export class PlannerCheck {
   /** 그 일의 준비 작업 제안이 지금 기다리고 있는가 */
   #waiting() { return new Set(this.pl.store.list('proposed').map((p) => p.action && p.action.for).filter(Boolean)); }
   /** 지금도 살펴볼 만한 일인가(폴더가 그대로 붙어 있고 · 안 끝났고 · 마감이 안 지났다) — 아이리스의 답을 기다리는 사이에 바뀌었을 수 있다 */
-  #stillGood(it, today) { const cur = this.pl.store.get(it.id); return !!cur && cur.state === 'active' && !cur.repeat && !itemDone(cur) && cur.folder === it.folder && endOf(cur) >= today ? cur : null; }
+  //   아이리스에게 보여 준 것(이름 · 마감 · 단계)이 그사이 달라졌으면 그 답은 옛 모습을 보고 낸 것이다 — 쓰지 않는다.
+  #mark(it) { return JSON.stringify([it.title, it.start, endOf(it), (it.steps || []).map((s) => [s.title, !!s.done])]); }
+  #stillGood(it, today) { const cur = this.pl.store.get(it.id); return !!cur && cur.state === 'active' && !cur.repeat && !itemDone(cur) && cur.folder === it.folder && endOf(cur) >= today && this.#mark(cur) === this.#mark(it) ? cur : null; }
   /**
    * 오늘 볼 일: 폴더가 붙어 있고 · 마감(기간의 마지막 날)이 3일 안이고 · 안 끝난 기간. 하루짜리 일은 마감이 따로 없으므로 보지 않는다(설계 7판).
    * 이미 오늘 본 것 · 그 일의 제안이 기다리는 것 · 한 번 제안했던 것은 뺀다. 한 번에 TARGETS_MAX 개까지(마감이 가까운 순) — 넘는 것은 다음 날 본다.
@@ -101,7 +106,7 @@ export class PlannerCheck {
   targets(today) {
     this.#load();
     const waiting = this.#waiting();
-    return this.pl.store.list('active').filter((it) => !it.repeat && isPeriod(it) && it.folder && !itemDone(it) && diffDays(today, endOf(it)) >= 0 && diffDays(today, endOf(it)) <= CHECK_DAYS && this.state.seen[it.id] !== today && !waiting.has(it.id) && !this.state.proposed[it.id])
+    return this.pl.store.list('active').filter((it) => !it.repeat && isPeriod(it) && it.folder && !itemDone(it) && diffDays(today, endOf(it)) >= 0 && diffDays(today, endOf(it)) <= CHECK_DAYS && this.state.seen[it.id] !== today && !waiting.has(it.id) && this.state.proposed[it.id] !== endOf(it)) // 한 번 제안한 일은 다시 제안하지 않는다 — 마감을 옮겼으면(다른 사정이 됐으면) 다시 본다
       .sort((a, b) => (endOf(a) < endOf(b) ? -1 : endOf(a) > endOf(b) ? 1 : (a.no || 0) - (b.no || 0))).slice(0, TARGETS_MAX);
   }
 
@@ -140,14 +145,18 @@ export class PlannerCheck {
       const now = this.now(); const today = localDate(now); const hm = localTime(now);
       this.#load();
       // 스스로 도는 점검은 설정이 켜져 있을 때만, 말로 시킨 것은 플래너가 켜져 있으면 — 부르기 앞뒤로 다시 본다(그사이 끌 수 있다)
-      const allowed = () => pl.started && !pl.failed && pl.enabled && !pl.store.readOnly && (manual || pl.cfg().plannerCheck === true);
+      //   말로 시킨 것은 말하기의 한 갈래다 — 말하기를 끄면 그것도 멈춘다.
+      const allowed = () => pl.started && !pl.failed && pl.enabled && !pl.store.readOnly && (manual ? pl.cfg().plannerTalk !== false : pl.cfg().plannerCheck === true);
       if (!allowed()) return { called: false, proposed: 0, reason: 'off', say: '지금은 살펴볼 수 없어요.' };
       const waiting0 = this.#waiting();
       const shown = new Map(); const blocks = []; let size = `오늘: ${today} ${hm}`.length; let unread = 0;
       for (const it of list.slice(0, TARGETS_MAX)) {
         if (waiting0.has(it.id)) continue;          // 그 일의 제안이 이미 기다리고 있다(말로 두 번 시킨 경우)
-        const l = await this.list(it.folder, { root: this.root });
-        if (!l) { unread++; continue; }             // 폴더가 없어졌거나 · 읽을 수 없거나 · 영혼 폴더 밖이다 — 그 일은 건너뛴다(빈 폴더로 넘기지 않는다)
+        // 훑기 안의 상한(항목 수 · 시간)은 파일 시스템이 답을 줄 때만 지켜진다 — 답 자체가 오지 않는 느린 드라이브에 붙잡히지 않게 바깥에서도 한 번 더 끊는다
+        let timer; const late = new Promise((r) => { timer = setTimeout(() => r(null), this.giveUpMs); });
+        const l = await Promise.race([Promise.resolve(this.list(it.folder, { root: this.root })).catch(() => null), late]); clearTimeout(timer);
+        if (!l) { unread++; continue; }             // 폴더가 없어졌거나 · 읽을 수 없거나 · 영혼 폴더 밖이거나 · 너무 오래 걸린다 — 그 일은 건너뛴다(빈 폴더로 넘기지 않는다)
+        if (!allowed()) return { called: false, proposed: 0, reason: 'off', say: '그사이 꺼져서 살펴보지 않았어요.' };
         const steps = it.steps && it.steps.length ? ` · 단계: ${it.steps.map((s) => `${clean(s.title)}${s.done ? '(끝냄)' : ''}`).join(', ')}` : '';
         const block = [`#${it.no} ${clean(it.title)} · 마감 ${endOf(it)}(${diffDays(today, endOf(it))}일 남음)${steps}`, `  폴더의 파일(이름 · 고친 날): ${l.files.length ? '' : '(비어 있음)'}`, ...l.files.map((f) => `    ${clean(f.name).slice(0, 160)} · ${f.modified}`), ...(l.more ? [`    (그 밖에 ${l.more}개 더)`] : []), ...(l.partial ? ['    (폴더가 커서 일부만 봤다 — 여기 없는 파일이 있을 수 있다)'] : [])].join('\n');
         if (size + block.length + 2 > PROMPT_MAX) continue;   // 이 묶음을 넣으면 상한을 넘는다 — 통째로 뺀다(잘린 묶음의 번호를 받지 않게)
@@ -179,11 +188,11 @@ export class PlannerCheck {
         const why = clean(x.why).slice(0, 160); const sure = /없습니다|없어요|없음|없다|없네|하지 않았|안 했|안 됐|되지 않았/.test(why) && !/찾지 못/.test(why);
         const evidence = `「${clean(it.title)}」의 폴더 ${path.basename(it.folder)}에서 파일 이름 ${s.files}개와 고친 날짜를 ${today} ${hm}에 살펴봤어요(내용은 보지 않았어요${s.partial ? ' · 폴더가 커서 일부만' : ''}).${why && !sure ? ` ${why}` : ''}`;
         const ask = `「${clean(it.title)}」(마감 ${+endOf(it).slice(5, 7)}월 ${+endOf(it).slice(8, 10)}일)을 준비하려고 해요. 「${title}」${josa(title, '을', '를')} 도와주세요. 먼저 이 폴더에 무엇이 있는지 살펴보고, 어떻게 할지 계획부터 말해 주세요.`;
-        ops.push({ op: 'propose', item: { title, start: day, folder: it.folder, action: { kind: 'start-work', for: it.id, folder: it.folder, prompt: ask } }, why: evidence });
+        ops.push({ op: 'propose', item: { title, start: day, folder: it.folder, action: { kind: 'start-work', for: it.id, folder: it.folder, prompt: ask } }, why: evidence, end: endOf(it) });
       }
       let n = 0;
       for (const o of ops) {
-        try { pl.apply([{ op: 'propose', item: o.item }], { by: 'iris', via: 'check', evidence: o.why }); n++; this.state.proposed[o.item.action.for] = today2; }
+        try { pl.apply([{ op: 'propose', item: o.item }], { by: 'iris', via: 'check', evidence: o.why }); n++; this.state.proposed[o.item.action.for] = o.end; }
         catch (e) { if (!(e instanceof PlannerError)) throw e; this.log(`planner-check: 제안을 올리지 못했습니다 (${e.code})`); }
       }
       if (n) { const alive = new Set(pl.store.list().map((x) => x.id)); for (const k of Object.keys(this.state.proposed)) if (!alive.has(k)) delete this.state.proposed[k]; this.#save(); }

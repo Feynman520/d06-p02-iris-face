@@ -17,6 +17,8 @@ import { CROWD_MIN, josa } from './planner.mjs';
 export const TICK_MS = 30_000;
 export const DUE_DAYS = [3, 1, 0];      // 마감(기간의 마지막 날)을 며칠 전부터 말하는가 — 설정에 내놓지 않는 값(조각 ⑧)
 const MISSED_MAX_MIN = 12 * 60;        // 지나간 약속을 "놓친 것"으로 모아 말하는 범위(그보다 오래된 것은 말하지 않는다)
+const MUTED_REPLAY = 3;                // 조용히가 끝났을 때 다시 말하는 미뤄 둔 말의 수(그보다 많으면 개수를 먼저 말한다)
+const INTRO_RESEND_MS = 10 * 60_000;   // 화면이 "보여 줬다"고 알려 오지 않은 소개를 다시 보내는 간격
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
 const dayWord = (n) => (n === 0 ? '오늘' : n === 1 ? '내일' : n === 2 ? '모레' : `${n}일 뒤`);
 const timeWord = (t) => { const h = +t.slice(0, 2), m = +t.slice(3, 5); const h12 = h % 12 === 0 ? 12 : h % 12; return `${h < 12 ? '오전' : '오후'} ${h12}시${m ? ` ${m}분` : ''}`; };
@@ -39,6 +41,8 @@ export class PlannerRules {
   #save() { try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); const tmp = `${this.file}.tmp-${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(this.state), 'utf8'); fs.renameSync(tmp, this.file); } catch (e) { this.log(`planner-rules: 상태를 적지 못했습니다 (${e?.code || 'error'})`); } }
   start() { if (this.timer) return; this.timer = setInterval(() => { try { this.tick(); } catch (e) { this.log(`planner-rules: tick error ${e?.code || e?.name || 'error'}`); } }, TICK_MS); this.timer.unref?.(); try { this.tick(); } catch (e) { this.log(`planner-rules: tick error ${e?.code || e?.name || 'error'}`); } }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
+  /** 화면이 소개 말풍선을 실제로 보여 줬다(POST /api/planner/intro-seen) — 이제 다시 소개하지 않는다. */
+  introSeen() { this.#load(); if (this.state.intro) return false; this.state.intro = localDate(this.now()); this.#save(); return true; }
 
   /** 지금 조용히 해야 하는가 */
   quiet(nowMs) { return this.pl.quietNow(nowMs); }
@@ -81,6 +85,10 @@ export class PlannerRules {
     this.first = false;
     const quiet = this.quiet(nowMs);
     const quietEnded = this.wasQuiet === true && !quiet; this.wasQuiet = quiet;
+    // 조용히 한 동안 지나간 약속은 조용히가 끝났을 때 모아 말한다 — 「오늘 하루」처럼 12시간보다 길었으면 그 길이만큼 거슬러 본다
+    if (quiet && !this.quietSince) this.quietSince = nowMs;
+    const missedMax = quietEnded && this.quietSince ? Math.max(MISSED_MAX_MIN, Math.ceil((nowMs - this.quietSince) / 60000) + 60) : MISSED_MAX_MIN;
+    if (!quiet) this.quietSince = null;
     const catchUp = resumed || quietEnded;          // 막 켰거나 · 깨어났거나 · 조용히가 끝났다 → 그사이 지나간 약속을 모아 말한다
     const items = pl.store.list('active');
     const empty = !items.length;
@@ -101,7 +109,7 @@ export class PlannerRules {
           const left = Math.round((atMs - floorMs) / 60000);     // 시작까지 남은 분(음수 = 지남)
           const own = Number(it.alerts && it.alerts.leadMin);     // 이 일만 다르게("이건 30분 전에 알려 줘")
           const lead = Number.isInteger(own) && own >= 0 && own <= 1440 ? own : baseLead;
-          if (left > lead || -left > MISSED_MAX_MIN) continue;   // 아직 멀다 / 너무 오래 지났다(말하지도 적지도 않는다)
+          if (left > lead || -left > missedMax) continue;        // 아직 멀다 / 너무 오래 지났다(말하지도 적지도 않는다)
           if (quiet) continue;                                    // 조용히: 적어 두지 않는다 — 끝난 뒤 "지나간 약속"으로 말한다
           if (left >= 0) soon.push({ it, left, date });
           else if (catchUp || (Number.isFinite(prev) && atMs > prev)) missed.push({ it, left, date }); // 막 켰거나 · 깨어났거나 · 시계가 건너뛰어 그사이 지나간 약속
@@ -158,13 +166,20 @@ export class PlannerRules {
       }
     }
 
-    // ---- 조용히가 끝났을 때: 그사이 하지 않은 말(세션이 넣은 것 · 제안 등)이 있었으면 한 번에 ----
-    if (!quiet) { const n = pl.takeMuted(); if (n) speak({ group: 'info', tone: 'iris', text: `조용히 하는 동안 플래너 소식이 ${n}개 있었어요.`, actions: [{ kind: 'open', day: today, label: '플래너 열기' }] }); }
+    // ---- 조용히가 끝났을 때: 그사이 미뤄 둔 말(세션이 넣은 것 · 지우려는 것 · 제안)을 다시 말한다 — 되돌리기 · 확인 단추가 그대로 달린 채 ----
+    //   많으면 먼저 개수를 말하고 최근 것 셋만 다시 말한다(나머지는 달력과 변경 기록에 있다).
+    if (!quiet) {
+      const held = pl.takeMuted();
+      if (held.length > MUTED_REPLAY) speak({ group: 'info', tone: 'iris', text: `조용히 하는 동안 플래너 소식이 ${held.length}개 있었어요. 최근 것부터 알려 드릴게요.`, actions: [{ kind: 'open', day: today, label: '플래너 열기' }] });
+      for (const s of held.slice(-MUTED_REPLAY)) speak(s);
+    }
 
     // ---- 처음 한 번 소개(설계 조각 ⑧): 플래너를 처음 받은 사람에게 한 번만. 수첩이 비어 있어도 말한다(먼저 말하지 않는다는 규칙의 하나뿐인 예외). ----
-    if (!this.state.intro && !quiet) {
+    //   방송했다고 "소개했다"고 적지 않는다 — 화면이 말풍선을 실제로 보여 줬다고 알려 올 때(introSeen) 적는다.
+    //   그때까지는 10분마다 다시 보낸다(첫 실행 튜토리얼이 덮고 있거나 창을 닫아 못 본 경우 — 화면은 이미 들고 있으면 겹쳐 띄우지 않는다).
+    if (!this.state.intro && !quiet && (!this.introSentAt || nowMs - this.introSentAt >= INTRO_RESEND_MS || nowMs < this.introSentAt)) {
       speak({ group: 'greet', tone: 'iris', intro: true, text: '일정은 저한테 말해 주세요. 달력에 넣고 때맞춰 알려 드릴게요.', actions: [{ kind: 'open', day: today, label: '열어 보기' }] });
-      this.state.intro = today;
+      this.introSentAt = nowMs;
     }
 
     this.state.seenAt = now.toISOString();

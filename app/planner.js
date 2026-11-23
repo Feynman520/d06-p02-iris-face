@@ -294,7 +294,19 @@ window.Planner = (() => {
   function show(b) { cur = b; sayNew = true; hovering = false; for (const l of b.lines) arm(l); renderRow(); }
   // 창이 뒤에 있거나 가려진 동안에는 사라지지 않는다 — 돌아왔을 때 그때부터 시간을 센다(안 보는 사이 지나간 알림을 놓치지 않게)
   const away = () => document.hidden || document.visibilityState !== 'visible' || !document.hasFocus();
-  function arm(l) { clearTimeout(l.timer); l.waiting = false; if (!l.ttl) return; if (away()) { l.waiting = true; return; } l.timer = setTimeout(() => (away() ? (l.waiting = true) : closeLine(l)), l.ttl); }
+  function arm(l) {
+    clearTimeout(l.timer); l.waiting = false;
+    if (away()) { if (l.ttl || (l.meta && l.meta.intro)) l.waiting = true; return; }
+    seen(l);
+    if (!l.ttl) return;
+    l.timer = setTimeout(() => (away() ? (l.waiting = true) : closeLine(l)), l.ttl);
+  }
+  /** 처음 한 번 소개가 실제로 화면에 보였다(창이 앞에 있고 말풍선이 떴다) — 데몬에 알려 "소개했다"고 적게 한다. 알리지 못하면 데몬이 나중에 다시 보낸다. */
+  function seen(l) {
+    if (!(l.meta && l.meta.intro) || l.acked) return;
+    l.acked = true;
+    try { fetch('/api/planner/intro-seen', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => { l.acked = false; }); } catch { l.acked = false; }
+  }
   function back() { if (cur && !hovering && !away()) for (const l of cur.lines) if (l.waiting) arm(l); }
   function dropLine(l) { clearTimeout(l.timer); l.closed = true; if (cur) cur.lines = cur.lines.filter((x) => x !== l); for (const q of queue) q.lines = q.lines.filter((x) => x !== l); }
   function closeLine(l) {
@@ -311,12 +323,25 @@ window.Planner = (() => {
   const bubbles = () => [...(cur ? [cur] : []), ...queue].flatMap((b, bi) => b.lines.map((l) => ({ group: b.group, tone: b.tone, text: l.text, sub: l.sub, tip: l.tip, id: l.id, meta: l.meta, shown: bi === 0 && !!cur })));
 
   // ---- 데몬이 시킨 한마디(planner 방송의 say) ----
+  /** 지금 「잠시 조용히」인가(설정의 끝나는 시각이 아직 안 지났다) */
+  const quietOn = (c) => { const t = c && c.plannerQuietUntil ? Date.parse(c.plannerQuietUntil) : NaN; return Number.isFinite(t) && t > Date.now(); };
+  /** 세션이 지우려는 것에 대한 답을 데몬에 보낸다. 결과는 말풍선으로(지웠으면 되돌리기와 함께). */
+  async function answerConfirm(token, yes) {
+    let r = null;
+    try { const res = await fetch('/api/planner/confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, yes }) }); r = await res.json(); } catch { /* 닿지 못함 */ }
+    if (!r || typeof r.say !== 'string') { say({ group: 'info', tone: 'warn', text: '답을 전하지 못했어요. 달력에서 확인해 주세요.' }); return; }
+    say({ group: 'info', tone: r.ok ? 'iris' : 'warn', text: r.say, actions: r.changeId ? [{ label: '되돌리기', icon: 'undo', run: () => undoChange(r.changeId) }] : null });
+    if (open) load();
+  }
   let introWait = 0;
   const tutorialOpen = () => { try { return !!window.Tutorial?.isOpen?.(); } catch { return false; } };
-  /** 플래너가 한 말(데몬이 시킨 것)만 거둔다 — 세션의 작업 알림은 그대로 둔다. 플래너를 껐을 때 부른다. */
-  function dropPlannerSays() {
+  /**
+   * 플래너가 한 말(데몬이 시킨 것)만 거둔다 — 세션의 작업 알림은 그대로 둔다. 플래너를 껐을 때 · 「잠시 조용히」를 켰을 때 부른다.
+   * keepAsk = 사용자의 답을 기다리는 말(세션이 지우려는 것의 확인)은 남긴다 — 조용히는 알림을 멈추는 것이지 물음을 버리는 것이 아니다.
+   */
+  function dropPlannerSays({ keepAsk = false } = {}) {
     clearInterval(introWait); introWait = 0;
-    const mine = (b) => b.lines.length > 0 && b.lines.every((l) => l.meta && l.meta.src === 'planner');
+    const mine = (b) => b.lines.length > 0 && b.lines.every((l) => l.meta && l.meta.src === 'planner' && !(keepAsk && l.meta.ask));
     for (let i = queue.length - 1; i >= 0; i--) if (mine(queue[i])) queue.splice(i, 1);
     if (cur && mine(cur)) for (const l of [...cur.lines]) closeLine(l);
   }
@@ -329,11 +354,19 @@ window.Planner = (() => {
       if (a.kind === 'chat') return { icon: 'chat', tip: '이 폴더에서 대화 시작', run: () => opts.chatIn(a.path, a.prompt || '') };
       if (a.kind === 'move') return { label: '내일로 옮기기', icon: 'arrow-right', main: true, run: () => talkSend('오늘 남은 일을 내일로 옮겨 줘', { quick: 'move-rest', day: a.day || null }) };
       if (a.kind === 'proposals') return { label: '제안 보기', icon: 'bulb', main: true, run: () => { strip = true; openPanel(null); } };
+      if (a.kind === 'confirm' && typeof a.token === 'string') return { label: a.label || (a.yes ? '지우기' : '그대로 두기'), icon: a.yes ? 'check' : 'close', main: !!a.yes, run: () => answerConfirm(a.token, !!a.yes) }; // 세션이 지우려는 것에 대한 답
       return null;
     }).filter(Boolean);
-    // 처음 한 번 소개는 첫 실행 튜토리얼이 덮고 있는 동안 띄우지 않는다(뒤에서 떴다 사라지면 아무도 못 본다) — 닫힐 때까지 기다렸다가, 조금 더 오래 보인다
-    if (s.intro && tutorialOpen()) { clearInterval(introWait); introWait = setInterval(() => { if (!tutorialOpen()) { clearInterval(introWait); introWait = 0; sayFromDaemon(s); } }, 2000); return; }
-    say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : s.intro ? TTL * 2.5 : undefined, meta: { src: 'planner' } });
+    const ask = (Array.isArray(s.actions) ? s.actions : []).some((a) => a && a.kind === 'confirm');
+    if (s.intro) {
+      // 처음 한 번 소개: 이미 들고 있으면(기다리는 중 · 떠 있음) 겹쳐 띄우지 않는다 — 데몬은 화면이 "보여 줬다"고 알릴 때까지 다시 보낸다
+      if (introWait || bubbles().some((b) => b.meta && b.meta.intro)) return;
+      // 「잠시 조용히」 중이면 받지 않는다(데몬이 조용히가 끝난 뒤 다시 보낸다)
+      if (quietOn(cfg)) return;
+      // 첫 실행 튜토리얼이 덮고 있는 동안 띄우지 않는다(뒤에서 떴다 사라지면 아무도 못 본다) — 닫힐 때까지 기다렸다가, 조금 더 오래 보인다
+      if (tutorialOpen()) { introWait = setInterval(() => { if (!tutorialOpen()) { clearInterval(introWait); introWait = 0; sayFromDaemon(s); } }, 2000); return; }
+    }
+    say({ group: s.group || 'info', tone: s.tone || 'iris', text: s.text, sub: s.sub || '', tip: s.tip || '', actions: actions.length ? actions : null, ttl: s.sticky ? 0 : s.intro ? TTL * 2.5 : undefined, meta: { src: 'planner', intro: !!s.intro, ask } });
     // 약속 알림(os 표시가 붙은 것)은 창이 뒤에 있으면 윈도우 알림으로도 — 설정의 「윈도우 알림」을 따른다(app/notify.js 의 같은 길)
     if (s.os && away()) { try { window.Notify?.os?.({ title: s.text, sub: s.tip || '', onClick: () => openPanel(null) }); } catch { /* 알림 실패는 넘어간다 */ } }
   }
@@ -468,7 +501,7 @@ window.Planner = (() => {
   function onMessage(m) {
     if (!m) return;
     if (typeof m.proposals === 'number') count = m.proposals;
-    if (m.cfg && typeof m.cfg === 'object') { try { opts.onCfg(m.cfg); } catch { /* 설정 화면이 아직 없음 */ } } // 데몬이 바꾼 설정(말로 "1시간 동안 알리지 마") — 화면의 설정 사본을 맞춘다
+    if (m.cfg && typeof m.cfg === 'object') { try { opts.onCfg(m.cfg, m.cfgAt || null); } catch { /* 설정 화면이 아직 없음 */ } } // 데몬이 바꾼 설정(말로 "1시간 동안 알리지 마") — 화면의 설정 사본을 맞춘다
     if (m.say) sayFromDaemon(m.say);
     if (open) load(); else renderRow();
   }
@@ -479,9 +512,10 @@ window.Planner = (() => {
     closePanel(); return true;
   }
   function applySettings(c) {
-    const was = cfg.plannerEnabled !== false;
+    const was = cfg.plannerEnabled !== false; const wasQuiet = quietOn(cfg);
     cfg = { ...cfg, ...(c || {}) };
     if (was && cfg.plannerEnabled === false) dropPlannerSays(); // 방금 껐다: 플래너가 하던 말 · 차례를 기다리던 말을 거둔다(세션의 작업 알림은 그대로)
+    else if (!wasQuiet && quietOn(cfg)) dropPlannerSays({ keepAsk: true }); // 방금 「잠시 조용히」를 켰다: 화면에 이미 와 있던 플래너의 말도 멈춘다(답을 기다리는 물음은 남긴다)
     render(); if (open) load();
   }
   /** 서랍이 열리거나 닫혔을 때(본체가 알려 준다) */

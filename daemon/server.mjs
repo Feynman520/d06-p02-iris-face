@@ -322,7 +322,12 @@ const server = http.createServer(async (req, res) => {
     if (shuttingDown && req.method !== 'GET' && p !== '/api/shutdown') return json(res, 503, { error: 'IRIS 가 종료하는 중입니다' });
     if (req.method === 'GET' && p === '/api/health') return json(res, 200, { ok: true, version: VERSION, about: ABOUT, pid: process.pid, uptime: process.uptime(), sessions: sm.list().length, root: WS_ROOT, rootName: rootName(WS_ROOT), features: features(), autoResume: autoResumeState(settings.get()) });
     if (req.method === 'GET' && p === '/api/settings') return json(res, 200, settings.get());
-    if (req.method === 'PUT' && p === '/api/settings') { const b = await readBody(req); return json(res, 200, settings.set(b)); }
+    if (req.method === 'PUT' && p === '/api/settings') {
+      const b = await readBody(req); const saved = settings.set(b);
+      // 붙어 있는 화면 모두에 알린다 — 다른 창(브라우저 탭)이 옛 사본을 들고 있다가 나중에 통째로 저장해 이 변경을 되돌리지 않게
+      try { if (b && typeof b === 'object' && !Array.isArray(b)) { const { updatedAt: _drop, ...patch } = b; broadcast({ type: 'settings', patch, updatedAt: saved.updatedAt, from: String(req.headers['x-iris-client'] || '').slice(0, 40) }); } } catch {}
+      return json(res, 200, saved);
+    }
     // ---- 플래너: 달력 보기 · 끝냄 · 되돌리기 · 제안에 답하기(daemon/planner.mjs 가 전부 맡는다) ----
     if (p.startsWith('/api/planner/')) return await planner.route(req, res, { url, json, readBody, sameOrigin });
     if (req.method === 'GET' && p === '/api/agents') return json(res, 200, activeAgentsMap(AGENTS));
@@ -653,6 +658,8 @@ function shutdown() {
     try { report = await Promise.race([sm.endAll(), new Promise(r => setTimeout(() => r(null), SHUTDOWN_SESSIONS_MS))]); }
     catch (e) { log(`shutdown: endAll error ${e?.stack || e}`); }
     if (!report) report = { ok: false, verified: false, timeout: true, sessions: [], ended: 0, survivors: [] };
+    // 플래너의 숨은 호출을 끝내지 못했으면 "다 끝났다"고 하지 않는다 — 남은 것으로 보고에 넣어 창이 그대로 알리게 한다
+    if (plannerHidden && !plannerHidden.gone) { report.ok = false; for (const pid of plannerHidden.left || [plannerHidden.pid]) report.survivors.push({ pid, name: '플래너의 숨은 호출', session: '' }); }
     try { voice.stop(); } catch {} try { sleepWatcher.stop(); } catch {} try { updater.stop(); } catch {} try { memory.stop(); } catch {}
     try { fs.writeFileSync(path.join(STATE, 'shutdown-report.json'), JSON.stringify({ ...report, ...(plannerHidden ? { plannerHidden } : {}), at: new Date().toISOString(), version: VERSION }, null, 2), 'utf8'); } catch {}
     if (plannerHidden && !plannerHidden.gone) log(`shutdown: planner hidden call still alive pid=${plannerHidden.pid}`);

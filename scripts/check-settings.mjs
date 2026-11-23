@@ -51,7 +51,10 @@ ok(plDef && JSON.stringify(Object.entries(plDef).sort()) === JSON.stringify(Obje
 ok(plDef && plDef.plannerCheck === false && Object.entries(plDef).filter(([k, v]) => typeof v === 'boolean' && k !== 'plannerCheck').every(([, v]) => v === true), '1 플래너: 처음 값은 준비 점검만 끔');
 ok(!/const DEF = \{[^}]*planner/.test(js), '1 플래너 키는 공용 처음 값(DEF)에 넣지 않음 — 손대지 않은 키는 저장되지 않는다');
 ok(!/Face|TeamClaude|데몬/.test(plPane.replace(/<!--[\s\S]*?-->/g, '')) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(plPane), '1 플래너: 사용자에게 보이는 글에 안쪽 이름 · 이모지 없음');
-ok(/onChange: \(c\) => window\.Planner\?\.applySettings\(c\)/.test(main) && /onCfg: \(patch\) => \{ Settings\.applyRemote\(patch\); \}/.test(main), '1 설정이 바뀌면 플래너 화면이 바로 따라감 · 데몬이 바꾼 설정은 화면의 사본에 맞춤');
+ok(/onChange: \(c\) => window\.Planner\?\.applySettings\(c\)/.test(main) && /onCfg: \(patch, at\) => \{ Settings\.applyRemote\(patch, at\); \}/.test(main), '1 설정이 바뀌면 플래너 화면이 바로 따라감 · 데몬이 바꾼 설정은 화면의 사본에 맞춤');
+const serverSrc = src('daemon/server.mjs');
+ok(/broadcast\(\{ type: 'settings', patch, updatedAt: saved\.updatedAt, from:/.test(serverSrc) && /m\.type === 'settings'\) Settings\.applyRemote\(m\.patch, m\.updatedAt, m\.from\)/.test(main) && /if \(from && from === CLIENT\) return;/.test(js) && /'x-iris-client': CLIENT/.test(js), '1 설정 저장은 붙어 있는 화면 모두에 방송 · 자기 저장의 메아리는 무시(그 뒤에 바꾼 값을 되돌리지 않게)');
+ok(/if \(typeof at === 'string' && at\) cfg\.updatedAt = at;/.test(js) && !/applyRemote[\s\S]{0,400}cfg\.updatedAt = new Date\(\)/.test(js), '1 받은 설정의 시각은 데몬이 적은 시각으로(화면의 지금 시각을 쓰지 않음)');
 
 // ---------- 2) 시험 데몬 + 화면 ----------
 const req = createRequire(import.meta.url);
@@ -177,6 +180,33 @@ else {
         await p.locator('#st-pl-folder').click(); await sleep(500);
         ok((await p.locator('.dlg, .dialog, [role="dialog"], [role="alertdialog"]').filter({ hasText: '아직 수첩에 적은 것이 없어' }).count()) >= 1 || (await p.getByText('아직 수첩에 적은 것이 없어').count()) >= 1, '2 「수첩 폴더 열기」: 빈 수첩이면 화면 안 알림으로 알려 줌(네이티브 창 아님)');
         await p.keyboard.press('Escape'); await sleep(300);
+        // 설정의 사본 맞추기: 어느 창에서 저장하든 붙어 있는 다른 창의 사본이 따라온다(옛 사본을 통째로 저장해 되돌리는 일을 막는다)
+        const p2 = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+        const errs2 = []; p2.on('pageerror', e => errs2.push(e.message));
+        await p2.goto(`http://127.0.0.1:${PORT}/`); await sleep(2000);
+        const theme0 = await p2.evaluate(() => window.Settings.get().theme);
+        await p.locator('#st-nav .st-nav-i[data-pane="design"]').click(); await sleep(300);
+        await p.locator('#st-themes .st-theme').nth(2).click(); await sleep(600);
+        const themeA = await p.evaluate(() => window.Settings.get().theme);
+        const theme2 = await p2.evaluate(() => window.Settings.get().theme);
+        ok(themeA !== theme0 && theme2 === themeA && (await p2.evaluate(() => document.documentElement.dataset.irisTheme)) === themeA, `2 한 창에서 바꾼 설정이 다른 창의 사본 · 화면에도 바로 반영됨 — ${theme0} → ${theme2}`);
+        const at2 = await p2.evaluate(() => window.Settings.get().updatedAt);
+        ok(at2 === (await saved()).updatedAt, '2 받은 쪽 사본의 시각 = 데몬이 적은 시각(화면의 지금 시각으로 "최신"을 만들지 않음)');
+        // 받은 쪽(p2)이 그 뒤에 다른 것을 저장해도 첫 창의 변경을 되돌리지 않는다
+        await p2.evaluate(() => { document.getElementById('btn-settings').click(); }); await sleep(500);
+        await p2.locator('#st-nav .st-nav-i[data-pane="planner"]').click(); await sleep(300);
+        await p2.locator('#st-pl-overlap').evaluate((e) => e.click()); await sleep(600);
+        const fin = await saved();
+        ok(fin.theme === themeA && fin.plannerOverlap === false && (await p.evaluate(() => window.Settings.get().plannerOverlap)) === false, '2 다른 창이 나중에 저장해도 앞선 변경이 되돌아가지 않고, 그 변경은 첫 창에도 옴');
+        await p2.locator('#st-pl-overlap').evaluate((e) => e.click()); await sleep(400);
+        await p.locator('#st-themes .st-theme').first().click(); await sleep(400);
+        ok(errs2.length === 0, `2 둘째 창 페이지 오류 ${errs2.length}건${errs2.length ? ' ' + errs2.join(' | ') : ''}`);
+        await p2.close();
+        // 데몬이 (다시) 붙었을 때: 그사이 데몬에서 바뀐 값을 다시 읽는다
+        await fetch(`${B}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plannerStartMin: 15 }) }); await sleep(400);
+        ok((await p.evaluate(() => window.Settings.get().plannerStartMin)) === 15, '2 화면 밖에서 저장한 값(방송)도 사본에 반영됨');
+        await p.evaluate(async () => { const c = JSON.parse(localStorage.getItem('iris.settings')); c.plannerStartMin = 5; c.updatedAt = '2020-01-01T00:00:00.000Z'; localStorage.setItem('iris.settings', JSON.stringify(c)); await window.Settings.resync(); }); await sleep(300);
+        ok((await p.evaluate(() => window.Settings.get().plannerStartMin)) === 15, '2 다시 붙을 때(resync): 데몬의 값이 더 새것이면 그것으로 맞춤');
         if (capDir) { await p.locator('#btn-settings').click().catch(() => {}); }
       }
       ok(errs.length === 0, `2 ${W}px 페이지 오류 ${errs.length}건${errs.length ? ' ' + errs.join(' | ') : ''}`);

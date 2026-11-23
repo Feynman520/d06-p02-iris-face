@@ -5,10 +5,12 @@
 //   · 사용자가 시킨 것(--asked)은 바로 넣고 화면에 "○○ 세션에서 추가했어요" + 되돌리기를 띄운다.
 //     세션이 스스로 판단한 것은 달력에 넣지 않고 「아이리스 제안」에 올린다(사용자가 「추가」를 눌러야 들어간다).
 //   · 세션이 할 수 있는 것(설계 조각 ④ 확정): 보기 · 넣기 · 고치기 · 끝냄 표시 · 지우기. 고치기 · 끝냄 · 지우기는 사용자가 시킨 것(--asked)만,
-//     하나씩, 모두 화면에 알림 + 되돌리기. 지운 일은 휴지통에 30일 남는다. 열쇠는 그 세션 카드가 살아 있는 동안만 받는다.
+//     하나씩, 모두 화면에 알림 + 되돌리기. 지우기는 세션이 바로 하지 않는다 — 화면에 확인을 띄우고 사용자가 「지우기」를 눌러야 지워진다(휴지통 30일).
+//     열쇠는 그 세션 카드가 살아 있는 동안만 받는다.
 //   · 숨은 AI 를 부르지 않는다 — 토큰은 그 세션이 이미 쓰고 있는 것뿐이다.
 //   · 로그에 일정 내용 · 열쇠 값을 싣지 않는다.
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PlannerError } from './planner-store.mjs';
 import { isDate, addDays, endOf, itemDone, occursOn } from './planner-core.mjs';
@@ -21,6 +23,8 @@ export const READ_LIMIT = 120;                               // 한 세션이 10
 export const BAD_KEY_LIMIT = 30;                             // 10분 동안 열쇠가 틀린 요청이 이만큼이면 그 뒤로는 잠시 받지 않는다
 export const PROPOSE_MAX = 10;                               // 한 세션이 쌓아 둘 수 있는 제안 수
 export const SAME_ADD_MS = 2 * 60_000;                       // 같은 세션이 이 시간 안에 똑같은 일을 또 넣으면 두 번 넣지 않는다(응답을 못 받고 다시 시도한 경우)
+export const CONFIRM_KEEP_MS = 24 * 3600_000;                // 지우기 확인을 기다려 주는 시간(조용히 하는 동안 미뤄졌다가 나중에 뜰 수 있다)
+export const PENDING_MAX = 5;                                // 한 세션이 물어 둘 수 있는 지우기의 수
 const FIELDS = ['title', 'start', 'end', 'time', 'timeEnd', 'repeat', 'steps', 'note', 'place', 'who'];
 const pick = (o, keys) => { const out = {}; if (o && typeof o === 'object') for (const k of keys) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined) out[k] = o[k]; return out; };
 
@@ -41,7 +45,8 @@ export class PlannerCli {
     this.writes = new Map(); // 세션 번호 → 최근에 적은 시각들
     this.reads = new Map();  // 세션 번호 → 최근에 본 시각들
     this.badKeys = [];       // 열쇠가 틀린 요청의 시각들
-    this.lastAdd = new Map(); // 세션 번호 → { sig, at, no } 방금 넣은 것(똑같은 것을 다시 넣지 않게)
+    this.lastAdd = new Map(); // 세션 번호 → [{ sig, at, id }] 방금 넣은 것들(똑같은 것을 다시 넣지 않게)
+    this.pending = new Map(); // 지우려고 사용자에게 물어 둔 것: token → { id, title, scope, date, updatedAt, meta, source, at }
   }
   /** 지금 세션에게 플래너를 열어 줄 것인가(플래너 켬 + 「다른 세션에서 넣기」 켬 + 장부가 열림) */
   get on() { const pl = this.pl; return !!(pl.started && !pl.failed && pl.enabled && pl.cfg().plannerFromSessions !== false); }
@@ -69,6 +74,29 @@ export class PlannerCli {
   }
   /** 열쇠가 틀린 요청이 짧은 동안 너무 많았는가(맞히려고 두드리는 것을 늦춘다 — 맞는 열쇠의 요청은 그대로 받는다) */
   #badKey() { const t = this.now().getTime(); this.badKeys = this.badKeys.filter((x) => t - x < WRITE_WINDOW_MS); if (this.badKeys.length >= BAD_KEY_LIMIT) return true; this.badKeys.push(t); return false; }
+  /**
+   * 세션이 지우려던 것에 대한 사용자의 답(화면의 말풍선 → POST /api/planner/confirm). 던지지 않는다 — { ok, say, changeId? }.
+   * 물어본 뒤로 그 일이 바뀌었으면(이름 · 날짜를 고쳤거나 이미 지웠거나) 지우지 않는다.
+   */
+  confirm(token, yes) {
+    const pl = this.pl; const p = this.pending.get(token); this.pending.delete(token);
+    if (!p || this.now().getTime() - p.at > CONFIRM_KEEP_MS) return { ok: false, say: '물어본 지 오래돼서 그 일은 그대로 두었어요.' };
+    if (!yes) { this.log('planner-cli: confirm no'); return { ok: true, say: `「${p.title}」${josa(p.title, '은', '는')} 그대로 두었어요.` }; }
+    try {
+      if (!pl.started || pl.failed || !pl.enabled) return { ok: false, say: '플래너가 꺼져 있어서 지우지 않았어요.' };
+      const it = pl.store.get(p.id);
+      if (!it || it.state !== 'active') return { ok: false, say: '그 일은 이미 달력에 없어요.' };
+      if ((it.updatedAt || null) !== p.updatedAt || it.title !== p.title) return { ok: false, say: '물어본 뒤로 그 일이 바뀌어서 지우지 않았어요. 달력에서 확인해 주세요.' };
+      const op = p.scope === 'day' ? { op: 'update', id: it.id, patch: { repeat: { skip: [...new Set([...((it.repeat && it.repeat.skip) || []), p.date])] } } } : { op: 'remove', id: it.id };
+      const r = pl.apply([op], { ...p.meta, confirmed: true });
+      this.log(`planner-cli: confirm yes ${p.scope}`);
+      return { ok: true, changeId: r.changeId, say: p.scope === 'day' ? `「${p.title}」의 그날 것만 뺐어요.` : `「${p.title}」${josa(p.title, '을', '를')} 지웠어요. 휴지통에 30일 남아요.` };
+    } catch (e) {
+      if (e instanceof PlannerError) return { ok: false, say: `지우지 못했어요. ${e.message}` };
+      this.log(`planner-cli: confirm 오류 ${e?.code || e?.name || 'error'}`);
+      return { ok: false, say: '지우다가 문제가 생겼어요.' };
+    }
+  }
   #who(rec) { const t = String(rec.title || '').trim() || path.basename(String(rec.cwd || '')) || '세션'; return t.length > 24 ? `${t.slice(0, 24)}…` : t; }
 
   /**
@@ -110,19 +138,22 @@ export class PlannerCli {
         return { code: 200, out: { ok: true, text: [`${op.done ? '끝냄으로 표시했습니다' : '끝냄 표시를 풀었습니다'}: ${fmtItem(r.items[0])}`, told].join('\n') } };
       }
       if (cmd === 'remove') {
-        // 지우기: 하나씩, 휴지통으로(30일 동안 되살릴 수 있다). 반복하는 일은 그날 것만(--date) 또는 전부(--all) 가운데 하나를 밝혀야 한다.
+        // 지우기(설계 조각 ④: 지우기는 먼저 확인): 세션이 바로 지우지 않는다 — 사용자 화면에 "○○ 세션이 「…」을 지우려고 해요"를 띄우고,
+        // 사용자가 「지우기」를 눌러야 지워진다(휴지통으로 · 되돌리기 포함). 하나씩. 반복하는 일은 그날 것만(--date) 또는 전부(--all)를 밝혀야 한다.
+        let scope = 'one';
         if (it.repeat) {
-          if (isDate(body.date)) {
-            if (!occursOn(it, body.date)) return no(400, '그날에는 그 반복 일이 없습니다.', 'no-occurrence');
-            const r = pl.apply([{ op: 'update', id: it.id, patch: { repeat: { skip: [...new Set([...(it.repeat.skip || []), body.date])] } } }], meta);
-            bubble(`${+body.date.slice(5, 7)}월 ${+body.date.slice(8, 10)}일 것만 뺐어요.`, r, body.date);
-            return { code: 200, out: { ok: true, text: [`그날 것만 뺐습니다: ${fmtItem(r.items[0])}`, told].join('\n') } };
-          }
-          if (body.all !== true) return no(400, '반복하는 일입니다. 그날 것만 빼려면 --date YYYY-MM-DD, 반복 전체를 지우려면 --all 을 붙이세요(사용자가 어느 쪽을 말했는지 확인하세요).', 'repeat-scope');
+          if (isDate(body.date)) { if (!occursOn(it, body.date)) return no(400, '그날에는 그 반복 일이 없습니다.', 'no-occurrence'); scope = 'day'; }
+          else if (body.all === true) scope = 'all';
+          else return no(400, '반복하는 일입니다. 그날 것만 빼려면 --date YYYY-MM-DD, 반복 전체를 지우려면 --all 을 붙이세요(사용자가 어느 쪽을 말했는지 확인하세요).', 'repeat-scope');
         }
-        const r = pl.apply([{ op: 'remove', id: it.id }], meta);
-        bubble(it.repeat ? '반복 전체를 지웠어요.' : '지웠어요.', r, it.start);
-        return { code: 200, out: { ok: true, text: [`지웠습니다(휴지통에 30일 남습니다): ${fmtItem(it)}`, told].join('\n') } };
+        const nowMs = this.now().getTime();
+        for (const [k, v] of this.pending) if (nowMs - v.at > CONFIRM_KEEP_MS) this.pending.delete(k);
+        if ([...this.pending.values()].filter((v) => v.source.id === sid).length >= PENDING_MAX) return no(429, `이 세션이 지우려고 물어 둔 것이 이미 ${PENDING_MAX}개 있습니다. 사용자가 답한 뒤에 다시 하세요.`, 'pending-max');
+        const token = crypto.randomBytes(12).toString('hex');
+        this.pending.set(token, { id: it.id, title: it.title, scope, date: scope === 'day' ? body.date : null, updatedAt: it.updatedAt || null, meta, source, at: nowMs });
+        const what = scope === 'day' ? `${+body.date.slice(5, 7)}월 ${+body.date.slice(8, 10)}일 것만 빼려고` : scope === 'all' ? '반복 전체를 지우려고' : '지우려고';
+        pl.say({ group: 'attention', tone: 'warn', sticky: true, text: `「${source.title}」 세션이 ${T}${josa(it.title, '을', '를')} ${what} 해요.`, tip: fmtItem(it), actions: [{ kind: 'confirm', token, yes: true, label: scope === 'day' ? '그날만 빼기' : '지우기' }, { kind: 'confirm', token, yes: false, label: '그대로 두기' }] });
+        return { code: 200, out: { ok: true, text: [`아직 지우지 않았습니다. 사용자 화면에 확인을 띄웠습니다 — 사용자가 「${scope === 'day' ? '그날만 빼기' : '지우기'}」를 눌러야 지워집니다: ${fmtItem(it)}`, '사용자에게 화면의 확인을 눌러 달라고 알려 주세요. 다시 요청하지 마세요.'].join('\n') } };
       }
       const patch = pick(body.item, FIELDS);
       if (!Object.keys(patch).length) return no(400, '바꿀 것이 없습니다. iris-planner help 를 보세요.', 'empty');
@@ -147,12 +178,15 @@ export class PlannerCli {
     if (typeof rec.cwd === 'string' && rec.cwd) item.folder = rec.cwd; // 그 세션이 일하던 폴더를 붙여 둔다(알림의 「폴더 열기」 · 「작업 시작」)
     if (Array.isArray(item.steps)) item.steps = item.steps.map((s) => (s && typeof s === 'object' ? pick(s, ['title', 'day']) : s));
     // 응답을 받지 못해 같은 것을 다시 넣는 경우: 같은 세션이 방금(2분 안) 똑같은 일을 넣었고 그 일이 아직 있으면 두 번 넣지 않는다
-    const sig = JSON.stringify([meta.asked, item.title, item.start, item.end || null, item.time || null]); const last = this.lastAdd.get(source.id);
-    if (last && last.sig === sig && this.now().getTime() - last.at < SAME_ADD_MS) {
+    //   "똑같은"의 기준 = 보낸 칸 전부(이름 · 날짜 · 시각 · 단계 · 반복 · 메모 …)가 같은 것. 사이에 다른 것을 넣었어도 알아본다(최근 몇 건을 기억).
+    const sig = JSON.stringify([meta.asked, FIELDS.map((k) => (item[k] === undefined ? null : item[k]))]); const nowMs = this.now().getTime();
+    const recent = (this.lastAdd.get(source.id) || []).filter((x) => nowMs - x.at < SAME_ADD_MS);
+    const last = recent.find((x) => x.sig === sig);
+    if (last) {
       const same = pl.store.get(last.id);
       if (same && same.state !== 'trash') return { code: 200, out: { ok: true, text: `방금 같은 것을 이미 ${same.state === 'proposed' ? '제안으로 올렸습니다' : '넣었습니다'}(두 번 넣지 않았습니다): ${fmtItem(same)}` } };
     }
-    const remember = (it) => this.lastAdd.set(source.id, { sig, at: this.now().getTime(), id: it.id });
+    const remember = (it) => this.lastAdd.set(source.id, [...recent, { sig, at: nowMs, id: it.id }].slice(-8));
     if (!meta.asked) {
       if (!meta.evidence) return { code: 400, out: { ok: false, text: '사용자가 시키지 않은 일정은 --why 에 근거(어느 대화의 무엇 때문인지)를 적어야 제안으로 올릴 수 있습니다. 사용자가 직접 시킨 것이면 --asked 를 붙이세요.' } };
       const mine = pl.store.list('proposed').filter((x) => x.source?.session?.id === source.id).length;
