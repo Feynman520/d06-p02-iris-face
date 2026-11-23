@@ -68,7 +68,7 @@ export function dayRows(items, date, today) {
     const period = isPeriod(it) ? { start: it.start, end: it.end, total: diffDays(it.start, it.end) + 1, index: date >= it.start && date <= it.end ? diffDays(it.start, date) + 1 : 0, last: date === it.end } : null;
     const done = doneOn(it, date);
     rows.push({
-      id: it.id, no: it.no, title: it.title, date, time: it.time || null, timeEnd: it.timeEnd || null, done,
+      id: it.id, no: it.no, title: it.title, date, start: it.start, end: endOf(it), time: it.time || null, timeEnd: it.timeEnd || null, done, // start · end = 그 일의 처음 · 마지막 날(일정 창이 쓴다, 2026-11-23)
       late, lateFrom: late && !period ? it.start : null,
       period, red: !done && !!period && date >= it.end,
       steps: hasSteps(it) ? it.steps.map((s, i) => ({ id: s.id, n: i + 1, title: s.title, day: s.day, done: !!s.done, cur: s.day === date, over: !s.done && s.day < today })) : null,

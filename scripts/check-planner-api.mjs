@@ -136,19 +136,24 @@ try {
   const c2 = await post('/api/planner/ops', { ops: [{ op: 'add', item: { title: '몰래 넣기', start: today } }] });
   const c3 = await post('/api/planner/ops', { ops: [{ op: 'check', id: sTimed.id, done: true }, { op: 'remove', id: sTimed.id }] });
   ok(c2.status === 400 && c2.body.code === 'panel-check-only' && c3.status === 400 && (await api('/api/planner/view')).body.rev === 4, '판에서는 넣기를 안 받음 · 지우기를 다른 조작과 묶어 보내도 안 받음');
-  // 2026-11-23: 판의 줄에서 손으로 하는 것 = 끝냄 + 일정 삭제(하나) + 이름만 고치기(하나). 그 밖은 여전히 거절(실제로 되는 것은 verify:planner-ui 가 끝까지 본다).
+  // 2026-11-23: 달력에서 손으로 하는 것 = 끝냄 + 일정 삭제(하나) + 일정 창의 고치기 하나(이름 · 기간 · 시각 · 장소 · 상대 · 메모). 그 밖은 여전히 거절(실제로 되는 것은 verify:planner-ui 가 끝까지 본다).
   {
     const tries = [
-      [{ op: 'update', id: sTimed.id, patch: { title: '새 이름', start: addDays(today, 3) } }],   // 이름 말고 다른 칸이 섞임
-      [{ op: 'update', id: sTimed.id, patch: { start: addDays(today, 3) } }],                      // 날짜 고치기
-      [{ op: 'update', id: sTimed.id, patch: { title: 7 } }], [{ op: 'update', id: sTimed.id }], [{ op: 'update', id: sTimed.id, patch: {} }],
+      [{ op: 'update', id: sTimed.id, patch: { title: '새 이름', steps: [] } }],                    // 창에 없는 칸(단계)이 섞임
+      [{ op: 'update', id: sTimed.id, patch: { steps: [{ title: '몰래 단계', day: today }] } }], [{ op: 'update', id: sTimed.id, patch: { repeat: { freq: 'daily' } } }],
+      [{ op: 'update', id: sTimed.id, patch: { folder: 'C:\\x' } }], [{ op: 'update', id: sTimed.id, patch: { alerts: { off: true } } }], [{ op: 'update', id: sTimed.id, patch: { state: 'trash' } }],
+      [{ op: 'update', id: sTimed.id, patch: { title: 7 } }], [{ op: 'update', id: sTimed.id, patch: { title: null } }], [{ op: 'update', id: sTimed.id, patch: { start: null } }],
+      [{ op: 'update', id: sTimed.id, patch: { time: 930 } }], [{ op: 'update', id: sTimed.id, patch: { note: { a: 1 } } }], [{ op: 'update', id: sTimed.id, patch: ['title'] }],
+      [{ op: 'update', id: sTimed.id }], [{ op: 'update', id: sTimed.id, patch: {} }], [{ op: 'update', patch: { title: '주인 없음' } }],
       [{ op: 'remove', id: sTimed.id }, { op: 'remove', id: sBig.id }],                             // 한 번에 둘
       [{ op: 'update', id: sTimed.id, patch: { title: 'a' } }, { op: 'update', id: sBig.id, patch: { title: 'b' } }],
       [{ op: 'purge', id: sTimed.id }], [{ op: 'restore', id: sTimed.id }], [{ op: 'remove' }], [], [null], ['remove'],
     ];
     const got2 = []; for (const ops of tries) got2.push(await post('/api/planner/ops', { ops }));
-    ok(got2.every((r) => r.status === 400 && r.body.code === 'panel-check-only') && (await api('/api/planner/view')).body.rev === 4, `판에서 안 받는 조작 ${tries.length}가지(다른 칸 고치기 · 둘 이상 · 완전히 지우기 · 되살리기 · 모양이 틀린 것) — 장부 그대로`);
-    ok(panelOpsOk([{ op: 'check', id: 'a', done: true }, { op: 'check', id: 'b', done: false }]) && panelOpsOk([{ op: 'remove', id: 'a' }]) && panelOpsOk([{ op: 'update', id: 'a', patch: { title: '새 이름' } }]), '판에서 받는 조작: 끝냄(여럿) · 지우기 하나 · 이름만 고치기 하나');
+    ok(got2.every((r) => r.status === 400 && r.body.code === 'panel-check-only') && (await api('/api/planner/view')).body.rev === 4, `달력에서 안 받는 조작 ${tries.length}가지(단계 · 반복 · 폴더 · 알림 고치기 · 값의 모양이 틀린 것 · 둘 이상 · 완전히 지우기 · 되살리기) — 장부 그대로`);
+    ok(panelOpsOk([{ op: 'check', id: 'a', done: true }, { op: 'check', id: 'b', done: false }]) && panelOpsOk([{ op: 'remove', id: 'a' }]) && panelOpsOk([{ op: 'update', id: 'a', patch: { title: '새 이름' } }])
+      && panelOpsOk([{ op: 'update', id: 'a', patch: { title: '새 이름', start: '2026-11-24', end: '2026-12-11', time: '15:00', timeEnd: '16:30', note: '메모', place: '장소', who: '상대' } }])
+      && panelOpsOk([{ op: 'update', id: 'a', patch: { end: null, time: null, timeEnd: null, note: null, place: null, who: null } }]), '달력에서 받는 조작: 끝냄(여럿) · 지우기 하나 · 일정 창의 고치기 하나(여덟 칸 — 비우기는 null)');
   }
   const c4 = await post('/api/planner/ops', { ops: [{ op: 'check', id: sTimed.id, done: true }] }, { origin: 'http://evil.example' });
   const c5 = await api('/api/planner/ops', { method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }, body: JSON.stringify({ ops: [{ op: 'check', id: sTimed.id, done: true }] }) });
@@ -160,6 +165,19 @@ try {
   const u1 = await post('/api/planner/undo', {});
   v = (await api('/api/planner/view')).body;
   ok(u1.status === 200 && !v.rows[1].steps[1].done && v.undo === null, '되돌리기');
+  {
+    // 일정 창의 고치기가 창구를 실제로 지나 장부에 닿는다 · 값이 틀리면 장부가 사유와 함께 거절한다(창구는 모양만 본다)
+    const before = (await api('/api/planner/view')).body.rev;
+    const e1 = await post('/api/planner/ops', { ops: [{ op: 'update', id: sTimed.id, patch: { start: '2026-13-45' } }] });
+    const e2 = await post('/api/planner/ops', { ops: [{ op: 'update', id: sTimed.id, patch: { time: '25:00' } }] });
+    const e3 = await post('/api/planner/ops', { ops: [{ op: 'update', id: sTimed.id, patch: { end: addDays(today, -30) } }] });
+    ok(e1.status === 400 && e1.body.code === 'bad-date' && e2.body.code === 'bad-time' && e3.body.code === 'end-before-start' && (await api('/api/planner/view')).body.rev === before, `틀린 날짜 · 시각 · 앞뒤가 바뀐 기간은 장부가 거절 — ${e1.body.code} · ${e2.body.code} · ${e3.body.code}`);
+    const w1 = await post('/api/planner/ops', { ops: [{ op: 'update', id: sTimed.id, patch: { note: '창에서 적은 메모', place: '과학실' } }] });
+    const row1 = (await api('/api/planner/view')).body.rows.find((r) => r.id === sTimed.id);
+    ok(w1.status === 200 && w1.body.ok && !!w1.body.changeId && row1.note === '창에서 적은 메모' && row1.place === '과학실' && row1.start === today && row1.end === today, `일정 창의 고치기가 장부에 닿음 · 줄 자료에 처음 · 마지막 날(start · end)이 실림 — ${JSON.stringify({ s: row1.start, e: row1.end })}`);
+    const w2 = await post('/api/planner/undo', { changeId: w1.body.changeId });
+    ok(w2.status === 200 && (await api('/api/planner/view')).body.rows.find((r) => r.id === sTimed.id).note === null, '그 고치기도 「되돌리기」로 돌아감');
+  }
   ok((await post('/api/planner/undo', {})).status === 400, '되돌릴 것이 없으면 400');
   const dd = await post('/api/planner/decide', { id: sProp.id, yes: true, patch: { start: today } });
   v = (await api('/api/planner/view')).body;

@@ -100,9 +100,9 @@ try {
   const titles = await text('.pl-list > .pl-r .tx');
   ok(titles.join('|') === '수행평가 채점 기준 확인|협의회|결과 보고서 제출|가정통신문 회신 정리', `오늘 목록의 순서 — ${titles.join('|')}`);
   ok((await ev(`document.querySelectorAll('.pl-list .pl-ck').length`)) === 7, '전부 체크 상자(줄 4 + 단계 3)');
-  ok((await text('.pl-r.step .no')).join('') === '123' && (await text('.pl-r.step.cur .tx'))[0] === '초안 검토' && (await text('.pl-r.step .dd')).join('|') === '20일|오늘|25일', '단계: 순서 번호 · 고른 날의 단계 · 하는 날');
-  ok((await text('.pl-pill.span')).join('|') === '4일차20~25일|2일차22~27일' && (await text('.pl-pill.fold'))[0] === '1/3', '기간 뱃지: 며칠째 + 기간 · 단계 진행');
-  ok((await text('.pl-list > .pl-r:first-child .pl-pill'))[0] === '20일' && (await ev(`document.querySelectorAll('.pl-r.end').length`)) === 0, '밀린 일은 하려던 날 · 오늘은 빨간 줄 없음');
+  ok((await text('.pl-r.step .no')).join('') === '123' && (await text('.pl-r.step.cur .tx'))[0] === '초안 검토' && (await text('.pl-r.step .dd')).join('|') === '11/20|11/23|11/25', '단계: 순서 번호 · 고른 날의 단계 · 하는 날(언제나 월/일)');
+  ok((await text('.pl-pill.span')).join('|') === '4일차11/20~11/25|2일차11/22~11/27' && (await text('.pl-pill.fold'))[0] === '1/3', '기간 뱃지: 며칠째 + 기간(같은 달이어도 언제나 월/일~월/일) · 단계 진행');
+  ok((await text('.pl-list > .pl-r:first-child .pl-pill'))[0] === '11/20' && (await ev(`document.querySelectorAll('.pl-r.end, .pl-pill.due').length`)) === 0, '밀린 일은 하려던 날(월/일) · 오늘은 마감 표시 없음');
   ok((await ev(`document.querySelectorAll('.pl-cal button').length`)) === 30 && (await ev(`document.querySelectorAll('.pl-cal i.blank').length`)) === 0, '달력: 11월 30일(1일 = 일요일)');
   const dots = await ev(`Object.fromEntries([...document.querySelectorAll('.pl-cal button')].map((b) => [b.dataset.day.slice(8), b.querySelectorAll('.pl-dots b').length + (b.querySelector('.pl-dots b.d') ? 'y' : '')]))`);
   ok(dots['23'] === '1' && dots['25'] === '2y' && dots['26'] === '2y' && dots['27'] === '2y' && dots['12'] === '0' && dots['30'] === '1', '달력 표시는 점뿐: 파란 점 · 그 옆 노란 점(기간의 마지막 날)');
@@ -115,8 +115,13 @@ try {
   // ---- 3. 날짜 고르기 · 마감일 빨강 ----
   await page.click('.pl-cal button[data-day="2026-11-26"]'); await settle();
   ok((await text('.pl-head strong'))[0] === '11월 26일 목요일' && (await ev(`!document.querySelector('.pl-pill.now')`)), '날짜를 누르면 맨 위 날짜가 바뀜');
-  const red = await ev(`(() => { const r = document.querySelector('.pl-r.end'); return r ? { title: r.querySelector('.tx').textContent, badge: r.querySelector('.pl-pill.span.end').textContent, color: getComputedStyle(r.querySelector('.tx')).color, bad: getComputedStyle(document.documentElement).getPropertyValue('--bad').trim() } : null; })()`);
-  ok(red && red.title === '수업 나눔 주간' && red.badge === '3일차24~26일' && red.color === 'rgb(240, 120, 139)', '마감일(기간의 마지막 날): 이름과 뱃지가 빨간 글자');
+  // 마감일(기간의 마지막 날): 빨간 글자가 아니라 뱃지의 「마감」 글자 + 달력의 마감 점과 같은 노란색(2026-11-23 사용자 신고 "빨간색은 오류 같아 보임") — 이름은 평소 색
+  const due = await ev(`(() => { const b = document.querySelector('.pl-list .pl-pill.span.due'); if (!b) return null; const r = b.closest('.pl-r'); const cs = getComputedStyle(document.documentElement);
+    const probe = (v) => { const i = document.createElement('i'); i.style.color = v; document.body.appendChild(i); const c = getComputedStyle(i).color; i.remove(); return c; };
+    return { title: r.querySelector('.tx').textContent, badge: b.textContent, n: document.querySelectorAll('.pl-list .pl-pill.span.due').length, badgeColor: getComputedStyle(b).color, titleColor: getComputedStyle(r.querySelector('.tx')).color,
+      warn: probe(cs.getPropertyValue('--warn')), bad: probe(cs.getPropertyValue('--bad')), ink: probe(cs.getPropertyValue('--ink')), redRows: document.querySelectorAll('.pl-r.end').length }; })()`);
+  ok(due && due.n === 1 && due.title === '수업 나눔 주간' && due.badge === '3일차 · 마감11/24~11/26', `마감일: 뱃지에 「N일차 · 마감」 + 기간 — ${due && due.badge}`);
+  ok(due && due.badgeColor === due.warn && due.titleColor === due.ink && due.titleColor !== due.bad && due.badgeColor !== due.bad && due.redRows === 0, `마감일은 빨간색이 아님: 뱃지 = 노란색(달력의 마감 점과 같은 색) · 이름 = 평소 색 — 뱃지 ${due && due.badgeColor} · 이름 ${due && due.titleColor}`);
   await shot('3-lastday');
   await page.click('.pl-cal button[data-day="2026-11-12"]'); await settle();
   ok((await text('.pl-empty'))[0] === '할 것이 없어요', '빈 날');
@@ -297,12 +302,12 @@ try {
   const tipOf = () => ev(`(() => { const t = document.getElementById('pl-tip'); return t.hidden ? null : { head: t.querySelector('b')?.textContent ?? null, body: t.querySelector('span')?.textContent ?? null, w: t.getBoundingClientRect().width, in: t.getBoundingClientRect().left >= 0 && t.getBoundingClientRect().right <= innerWidth }; })()`);
   ok((await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(1))}); return e.textContent === ${JSON.stringify(LONG)} && e.scrollHeight > e.clientHeight + 1 && e.clientHeight > 30 && e.clientHeight < 44; })()`)), '아주 긴 이름은 목록에서 두 줄까지 보이고 잘림(전제)');
   // 2026-11-23 사용자 신고("뱃지 · 아이콘 때문에 이름이 잘림"): 전에 한 줄에서 잘리던 길이의 이름은 두 줄에 다 보인다 · 줄 끝의 숨은 단추는 올리기 전에는 자리를 차지하지 않는다
-  const mid = await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(5))}); const h = e.closest('.pl-r').querySelector('.hid'); return { same: e.textContent === ${JSON.stringify(MID)}, cut: e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1, h: e.clientHeight, hid: h.getBoundingClientRect().width, gapRight: e.closest('.pl-r').getBoundingClientRect().right - e.getBoundingClientRect().right }; })()`);
+  const mid = await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(5))}); const r = e.closest('.pl-r'); return { same: e.textContent === ${JSON.stringify(MID)}, cut: e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1, h: e.clientHeight, btns: r.querySelectorAll('button:not(.pl-ck):not(.fold)').length, gapRight: r.getBoundingClientRect().right - e.getBoundingClientRect().right }; })()`);
   ok(mid.same && !mid.cut && mid.h > 30, `전에 잘리던 길이의 이름은 두 줄에 다 보임(높이 ${mid.h})`);
-  ok(mid.hid === 0 && mid.gapRight < 12, `숨은 단추는 올리기 전에는 자리를 차지하지 않음(이름 오른쪽 빈자리 ${Math.round(mid.gapRight)}px)`);
+  ok(mid.btns === 0 && mid.gapRight < 12, `줄에는 체크 · 접기 말고 단추가 없어 이름이 줄 끝까지 씀(이름 오른쪽 빈자리 ${Math.round(mid.gapRight)}px)`);
   await page.hover(tx(5)); await page.waitForTimeout(300);
-  const midHover = await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(5))}); const r = e.closest('.pl-r'); const h = r.querySelector('.hid'); return { w: h.getBoundingClientRect().width, op: getComputedStyle(h).opacity, in: h.getBoundingClientRect().right <= r.getBoundingClientRect().right + 1, cut: e.scrollHeight > e.clientHeight + 1, tip: !document.getElementById('pl-tip').hidden }; })()`);
-  ok(midHover.w > 20 && midHover.op === '1' && midHover.in && midHover.tip === midHover.cut, `줄에 올리면 숨은 단추가 줄 안에 펴짐(너비 ${Math.round(midHover.w)}) · 풍선은 이름이 잘렸을 때만(잘림 ${midHover.cut} · 풍선 ${midHover.tip})`);
+  const midHover = await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(5))}); const r = e.closest('.pl-r'); return { btns: r.querySelectorAll('button:not(.pl-ck):not(.fold)').length, cur: getComputedStyle(r).cursor, cut: e.scrollHeight > e.clientHeight + 1, tip: !document.getElementById('pl-tip').hidden }; })()`);
+  ok(midHover.btns === 0 && midHover.cur === 'pointer' && midHover.tip === midHover.cut, `줄에 올려도 단추가 생기지 않음 · 누를 수 있는 손 모양 · 풍선은 이름이 잘렸을 때만(잘림 ${midHover.cut} · 풍선 ${midHover.tip})`);
   await page.mouse.move(10, 10); await settle();
   await page.hover(tx(1)); await settle();
   const t1 = await tipOf();
@@ -528,87 +533,228 @@ try {
   ok(JSON.stringify((await ev('Planner.bubbles()')).map((b) => `${b.text}${b.shown ? '*' : ''}`)) === '["보고 있을 때 뜬 인사*","보고 있을 때 끝난 작업"]', '보고 있을 때는 읽던 말풍선을 바꿔치지 않음(전과 같음)');
   await clearSays();
   ok((await ev(`(() => { try { Planner.onMessage({ type: 'planner', rev: 1, proposals: 0, cfg: { plannerQuietUntil: null } }); return true; } catch { return false; } })()`)), '설정을 맞추라는 방송(cfg)은 받는 쪽이 없어도 오류 없이 넘어감');
-  // ---- 줄에서 손으로(2026-11-23 사용자 요청): 연결 폴더 열기 없음 · 대화 열기 · 일정 삭제 · 이름 두 번 클릭으로 고치기 ----
+  // ---- 일정 창(2026-11-23 사용자 요청): 줄에서 바로 눌리는 것은 체크 · 단계 접기뿐, 줄을 누르면 창이 떠서 보기 · 끝냄 · 대화 이어가기 · 고치기 · 삭제를 모두 거기서 ----
   {
     const D = '2026-11-29'; // 다른 검사에 끼지 않는 날
-    const A = pl.store.apply([{ op: 'add', item: { title: '세션이 넣은 일', start: D, folder: 'C:\\w\\a' } }], { by: 'session', via: 'cli', session: { id: 's-live', title: '살아 있는 대화', agent: 'claude' } }).items[0];
+    const A = pl.store.apply([{ op: 'add', item: { title: '세션이 넣은 일', start: D, time: '14:00', timeEnd: '15:30', place: '본관 3층', who: '운영진', note: '첫 줄\n둘째 줄', folder: 'C:\\w\\a' } }], { by: 'session', via: 'cli', session: { id: 's-live', title: '살아 있는 대화', agent: 'claude' } }).items[0];
     const C = pl.store.apply([{ op: 'add', item: { title: '폴더 없는 일', start: D } }], U).items[0];
     const S = pl.store.apply([{ op: 'add', item: { title: '단계 있는 줄', start: D, end: '2026-11-30', steps: [{ title: '하나', day: D }] } }], U).items[0];
     const reload = async () => { await ev(`Planner.onMessage({ type: 'planner', rev: ${pl.store.rev}, proposals: ${pl.store.list('proposed').length} })`); await settle(); await page.waitForTimeout(150); };
     const stateOf = (id) => pl.store.list().find((x) => x.id === id);
+    const rowOf = (id) => `.pl-list > .pl-r[data-open="${id}"]`;
+    const openRow = async (id) => { await page.click(`${rowOf(id)} .tx`); await settle(); };
+    const modal = () => ev(`(() => { const box = document.getElementById('pl-modal'); const d = box.querySelector('.pl-m'); if (box.hidden || !d) return null; const r = d.getBoundingClientRect();
+      return { title: d.querySelector('.pl-m-ti')?.textContent ?? null, rows: [...d.querySelectorAll('.pl-m-row')].map((e) => e.textContent.trim()), tags: [...d.querySelectorAll('.pl-m-tags .pl-pill')].map((e) => e.textContent.trim()),
+        btn: [...d.querySelectorAll('.pl-m-ft .pl-tb')].map((e) => e.textContent.trim() + (e.disabled ? '(잠김)' : '')), edit: !!d.querySelector('#pl-m-title'),
+        center: Math.abs((r.left + r.right) / 2 - innerWidth / 2) < 2 && r.top >= 0 && r.bottom <= innerHeight, err: (() => { const e = d.querySelector('#pl-m-err'); return e && !e.hidden ? e.textContent : null; })() }; })()`);
     await clearSays();
     await ev(`window.__live = ['s-live']; window.__calls.length = 0; Planner.open(${JSON.stringify(D)})`); await settle(); await page.waitForTimeout(200);
-    const rowOf = (id) => `.pl-list .pl-r:has([data-del="${id}"])`;
-    ok((await ev(`document.querySelectorAll('.pl-panel [data-folder]').length`)) === 0 && !(await ev(`[...document.querySelectorAll('.pl-list [data-tip]')].some((e) => /연결 폴더 열기/.test(e.dataset.tip))`)), '줄: 「연결 폴더 열기」 단추 없음');
-    ok((await ev(`document.querySelectorAll('.pl-list > .pl-r [data-del]').length`)) === 3 && (await ev(`!!document.querySelector(${JSON.stringify(`${rowOf(S.id)} [data-del]`)})`)), '줄: 모든 일정(단계 있는 줄 포함)에 「일정 삭제」');
-    ok((await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} [data-session]`)})?.dataset.tip`)) === '대화 열기 · 이 일정을 넣은 대화로' && (await ev(`!document.querySelector(${JSON.stringify(`${rowOf(C.id)} [data-session], ${rowOf(C.id)} [data-chat]`)})`)), '줄: 넣은 대화가 있으면 「대화 열기」 · 대화도 폴더도 없으면 그 단추 없음');
-    await page.hover(rowOf(A.id)); await page.waitForTimeout(200); await shot('12-row-actions');
-    await page.click(`${rowOf(A.id)} [data-session]`); await settle();
-    ok(JSON.stringify(await ev('window.__calls')) === '[["session","s-live"]]', '대화 열기: 이 일정을 넣은 대화로 감');
+    ok((await ev(`document.querySelectorAll('.pl-list .hid, .pl-list [data-del], .pl-list [data-chat], .pl-list [data-session], .pl-list [data-edit], .pl-panel [data-folder]').length`)) === 0 && (await ev(`document.querySelectorAll('.pl-list > .pl-r[data-open]').length`)) === 3, '줄: 올리면 나오던 단추(대화 · 삭제) · 이름 두 번 클릭 고치기 · 연결 폴더 열기 없음 — 줄마다 누르면 창');
+    await page.dblclick(`${rowOf(C.id)} .tx`); await settle();
+    ok(!(await ev(`!!document.querySelector('.pl-list input')`)) && (await modal())?.title === '폴더 없는 일', '이름을 두 번 클릭해도 그 자리 입력칸이 생기지 않음(창이 뜰 뿐)');
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    ok((await modal()) === null && !(await ev('Planner.editing()')), '평소에는 창이 없음');
+
+    // 줄을 누르면 창: 그 일정의 설명
+    await openRow(A.id);
+    const m1 = await modal();
+    ok(m1 && m1.title === '세션이 넣은 일' && m1.rows.join('|') === '11월 29일 일요일|14:00 ~ 15:30|본관 3층|운영진|첫 줄\n둘째 줄' && m1.center && !m1.edit && (await ev('Planner.editing()')), `줄을 누르면 일정 창: 이름 · 날짜 · 시각 · 장소 · 상대 · 메모, 화면 가운데 — ${JSON.stringify(m1 && m1.rows)}`);
+    ok(m1.btn.join() === '대화 이어가기,고치기,삭제', `창의 단추: 대화 이어가기 · 고치기 · 삭제 — ${m1.btn.join()}`);
+    await shot('12-item-modal');
+    await page.click('#pl-modal .pl-m-hd .pl-ck'); await page.waitForTimeout(250);
+    ok(stateOf(A.id).done === true && (await ev(`document.querySelector('#pl-modal .pl-m-ti').classList.contains('done')`)) && (await modal()).tags.includes('끝냄'), '창의 체크 = 끝냄(창은 그대로 · 「끝냄」 꼬리표)');
+    await page.click('#pl-modal .pl-m-hd .pl-ck'); await page.waitForTimeout(250);
+    ok(stateOf(A.id).done === false, '다시 누르면 끝냄 취소');
+    await page.click('#pl-modal [data-m-chat]'); await settle();
+    ok(JSON.stringify(await ev('window.__calls')) === '[["session","s-live"]]' && (await modal()) === null, '대화 이어가기: 이 일정을 넣은 대화로 가고 창은 닫힘');
     await ev(`window.__live = []; window.__calls.length = 0`); await reload();
-    ok((await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} [data-chat]`)})?.dataset.tip`)) === '대화 열기 · 연결 폴더에서 새 대화' && !(await ev(`!!document.querySelector(${JSON.stringify(`${rowOf(A.id)} [data-session]`)})`)), '줄: 넣은 대화가 없어졌으면 연결 폴더에서 새 대화');
-    await page.hover(rowOf(A.id)); await page.click(`${rowOf(A.id)} [data-chat]`); await settle();
-    ok(JSON.stringify(await ev('window.__calls')) === '[["chat","C:\\\\w\\\\a",""]]', '대화 열기: 연결 폴더에서 새 대화(요청문은 비움 — 보내기는 직접)');
+    await openRow(A.id);
+    ok((await modal()).btn[0] === '새 대화 열기', '넣은 대화가 없어졌으면 「새 대화 열기」');
+    await page.click('#pl-modal [data-m-chat]'); await settle();
+    ok(JSON.stringify(await ev('window.__calls')) === '[["chat","C:\\\\w\\\\a",""]]', '새 대화 열기: 연결 폴더에서(요청문은 비움 — 보내기는 직접)');
 
-    // 이름 두 번 클릭 → 그 자리 입력칸 → Enter 저장
-    const tx = (id) => `.pl-list .tx[data-edit="${id}"]`;
-    await page.dblclick(tx(C.id)); await settle();
-    ok((await ev(`(() => { const e = document.getElementById('pl-edit'); return !!e && document.activeElement === e && e.value === '폴더 없는 일' && e.selectionStart === 0 && e.selectionEnd === e.value.length && Planner.editing(); })()`)), '이름 두 번 클릭: 그 자리에 입력칸 · 초점 · 글 전체 고름');
-    await shot('13-row-edit');
-    await page.fill('#pl-edit', '  새   이름  '); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(250);
-    ok(stateOf(C.id).title === '새 이름' && (await text(tx(C.id)))[0] === '새 이름' && !(await ev(`!!document.getElementById('pl-edit')`)) && !(await ev('Planner.editing()')), 'Enter: 이름 저장(앞뒤 · 겹친 빈칸 정리) · 입력칸 닫힘');
-    ok((await ev(`document.querySelector('.pl-panel') !== null`)) && !(await ev('window.__keys')).includes('Enter'), 'Enter 는 본체로 올라가지 않음 · 판은 그대로');
-    // Esc = 고치기 취소만(판을 닫지 않는다 — Esc 가 두 길로 와도)
-    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '버릴 이름');
-    const esc1 = await ev('Planner.onEscape()'); const esc2 = await ev('Planner.onEscape()'); await settle();
-    ok(esc1 === true && esc2 === true && stateOf(C.id).title === '새 이름' && (await ev(`!!document.querySelector('.pl-panel') && !document.getElementById('pl-edit')`)), 'Esc: 고치기만 취소 · 바로 뒤의 Esc 한 번도 판을 닫지 않음');
+    // 닫기: Esc(한 단계만) · 바깥 누르기 · × / 열기: 이름에 초점 + Enter
+    await openRow(C.id);
+    ok((await modal()).btn.join() === '고치기,삭제' && (await modal()).rows.join('|') === '11월 29일 일요일', '대화도 폴더도 없으면 대화 단추 없음 · 없는 칸(시각 · 장소 · 메모)은 줄이 없음');
+    const e1 = await ev('Planner.onEscape()'), e2 = await ev('Planner.onEscape()');
+    ok(e1 === true && e2 === true && (await modal()) === null && (await ev(`!!document.querySelector('.pl-panel')`)) && !(await ev('Planner.editing()')), 'Esc = 창만 닫음(바로 뒤의 Esc 한 번도 삼킴 — 판은 그대로)');
     await page.waitForTimeout(450);
-    // 비우고 Enter = 그대로
-    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '   '); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(200);
-    ok(stateOf(C.id).title === '새 이름' && (await text(tx(C.id)))[0] === '새 이름', '빈 이름은 저장하지 않음');
-    // 고치는 중 달력이 다시 그려져도 적던 글 · 초점이 남는다
-    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '적던 글'); await reload();
-    ok((await ev(`(() => { const e = document.getElementById('pl-edit'); return !!e && e.value === '적던 글' && document.activeElement === e; })()`)), '고치는 중 다시 그려져도 적던 글 · 초점 유지');
-    // 다른 곳을 누르면 저장
-    await page.click('.pl-head strong'); await page.waitForTimeout(250);
-    ok(stateOf(C.id).title === '적던 글' && !(await ev(`!!document.getElementById('pl-edit')`)), '다른 곳을 누르면 저장');
-    // 단추를 누르면(초점을 뺏지 않는 것) 저장하고 그 단추의 일도 한다
-    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '단추로 닫음'); await page.click(`${rowOf(A.id)} .pl-ck`); await page.waitForTimeout(300);
-    ok(stateOf(C.id).title === '단추로 닫음' && stateOf(A.id).done === true, '고치다 다른 줄의 체크를 누르면: 이름 저장 + 체크도 됨');
-    ok((await ev(`document.querySelectorAll('.pl-steps [data-edit], .pl-strip [data-edit]').length`)) === 0, '단계 이름 · 제안에는 두 번 클릭 고치기 없음');
-    // 코덱스 검토가 짚은 경우: 꺾쇠 · 따옴표가 든 이름을 적고 저장 → 글자 그대로(HTML 로 읽히지 않음) · 다시 고칠 때 입력칸에도 그대로
-    const evilName = `<img src=x onerror="window.__xss3=1">'따옴표"`;
-    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', evilName); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(250);
-    ok(stateOf(C.id).title === evilName && (await text(tx(C.id)))[0] === evilName && !(await ev('window.__xss3')) && (await ev(`document.querySelectorAll('.pl-list img').length`)) === 0, '꺾쇠 · 따옴표가 든 이름: 글자 그대로 저장 · 그림으로 읽히지 않음');
-    await page.dblclick(tx(C.id)); await settle();
-    ok((await ev(`document.getElementById('pl-edit')?.value`)) === evilName && !(await ev('window.__xss3')), '그 이름을 다시 고칠 때 입력칸에도 글자 그대로');
-    // 고치는 사이 플래너가 꺼지면: 고치기를 접고 저장하지 않는다
-    await page.fill('#pl-edit', '꺼지는 사이 적던 글'); cfg.plannerEnabled = false; await reload();
-    ok(!(await ev(`!!document.getElementById('pl-edit')`)) && !(await ev('Planner.editing()')) && stateOf(C.id).title === evilName, '고치는 사이 플래너가 꺼지면 고치기를 접음(저장 안 함)');
-    cfg.plannerEnabled = true; await reload();
-    await page.dblclick(tx(C.id)); await settle(); await page.fill('#pl-edit', '단추로 닫음'); await page.press('#pl-edit', 'Enter'); await page.waitForTimeout(250);
+    await openRow(C.id); await page.waitForTimeout(450); await page.mouse.click(8, 8); await settle();
+    ok((await modal()) === null && (await ev(`!!document.querySelector('.pl-panel')`)), '창 바깥(어두운 자리)을 누르면 닫힘 · 판은 그대로');
+    await openRow(C.id); await page.click('#pl-modal [data-m-close]'); await settle();
+    ok((await modal()) === null, '× 로 닫힘');
+    await ev(`document.querySelector(${JSON.stringify(`${rowOf(C.id)} .tx`)}).focus()`); await page.keyboard.press('Enter'); await settle();
+    ok((await modal())?.title === '폴더 없는 일' && (await ev('window.__keys.length')) === 0, '이름에 초점을 두고 Enter = 창 열기(본체로 키가 새지 않음)');
 
-    // 일정 삭제 → 휴지통 + 되돌리기
+    // 고치기: 칸에서 바로(이름 · 기간 · 시각 · 장소 · 메모) → Enter 저장
+    const rev0 = pl.store.rev;
+    await page.click('#pl-modal [data-m-edit]'); await settle();
+    ok((await ev(`(() => { const t = document.getElementById('pl-m-title'); return document.activeElement === t && t.value === '폴더 없는 일' && document.getElementById('pl-m-start').value === ${JSON.stringify(D)} && document.getElementById('pl-m-end').value === '' && document.getElementById('pl-m-time').value === ''; })()`)) && (await modal()).btn.join() === '저장,취소,말로 고치기', '고치기: 이름 칸에 초점 · 칸마다 지금 값 · 단추는 저장 · 취소 · 말로 고치기');
+    await page.click('#pl-modal [data-m-save]'); await settle();
+    ok(pl.store.rev === rev0 && (await modal()) && !(await modal()).edit, '바꾼 것이 없으면 보내지 않고 보기로 돌아감');
+    await page.click('#pl-modal [data-m-edit]'); await settle();
+    await page.fill('#pl-m-title', '  새   이름  '); await page.fill('#pl-m-end', '2026-11-30'); await page.fill('#pl-m-time', '09:30'); await page.fill('#pl-m-place', '과학실'); await page.fill('#pl-m-note', '준비물\n둘째 줄');
+    await reload();
+    ok((await ev(`document.getElementById('pl-m-title').value`)) === '  새   이름  ' && (await ev(`document.getElementById('pl-m-note').value`)) === '준비물\n둘째 줄', '고치는 중 달력이 다시 그려져도 적던 글은 그대로');
+    await shot('12-item-edit');
+    await page.press('#pl-m-title', 'Enter'); await page.waitForTimeout(350);
+    const c1 = stateOf(C.id);
+    ok(c1.title === '새 이름' && c1.start === D && c1.end === '2026-11-30' && c1.time === '09:30' && c1.place === '과학실' && c1.note === '준비물\n둘째 줄', `Enter = 저장: 이름(빈칸 정리) · 기간 · 시각 · 장소 · 메모 — ${JSON.stringify({ t: c1.title, e: c1.end, tm: c1.time })}`);
+    ok((await modal()) === null && (await text(`${rowOf(C.id)} .pl-pill.span`))[0] === '1일차11/29~11/30' && (await text('.pl-say .pl-line p'))[0].startsWith('「새 이름」 일정을 고쳤어요.'), '저장하면 창이 닫히고 줄이 바뀜 · 말풍선');
+    await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(300);
+    ok(stateOf(C.id).title === '폴더 없는 일' && !stateOf(C.id).end && !stateOf(C.id).time && !stateOf(C.id).place, '말풍선의 「되돌리기」로 고치기 전으로');
     await clearSays();
-    await page.hover(rowOf(C.id)); await page.click(`${rowOf(C.id)} [data-del]`); await page.waitForTimeout(300);
-    ok(stateOf(C.id).state === 'trash' && !(await ev(`!!document.querySelector(${JSON.stringify(rowOf(C.id))})`)) && (await text('.pl-say .pl-line p'))[0].startsWith('「단추로 닫음」 일정을 지웠어요.'), '일정 삭제: 휴지통으로 · 줄에서 사라짐 · 말풍선');
+
+    // 틀린 값: 창을 그대로 두고 사유를 적는다(적던 글을 지우지 않는다)
+    await openRow(C.id); await page.click('#pl-modal [data-m-edit]'); await settle();
+    const rev1 = pl.store.rev;
+    await page.fill('#pl-m-end', '2026-11-20'); await page.fill('#pl-m-place', '적던 장소'); await page.click('#pl-modal [data-m-save]'); await settle();
+    ok((await modal()).err === '끝나는 날이 시작하는 날보다 앞이에요.' && pl.store.rev === rev1 && (await ev(`document.getElementById('pl-m-place').value`)) === '적던 장소', '끝나는 날이 앞이면 보내지 않고 사유를 적음 · 적던 글 그대로');
+    await page.fill('#pl-m-end', ''); await page.fill('#pl-m-title', '   '); await page.click('#pl-modal [data-m-save]'); await settle();
+    ok((await modal()).err === '이름이 비어 있어요.' && pl.store.rev === rev1, '이름을 비우면 저장하지 않음');
+    await page.fill('#pl-m-title', '폴더 없는 일'); await page.fill('#pl-m-time-end', '10:00'); await page.click('#pl-modal [data-m-save]'); await settle();
+    ok((await modal()).err === '끝 시각만 있어요. 시작 시각도 적어 주세요.' && pl.store.rev === rev1, '끝 시각만 적으면 저장하지 않음');
+    // 옛 데몬(이름만 받음)이 거절하면: 다시 켜라는 안내
+    await page.fill('#pl-m-time-end', '');
+    await ev(`window.__f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/planner/ops') ? Promise.resolve(new Response(JSON.stringify({ ok: false, code: 'panel-check-only', error: '옛 안내' }), { status: 400, headers: { 'content-type': 'application/json' } })) : window.__f(u, o))`);
+    await page.click('#pl-modal [data-m-save]'); await page.waitForTimeout(250);
+    ok(/IRIS 를 다시 켜면/.test((await modal()).err || '') && (await modal()).edit, '옛 IRIS(이름만 받음)가 거절하면 다시 켜라고 안내 · 창은 그대로');
+    await ev(`window.fetch = window.__f`);
+    // 고치는 중 Esc = 고치기 취소만(보기로), 한 번 더 = 창 닫기
+    const x1 = await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    ok(x1 === true && (await modal()) && !(await modal()).edit && pl.store.rev === rev1, '고치는 중 Esc = 고치기 취소만(저장 안 함 · 창은 보기로)');
+    const x2 = await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    ok(x2 === true && (await modal()) === null, '한 번 더 Esc = 창 닫기');
+
+    // 꺾쇠가 든 이름 · 메모도 글자로만
+    const evilName = '<img src=x onerror="window.__xss3=1">이름';
+    await openRow(C.id); await page.click('#pl-modal [data-m-edit]'); await settle();
+    await page.fill('#pl-m-title', evilName); await page.fill('#pl-m-note', '<b onmouseover="window.__xss3=1">메모</b>'); await page.click('#pl-modal [data-m-save]'); await page.waitForTimeout(350);
+    await clearSays(); await openRow(C.id);
+    ok(stateOf(C.id).title === evilName && (await modal()).title === evilName && (await ev(`document.querySelectorAll('#pl-modal img, #pl-modal b[onmouseover]').length`)) === 0 && !(await ev('window.__xss3')), '꺾쇠가 든 이름 · 메모는 창에서도 글자로만 보임');
+    await page.click('#pl-modal [data-m-edit]'); await settle();
+    ok((await ev(`document.getElementById('pl-m-title').value`)) === evilName && !(await ev('window.__xss3')), '그 이름을 다시 고칠 때 입력칸에도 글자 그대로');
+    // 고치는 사이 플래너가 꺼지면 고치기를 접는다(저장 안 함) · 볼 수만 있을 때는 단추가 잠긴다
+    await page.fill('#pl-m-title', '꺼지는 사이 적던 글'); cfg.plannerEnabled = false; await reload();
+    const mOff = await modal();
+    ok(mOff && !mOff.edit && stateOf(C.id).title === evilName && mOff.btn.join() === '고치기(잠김),삭제(잠김)' && (await ev(`document.querySelector('#pl-modal .pl-m-hd .pl-ck').disabled`)), `고치는 사이 플래너가 꺼지면 보기로 돌아감(저장 안 함) · 고치기 · 삭제 · 체크 잠김 — ${mOff && mOff.btn.join()}`);
+    cfg.plannerEnabled = true; await reload();
+    ok((await modal()).btn.join() === '고치기,삭제', '다시 켜면 단추가 풀림');
+
+    // 삭제 → 휴지통 + 되돌리기
+    await clearSays();
+    await page.click('#pl-modal [data-m-del]'); await page.waitForTimeout(300);
+    ok(stateOf(C.id).state === 'trash' && (await modal()) === null && !(await ev(`!!document.querySelector(${JSON.stringify(rowOf(C.id))})`)) && /일정을 지웠어요\.$/.test((await text('.pl-say .pl-line p'))[0].split('휴지통')[0].trim()), '삭제: 휴지통으로 · 창 닫힘 · 줄에서 사라짐 · 말풍선');
     await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(300);
     ok(stateOf(C.id).state === 'active' && (await ev(`!!document.querySelector(${JSON.stringify(rowOf(C.id))})`)), '말풍선의 「되돌리기」로 되살아남');
     await clearSays();
-    // 반복하는 일: 먼저 묻는다
+
+    // 단계 있는 일: 단계 줄을 눌러도 그 일정의 창 · 창에서 단계 체크 · 말로 고치기
+    await page.click(`.pl-steps[data-open="${S.id}"] .pl-r.step .tx`); await settle();
+    const mS = await modal();
+    ok(mS && mS.title === '단계 있는 줄' && mS.rows[0] === '11월 29일 일요일 ~ 11월 30일 월요일2일 동안' && mS.tags.join('|') === '1일차11/29~11/30|마감까지 7일' && (await text('#pl-modal .pl-m-steps .pl-r.step .dd'))[0] === '11/29', `단계 줄을 눌러도 그 일정의 창: 기간 · 뱃지 · 남은 날 · 단계 — ${JSON.stringify(mS && [mS.rows[0], mS.tags])}`);
+    await page.click('#pl-modal .pl-m-steps .pl-ck'); await page.waitForTimeout(250);
+    ok(stateOf(S.id).steps[0].done === true && (await modal()) !== null, '창에서 단계 체크');
+    await page.click('#pl-modal .pl-m-steps .pl-ck'); await page.waitForTimeout(250);
+    await page.click('#pl-modal [data-m-edit]'); await settle(); await page.click('#pl-modal [data-m-talk]'); await settle();
+    ok((await modal()) === null && (await ev(`!!document.querySelector('.pl-talk')`)) && (await ev(`document.getElementById('pl-in').value`)) === '「단계 있는 줄」 일정 ' && (await text('.pl-bub.ai')).pop() === '「단계 있는 줄」 일정을 어떻게 바꿀까요?', '말로 고치기: 창을 닫고 아이리스 대화를 엶 · 입력칸에 그 일정의 이름(보내기는 직접)');
+    await ev(`document.getElementById('pl-in').value = ''`); await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+
+    // 반복하는 일: 날짜 칸 없음(말로) · 삭제는 먼저 묻는다
     await ev(`Planner.open('2026-12-01')`); await settle(); await page.waitForTimeout(200);
-    await page.hover(rowOf(rep.id)); await page.click(`${rowOf(rep.id)} [data-del]`); await page.waitForTimeout(250);
-    ok(stateOf(rep.id).state === 'active' && /반복하는 일이에요\. 전체를 지울까요\?/.test((await text('.pl-say .pl-line p'))[0] || '') && (await text('.pl-say .pl-tb')).join() === '전체 지우기,그대로 두기', '반복하는 일의 삭제: 바로 지우지 않고 먼저 물음');
+    await openRow(rep.id);
+    ok((await modal()).rows[0] === '12월 1일 화요일반복하는 일', '반복하는 일의 창: 그날 + 「반복하는 일」');
+    await page.click('#pl-modal [data-m-edit]'); await settle();
+    ok(!(await ev(`!!document.getElementById('pl-m-start')`)) && /말로 고치기/.test((await text('#pl-modal .pl-m-hint'))[0] || '') && (await ev(`document.getElementById('pl-m-time').value`)) === '15:00', '반복하는 일의 고치기: 날짜 칸 없음(말로) · 시각 등은 칸에서');
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    await page.click('#pl-modal [data-m-del]'); await page.waitForTimeout(250);
+    ok(stateOf(rep.id).state === 'active' && (await modal()) === null && /반복하는 일이에요\. 전체를 지울까요\?/.test((await text('.pl-say .pl-line p'))[0] || '') && (await text('.pl-say .pl-tb')).join() === '전체 지우기,그대로 두기', '반복하는 일의 삭제: 바로 지우지 않고 먼저 물음');
     await page.click('.pl-say [data-act="1"]'); await page.waitForTimeout(200);
     ok(stateOf(rep.id).state === 'active' && !(await text('.pl-say')).length, '「그대로 두기」 = 아무 일도 없음');
-    await page.hover(rowOf(rep.id)); await page.click(`${rowOf(rep.id)} [data-del]`); await page.waitForTimeout(200); await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(300);
+    await openRow(rep.id); await page.click('#pl-modal [data-m-del]'); await page.waitForTimeout(200); await page.click('.pl-say [data-act="0"]'); await page.waitForTimeout(300);
     ok(stateOf(rep.id).state === 'trash', '「전체 지우기」 = 휴지통으로');
     await clearSays(); pl.store.apply([{ op: 'restore', id: rep.id }], U);
-    // 볼 수만 있을 때(플래너 꺼짐): 삭제 단추는 잠기고 이름 고치기도 없다
-    cfg.plannerEnabled = false; await ev(`Planner.open(${JSON.stringify(D)})`); await reload();
-    ok((await ev(`document.querySelectorAll('.pl-list [data-del]:not([disabled])').length`)) === 0 && (await ev(`document.querySelectorAll('.pl-list [data-edit]').length`)) === 0, '플래너가 꺼져 있으면 삭제 단추 잠김 · 이름 고치기 없음');
-    cfg.plannerEnabled = true; await reload();
-    await ev(`Planner.close()`); await settle(); await clearSays();
+    // ---- 코덱스 독립 검토(2026-11-23 20:12)에서 나온 네 가지 — 고친 뒤 영구 검사 ----
+    await ev(`Planner.open(${JSON.stringify(D)})`); await reload(); await clearSays();
+    // (검토 1) 저장의 답을 기다리는 사이 그 창을 닫고 다른 일정의 창을 열었으면, 늦게 온 답이 새 창을 닫거나 그 창에 적지 않는다
+    await openRow(C.id); await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-place', '늦게 도착');
+    await ev(`window.__f = window.fetch; window.fetch = (u, o) => (String(u).includes('/api/planner/ops') ? new Promise((res) => setTimeout(() => res(window.__f(u, o)), 600)) : window.__f(u, o))`);
+    await page.click('#pl-modal [data-m-save]'); await page.waitForTimeout(80);
+    await page.click('#pl-modal [data-m-close]'); await settle();
+    await openRow(A.id); await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-note', '다른 창에서 적던 글');
+    await page.waitForTimeout(900); await ev(`window.fetch = window.__f`);
+    const late1 = await modal();
+    ok(stateOf(C.id).place === '늦게 도착' && late1 && late1.edit && late1.err === null && (await ev(`document.getElementById('pl-m-note').value`)) === '다른 창에서 적던 글' && (await text('.pl-say .pl-line p')).some((t) => t.includes('일정을 고쳤어요')), '늦게 온 저장의 답은 그사이 연 다른 일정의 창을 닫지도 고치지도 않음(결과는 말풍선으로)');
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450); await ev('Planner.onEscape()'); await page.waitForTimeout(450); await clearSays();
+    // (검토 3) 고치는 사이 다른 세션이 바꾼 칸은 덮지 않는다 — 고치기를 시작한 때의 값과 견줘 내가 바꾼 칸만 보낸다
+    await openRow(A.id); await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-note', '내가 고친 메모');
+    pl.store.apply([{ op: 'update', id: A.id, patch: { place: '다른 세션이 바꾼 장소' } }], { by: 'session', via: 'cli', session: { id: 's-other', title: '다른 대화', agent: 'claude' } }); await reload();
+    await page.click('#pl-modal [data-m-save]'); await page.waitForTimeout(350);
+    ok(stateOf(A.id).place === '다른 세션이 바꾼 장소' && stateOf(A.id).note === '내가 고친 메모' && (await modal()) === null, `고치는 사이 다른 세션이 바꾼 칸(장소)은 그대로 · 내가 바꾼 칸(메모)만 저장 — ${stateOf(A.id).place}`);
+    await clearSays();
+    // (검토 2) 단계가 새 기간 밖에 있으면 저장하지 않고 알린다(장부가 기간을 단계까지 다시 늘려 "고쳤어요"가 거짓말이 되지 않게)
+    await openRow(S.id); await page.click('#pl-modal [data-m-edit]'); await settle();
+    const revS = pl.store.rev;
+    await page.fill('#pl-m-start', '2026-11-30'); await page.fill('#pl-m-end', ''); await page.click('#pl-modal [data-m-save]'); await settle();
+    ok(/단계 「하나」\(11\/29\)가 그 기간 밖에 있어요/.test((await modal()).err || '') && pl.store.rev === revS && stateOf(S.id).start === D, `단계가 새 기간 밖이면 저장하지 않고 사유를 적음 — ${(await modal()).err}`);
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    // (검토 4) 창이 떠 있는 동안 Tab 은 창 안에서만 돌고, 창 밖에 초점이 있을 때 난 키는 본체로 가지 않는다
+    const stops = await ev(`(() => { const st = [...document.querySelectorAll('#pl-modal button:not([disabled]), #pl-modal input, #pl-modal textarea')]; st[st.length - 1].focus(); return st.length; })()`);
+    await page.keyboard.press('Tab');
+    const t1in = await ev(`document.getElementById('pl-modal').contains(document.activeElement) && document.activeElement === document.querySelector('#pl-modal button:not([disabled])')`);
+    await page.keyboard.press('Shift+Tab');
+    const t2in = await ev(`(() => { const st = [...document.querySelectorAll('#pl-modal button:not([disabled]), #pl-modal input, #pl-modal textarea')]; return document.activeElement === st[st.length - 1]; })()`);
+    ok(stops >= 3 && t1in && t2in, `Tab 은 창 안에서만 돎(마지막 → 처음 · 처음 → 마지막, 멈출 곳 ${stops}개)`);
+    await ev(`window.__keys.length = 0; document.getElementById('typing').focus()`);
+    for (const k of ['1', 'y', 'Enter']) await page.keyboard.press(k);
+    ok(JSON.stringify(await ev('window.__keys')) === '[]' && (await ev(`document.getElementById('typing').value`)) === '쓰던 글' && (await ev(`document.getElementById('pl-modal').contains(document.activeElement)`)) && (await modal()) !== null, '창 밖에 초점이 있어도 숫자 · y · Enter 가 본체로 새지 않고 초점이 창으로 돌아옴');
+    await page.keyboard.press('Tab');
+    ok((await ev(`document.getElementById('pl-modal').contains(document.activeElement)`)), '그 뒤의 Tab 도 창 안에 머묾');
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    // ---- 코덱스 재검토(20:16)에서 남은 두 가지 ----
+    // (재검토 1) 시작 날만 고치면 끝 날은 보내지 않는다 — 그사이 다른 세션이 바꾼 끝 날을 옛 값으로 되돌리지 않음
+    const P = pl.store.apply([{ op: 'add', item: { title: '기간 있는 일', start: D, end: '2026-12-05' } }], U).items[0]; await reload();
+    await openRow(P.id); await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-start', '2026-11-28');
+    pl.store.apply([{ op: 'update', id: P.id, patch: { end: '2026-12-20' } }], { by: 'session', via: 'cli', session: { id: 's-other', title: '다른 대화', agent: 'claude' } }); await reload();
+    await page.click('#pl-modal [data-m-save]'); await page.waitForTimeout(350);
+    ok(stateOf(P.id).start === '2026-11-28' && stateOf(P.id).end === '2026-12-20', `시작 날만 고치면 그사이 다른 세션이 바꾼 끝 날은 그대로 — ${stateOf(P.id).start}~${stateOf(P.id).end}`);
+    await clearSays();
+    // 하루짜리의 시작 날만 옮기면 하루짜리로 따라간다(끝 날이 생기지 않는다) · 달력은 그 날로 따라간다
+    const Q = pl.store.apply([{ op: 'add', item: { title: '하루짜리', start: D } }], U).items[0]; await reload();
+    await openRow(Q.id); await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-start', '2026-11-30'); await page.click('#pl-modal [data-m-save]'); await page.waitForTimeout(350);
+    ok(stateOf(Q.id).start === '2026-11-30' && !stateOf(Q.id).end && (await text('.pl-head strong'))[0] === '11월 30일 월요일' && (await ev(`!!document.querySelector(${JSON.stringify(rowOf(Q.id))})`)), '하루짜리의 날짜를 옮기면 하루짜리 그대로 · 달력이 그 날로 따라감');
+    await clearSays(); await ev(`Planner.open(${JSON.stringify(D)})`); await reload();
+    // (재검토 2) 초점: 줄을 눌러도 쓰던 입력칸의 초점을 뺏지 않고, 창을 닫으면(× · Esc · 저장) 거기로 돌아간다. 키보드로 열었으면 그 일정의 줄로
+    await ev(`document.getElementById('typing').focus()`);
+    await page.click(`${rowOf(A.id)} .tx`); await settle();
+    const fIn = await ev(`document.getElementById('pl-modal').contains(document.activeElement)`);
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    ok(fIn && (await ev(`document.activeElement === document.getElementById('typing')`)) && (await ev(`document.getElementById('typing').value`)) === '쓰던 글', '창이 뜨면 초점은 창 안 · Esc 로 닫으면 쓰던 입력칸으로 돌아감(쓰던 글 그대로)');
+    await ev(`document.getElementById('typing').focus()`); await page.click(`${rowOf(A.id)} .tx`); await settle();
+    await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-who', '새 상대'); await page.press('#pl-m-who', 'Enter'); await page.waitForTimeout(400);
+    ok(stateOf(A.id).who === '새 상대' && (await modal()) === null && (await ev(`document.activeElement === document.getElementById('typing')`)), '저장으로 닫혀도 쓰던 입력칸으로 돌아감');
+    await clearSays();
+    await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} .tx`)}).focus()`); await page.keyboard.press('Enter'); await settle();
+    await reload();   // 창이 떠 있는 사이 달력이 다시 그려져 열 때의 줄 요소가 사라진다
+    await ev('Planner.onEscape()'); await page.waitForTimeout(450);
+    ok((await ev(`(() => { const a = document.activeElement; return !!a && a.matches('.pl-list .tx') && a.closest('[data-open]').dataset.open === ${JSON.stringify(A.id)}; })()`)), '키보드로 연 창을 닫으면 그 일정의 줄로 초점이 돌아감(달력이 다시 그려졌어도)');
+    await ev(`document.activeElement.blur()`);
+    // (마지막 확인 1) 키보드로 열어 저장으로 닫으면 줄로 돌아간 초점이, 곧이어 다시 그려진 달력에서도 그 일정의 줄에 남는다
+    await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} .tx`)}).focus()`); await page.keyboard.press('Enter'); await settle();
+    await page.click('#pl-modal [data-m-edit]'); await settle(); await page.fill('#pl-m-who', '또 다른 상대'); await page.press('#pl-m-who', 'Enter'); await page.waitForTimeout(500);
+    ok(stateOf(A.id).who === '또 다른 상대' && (await ev(`(() => { const a = document.activeElement; return !!a && a.isConnected && a.matches('.pl-list .tx') && a.closest('[data-open]').dataset.open === ${JSON.stringify(A.id)}; })()`)), '키보드로 열어 저장하면 달력이 다시 그려진 뒤에도 그 일정의 줄에 초점이 남음');
+    await clearSays();
+    // (마지막 확인 2) 닫은 뒤 사용자가 다른 줄로 초점을 옮겼으면, 그 뒤 달력이 다시 그려져도 처음 일정으로 초점을 끌어오지 않는다
+    await ev(`document.querySelector(${JSON.stringify(`${rowOf(A.id)} .tx`)}).focus()`); await page.keyboard.press('Enter'); await settle();
+    await reload(); await ev('Planner.onEscape()'); await settle();
+    await ev(`document.querySelector(${JSON.stringify(`${rowOf(S.id)} .tx`)}).focus()`); await reload(); await page.waitForTimeout(200);
+    ok(!(await ev(`(() => { const a = document.activeElement; const row = a && a.closest ? a.closest('[data-open]') : null; return !!row && row.dataset.open === ${JSON.stringify(A.id)}; })()`)), '닫은 뒤 다른 줄로 초점을 옮겼으면 달력이 다시 그려져도 처음 일정으로 초점을 끌어오지 않음');
+    await page.waitForTimeout(450);
+    // 판을 닫으면 창도 닫힌다
+    await ev(`Planner.open(${JSON.stringify(D)})`); await reload(); await openRow(A.id);
+    await ev(`Planner.close()`); await settle();
+    ok((await ev(`document.getElementById('pl-modal').hidden`)) && !(await ev('Planner.editing()')), '판을 닫으면 일정 창도 닫힘');
+    await clearSays();
   }
 
   // ---- 오른쪽 칸으로 붙이기(2026-11-23 사용자 요청: "닫기 옆에 아이콘을 추가해서 누르면 오른쪽 패널로") ----

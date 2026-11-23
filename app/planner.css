@@ -87,10 +87,13 @@
 .pl-pill.now { color: var(--iris); background: var(--iris-soft); }
 .pl-pill.fold { cursor: pointer; }
 .pl-pill.fold:hover { color: var(--ink); }
-/* 기간 뱃지: 며칠째 | 언제부터 언제까지. 마지막 날(마감일)과 지난 기간은 빨간 글자 */
+/* 기간 뱃지: 며칠째 | 11/24~12/11. 마지막 날(마감일)과 지난 기간은 「마감」 · 「N일 지남」 글자 + 달력의 마감 점과 같은 노란색
+   (2026-11-23 사용자 신고 "빨간색은 오류 같아 보임" — 이름은 평소 색 그대로 두고 빨간색(--bad)으로 되돌리지 않는다) */
 .pl-pill.span { gap: 6px; color: var(--iris); background: var(--iris-soft); }
 .pl-pill.span b { font-weight: 700; padding-right: 6px; border-right: 1px solid color-mix(in srgb, currentColor 35%, transparent); }
-.pl-pill.span.end { color: var(--bad); background: color-mix(in srgb, var(--bad) 13%, transparent); }
+.pl-pill.span.due { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.pl-pill.due { color: var(--warn); }
+.pl-pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
 
 /* 아이리스 제안: 같은 화면에서 접고 펴는 띠 */
 .pl-strip { flex: none; margin: 0 12px 8px; border: 1px solid color-mix(in srgb, var(--iris) 36%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--iris) 7%, transparent); overflow: hidden; --tone: var(--iris); }
@@ -127,23 +130,19 @@
 .pl-empty { display: flex; align-items: center; justify-content: center; padding: 26px 14px; color: var(--ink-3); }
 .pl-r { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 5px 6px 5px 8px; }
 .pl-list > .pl-r:hover { background: var(--raised); border-radius: 8px; }
+/* 줄을 누르면 일정 창이 뜬다(2026-11-23): 줄 · 그 단계 묶음 전체가 누르는 자리 */
+.pl-list [data-open] { cursor: pointer; }
+.pl-list .tx[role="button"]:focus-visible { outline: 2px solid var(--iris); outline-offset: 2px; border-radius: 4px; }
 .pl-r .tm { flex: none; color: var(--iris); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .pl-ck { flex: none; position: relative; width: 18px; height: 18px; border-radius: 6px; border: 1.5px solid var(--ink-3); }
 .pl-ck:hover { border-color: var(--ok); }
 .pl-ck.on { background: var(--ok); border-color: var(--ok); }
 .pl-ck.on::after { content: ''; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; border: solid var(--base); border-width: 0 2px 2px 0; transform: rotate(40deg); }
 .pl-ck[disabled] { opacity: .5; pointer-events: none; }
-/* 이름(2026-11-23 사용자 신고 "뱃지 · 아이콘 때문에 이름이 잘림"): 한 줄에 안 들어가면 두 줄까지 보이고 그래도 넘치면 … (올리면 전체가 풍선으로 뜬다).
-   줄 끝의 숨은 단추(.hid)는 올리기 전에는 자리를 차지하지 않는다 — 안 보이는 단추가 이름의 자리를 먹지 않게. */
+/* 이름(2026-11-23 사용자 신고 "뱃지 · 아이콘 때문에 이름이 잘림"): 한 줄에 안 들어가면 두 줄까지 보이고 그래도 넘치면 … (올리면 전체가 풍선으로 뜨고, 누르면 일정 창).
+   줄 끝에 올리면 나오던 단추(대화 · 삭제)와 이름 두 번 클릭은 같은 날 일정 창으로 옮겼다 — 줄에 다시 두지 않는다. */
 .pl-r .tx { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere; }
 .pl-r .tx.done { color: var(--ink-3); text-decoration: line-through; }
-.pl-r.end .tx:not(.done) { color: var(--bad); }
-/* 이름 고치기(두 번 클릭): 이름 자리에 그대로 서는 입력칸 */
-.pl-r .tx[data-edit] { cursor: text; }
-.pl-r .pl-edit { flex: 1; min-width: 0; height: 28px; padding: 0 8px; font: inherit; font-size: 13.5px; color: var(--ink); background: var(--base); border: 1px solid var(--iris); border-radius: 7px; outline: none; }
-.pl-ib.del:hover { color: var(--bad); }
-.pl-r .hid { display: inline-flex; flex: none; width: 0; margin-left: -10px; overflow: hidden; opacity: 0; transition: opacity .12s; }   /* 너비 0(= 자리 없음)이어도 Tab 으로는 닿는다 → focus-within 으로 펴진다 */
-.pl-r:hover .hid, .pl-r:focus-within .hid { width: auto; margin-left: 0; overflow: visible; opacity: 1; }
 /* 단계: 번호 = 순서 */
 .pl-steps { position: relative; padding-bottom: 4px; }
 .pl-steps::before { content: ''; position: absolute; left: 41.5px; top: 10px; bottom: 14px; width: 1px; background: var(--line-2); }
@@ -186,6 +185,45 @@
 .pl-send svg { width: 16px; height: 16px; }
 .pl-send[disabled] { opacity: .45; pointer-events: none; }
 
+/* ---- 일정 창(2026-11-23 사용자 요청): 목록의 줄을 누르면 화면 가운데에 어두운 바탕 위로 뜬다. 보기 · 끝냄 · 대화 이어가기 · 고치기 · 삭제를 모두 여기서.
+   body 에 붙는다(#pl-modal — 작은 판 · 오른쪽 칸 어느 모양에서도 가운데). 클래스는 pl-m- 접두로만 짓는다. ---- */
+.pl-modal { position: fixed; inset: 0; right: 0; bottom: 0; z-index: 40; display: grid; place-items: center; padding: 20px; gap: 0; background: rgba(0,0,0,.5); pointer-events: auto; transition: none; }
+.pl-modal[hidden] { display: none; }
+.pl-m { width: min(480px, 100%); max-height: min(640px, calc(100vh - 40px)); display: flex; flex-direction: column; background: var(--overlay); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 30px 80px rgba(0,0,0,.65); overflow: hidden; color: var(--ink); outline: none; }
+.pl-m.in { animation: pl-rise .2s ease both; }
+.pl-m-hd { flex: none; display: flex; align-items: flex-start; gap: 12px; padding: 18px 12px 8px 18px; }
+.pl-m-hd .pl-ck { width: 20px; height: 20px; margin-top: 3px; }
+.pl-m-hd .pl-ck.on::after { left: 6px; top: 2.5px; width: 4.5px; height: 9px; }
+.pl-m-ti { flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 650; line-height: 1.4; letter-spacing: -.01em; word-break: keep-all; overflow-wrap: anywhere; }
+.pl-m-ti.done { color: var(--ink-3); text-decoration: line-through; }
+.pl-m-in { flex: 1; min-width: 0; height: 34px; padding: 0 10px; font: inherit; font-size: 16px; font-weight: 600; color: var(--ink); background: var(--base); border: 1px solid var(--iris); border-radius: 9px; outline: none; }
+.pl-m-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 18px 4px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+.pl-m-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 14px 32px; }
+.pl-m-bd { display: grid; gap: 10px; padding-bottom: 6px; }
+.pl-m-row { display: grid; grid-template-columns: 20px 1fr; gap: 12px; align-items: start; color: var(--ink-2); font-size: 13px; line-height: 1.5; }
+.pl-m-row > svg { width: 16px; height: 16px; margin-top: 2px; color: var(--ink-3); }
+.pl-m-row b { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.pl-m-row small { display: block; font-size: 11.5px; color: var(--ink-3); }
+.pl-m-note { margin: 0; white-space: pre-line; color: var(--ink); overflow-wrap: anywhere; }
+.pl-m-steps { margin: 8px 0 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.pl-m-steps .pl-r.step { padding-left: 8px; }
+.pl-m-ft { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 14px 18px; margin-top: 6px; border-top: 1px solid var(--line); }
+.pl-m-ft .pl-tb { height: 30px; }
+.pl-m-ft .pl-tb.del { border-color: transparent; background: transparent; color: var(--ink-3); }
+.pl-m-ft .pl-tb.del:hover { color: var(--bad); filter: none; }
+.pl-m-form { display: grid; gap: 9px; padding: 4px 0 6px; }
+.pl-m-form label { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; color: var(--ink-3); font-size: 12px; }
+.pl-m-form label.top { align-items: start; }
+.pl-m-form label.top > span { padding-top: 7px; }
+.pl-m-form input, .pl-m-form textarea { width: 100%; min-width: 0; font: inherit; font-size: 13px; color: var(--ink); background: var(--base); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; outline: none; color-scheme: dark; }
+.pl-m-form textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
+.pl-m-form input:focus, .pl-m-form textarea:focus { border-color: var(--iris); }
+.pl-m-two { display: flex; align-items: center; gap: 8px; }
+.pl-m-two i { font-style: normal; color: var(--ink-3); }
+.pl-m-hint { margin: 0; font-size: 12px; color: var(--ink-3); }
+.pl-m-err { margin: 6px 0 4px; padding: 8px 10px; border-radius: 9px; font-size: 12.5px; line-height: 1.5; color: var(--ink); background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+.pl-m-err[hidden] { display: none; }
+
 /* 올렸을 때 뜨는 설명(화면 하나짜리 — 판 가장자리에서 잘리지 않게 body 에 둔다) */
 #pl-tip { position: fixed; z-index: 99; max-width: 300px; padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--base) 82%, #000); border: 1px solid var(--line-2); color: var(--ink); font-size: 12px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,.6); pointer-events: none; word-break: keep-all; overflow-wrap: anywhere; white-space: pre-line; max-height: calc(100vh - 16px); overflow: hidden; }
 #pl-tip[hidden] { display: none; }
@@ -203,4 +241,4 @@
 @keyframes pl-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @keyframes pl-spin { to { transform: rotate(360deg); } }
 @keyframes pl-blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .pl-say.in, .pl-panel.in, .pl-talk.in { animation: none; } .pl-hex svg, .pl-wait i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pl-say.in, .pl-panel.in, .pl-talk.in, .pl-m.in { animation: none; } .pl-hex svg, .pl-wait i { animation: none; } }

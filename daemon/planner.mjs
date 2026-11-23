@@ -59,9 +59,17 @@ export function panelOpsOk(ops) {
   if (ops.length !== 1) return false;
   const o = ops[0];
   if (o.op === 'remove') return typeof o.id === 'string' && !!o.id;
-  if (o.op === 'update') return typeof o.id === 'string' && !!o.id && isObj(o.patch) && Object.keys(o.patch).length === 1 && typeof o.patch.title === 'string';
+  if (o.op === 'update') {
+    // 일정 창의 「고치기」(2026-11-23 사용자 요청): 이름 · 기간 · 시각 · 장소 · 상대 · 메모만. 단계 · 반복 · 폴더 · 알림 같은 그 밖의 칸은 여전히 말로(아이리스) 또는 세션의 명령으로.
+    // 값은 글자이거나(이름 · 시작하는 날은 반드시 글자) 비우기(null) — 날짜 · 시각의 모양과 앞뒤는 장부(planner-store)가 본다.
+    if (typeof o.id !== 'string' || !o.id || !isObj(o.patch)) return false;
+    const keys = Object.keys(o.patch);
+    return keys.length > 0 && keys.every((k) => PANEL_PATCH.has(k) && (typeof o.patch[k] === 'string' || (o.patch[k] === null && k !== 'title' && k !== 'start')));
+  }
   return false;
 }
+/** 일정 창에서 고칠 수 있는 칸 */
+export const PANEL_PATCH = new Set(['title', 'start', 'end', 'time', 'timeEnd', 'note', 'place', 'who']);
 
 export class Planner {
   /**
@@ -294,7 +302,7 @@ export class Planner {
         if (p === '/api/planner/ops') {
           // 판에서 손으로 하는 것: 「끝냄」 체크 + (2026-11-23 사용자 요청) 줄의 「일정 삭제」(휴지통으로 — 되돌릴 수 있다) · 이름 두 번 클릭으로 이름 고치기.
           // 그 밖(넣기 · 날짜 · 시각 · 단계 고치기 · 완전히 지우기)은 이 길로 받지 않는다 — 아이리스에게 말로. 지우기 · 이름 고치기는 한 번에 하나만.
-          if (!Array.isArray(b.ops) || !b.ops.length || !panelOpsOk(b.ops)) throw new PlannerError('panel-check-only', '판에서는 끝냄 표시 · 이름 고치기 · 일정 삭제만 할 수 있습니다. 넣기와 그 밖의 고치기는 아이리스에게 말해 주세요.');
+          if (!Array.isArray(b.ops) || !b.ops.length || !panelOpsOk(b.ops)) throw new PlannerError('panel-check-only', '달력에서는 끝냄 표시 · 일정 창의 고치기(이름 · 기간 · 시각 · 장소 · 상대 · 메모) · 일정 삭제만 할 수 있습니다. 넣기와 단계 · 반복 고치기는 아이리스에게 말해 주세요.');
           return h.json(res, 200, this.apply(b.ops, { by: 'user', via: 'panel' }));
         }
         if (p === '/api/planner/undo') return h.json(res, 200, this.undo(typeof b.changeId === 'string' ? b.changeId : null));
