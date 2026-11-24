@@ -121,7 +121,8 @@ window.Settings = (() => {
     fill($('#st-sandbox'), agents?.codex?.sandboxes || FALLBACK.sandboxes, cfg.sandbox);
     // Antigravity 권한 모드(2026-11-25): 목록은 데몬만 준다(화면 쪽 사본 없음 — 데몬이 모르는 값을 고르게 하지 않는다). 저장된 값이 목록에 없으면 처음 값(전부 허용).
     const agyPerms = agents?.antigravity?.permissions;
-    $('#st-agy-grp').hidden = !Array.isArray(agyPerms) || !agyPerms.length;
+    // 안티그래비티 프로그램이 없는 PC(상태 missing)에서도 숨긴다(2026-11-25 코덱스 검토 2번 — 목록은 프로그램이 없어도 온다)
+    $('#st-agy-grp').hidden = !Array.isArray(agyPerms) || !agyPerms.length || agyInfo?.state === 'missing';
     if (!$('#st-agy-grp').hidden) fill($('#st-agy-perm'), agyPerms, agyPerms.some(o => o.id === cfg.agyPermission) ? cfg.agyPermission : '');
     renderMods();
     renderAuth();
@@ -461,7 +462,7 @@ window.Settings = (() => {
   async function loadAgy() { agyAt = Date.now(); try { const r = await fetch('/api/antigravity/status'); agyInfo = r.ok ? await r.json() : null; } catch { agyInfo = null; } }
   function renderAuth() {
     // 패널을 그릴 때마다 30초가 지났으면 다시 묻는다(로그인 · 로그아웃 뒤에도 따라오게 — 코덱스 코드 검토 B)
-    if (Date.now() - agyAt > 30000) { const was = JSON.stringify(agyInfo); loadAgy().then(() => { if (open && JSON.stringify(agyInfo) !== was) renderAuth(); }); }
+    if (Date.now() - agyAt > 30000) { const was = JSON.stringify(agyInfo); loadAgy().then(() => { if (open && JSON.stringify(agyInfo) !== was) { renderAuth(); const g = $('#st-agy-grp'); if (g && agyInfo?.state === 'missing') g.hidden = true; } }); }
     const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
     renderNav();
     // v2.97.2(2026-11-02 사용자 신고 "복구 문구만 있고 로그인 열쇠가 없다"): 도구(iris-auth)가 없는 PC 도 절을 숨기지 않고 이유를 한 줄 보인다.

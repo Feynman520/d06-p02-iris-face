@@ -218,6 +218,25 @@ const perm = ['● Ran (echo IRIS_PERM_PROBE)', '──────────�
 const talked = ['> 권한 물음이 뭐야?', '  "Requesting permission for:" 다음에 1. Yes, run command 같은 선택지가 뜹니다.', ...Array.from({ length: 16 }, (_, i) => `  설명 ${i + 1}`), '────', '>', '────', '? for shortcuts'].join('\n');
 eq([S(perm), ad.screen.working.test(perm), ad.screen.attention.test(perm)], ['attention', false, true], '권한 물음 = 확인 필요(상태줄 esc to cancel 에 속지 않음)');
 eq([S(talked), ad.screen.attention.test(talked), S(busy)], ['idle', false, 'busy'], '대화 글 속의 같은 낱말 · 평소 일하는 화면은 그대로');
+// 코덱스 검토 1번(2026-11-25): 방금 받은 답에 물음의 낱말이 그대로 있어도(화면 끝 가까이) 기다리는 화면은 기다림이고, 일하는 화면은 일함이다
+const said1 = ['  답변: ↑/↓ Navigate 는 방향키 안내입니다.', '>', '? for shortcuts'].join('\n');
+const said2 = ['  Requesting permission for:', '  1. Yes, run command 를 누르면 실행됩니다.', '  4. No, cancel 은 취소입니다.', '────', '>', '────', '? for shortcuts                   auto · Gemini 3.8 Flash · low'].join('\n');
+const said3 = ['> 권한 물음의 뜻을 알려 줘', '  ↑/↓ Navigate 는 방향키, 1. Yes 는 허용입니다', '⡿  Generating...', '────', '>', '────', 'esc to cancel                     auto · Gemini 3.8 Flash · low'].join('\n');
+eq([S(said1), S(said2), S(said3), ad.screen.attention.test(said1), ad.screen.attention.test(said2), ad.screen.working.test(said3)], ['idle', 'idle', 'busy', false, false, true], '답 글에 물음의 낱말이 있어도: 기다리는 화면 = 기다림 · 일하는 화면 = 일함');
+// 방향키로 다른 선택지를 고른 물음 · 화면 끝 14줄만 남아 제목이 잘린 물음 · 창이 좁아 안내줄이 꺾인 물음도 확인 필요
+const perm2 = perm.replace('> 1. Yes, run command', '  1. Yes, run command').replace("  2. Yes, and always allow in this", "> 2. Yes, and always allow in this");
+const longCmd = ['Requesting permission for:', ...Array.from({ length: 12 }, (_, i) => `   command line ${i + 1} \\`), 'Run this command?', '> 1. Yes, run command', '  2. Yes, and always allow in this conversation', '  3. Yes, and always allow (Persist to settings.json)', '  4. No, cancel', '  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command', 'esc to cancel                 plan · Gemini 3.8 Flash · low'];
+const cut14 = longCmd.filter((l) => l.trim()).slice(-14).join('\n'); // idleCheck 가 넘기는 만큼
+const narrow = perm.replace('  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command', '  ↑/↓\n  Navigate · tab Amend ·\n  ctrl+g edit/expand command');
+eq([S(perm2), S(cut14), S(narrow)], ['attention', 'attention', 'attention'], '권한 물음: 다른 선택지를 고른 때 · 제목이 14줄 밖 · 안내줄이 꺾인 때도 확인 필요');
+// 재개 · 바꾸기는 카드의 권한 값으로 다시 명령을 만든다 — 고른 모드가 이어지고, 권한 값이 없는 옛 카드는 지금까지처럼 전부 허용
+{
+  const conv2 = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+  const r1 = agents.buildCommand({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'high', permission: 'plan' }, TMP, { resumeId: conv2 }).args.join(' ');
+  const r2 = agents.buildCommand({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'high' }, TMP, { resumeId: conv2 }).args.join(' ');
+  ok(/--mode plan /.test(r1) && r1.endsWith(`--conversation ${conv2}`) && !/dangerously/.test(r1), '재개: 카드의 권한 모드가 이어짐(--mode plan + --conversation)');
+  ok(/--dangerously-skip-permissions /.test(r2) && !/--mode /.test(r2), '재개: 권한 값이 없는 옛 카드 = 전부 허용 그대로');
+}
 {
   const { parseApproval } = await imp('daemon/approval.mjs');
   const card = ad.promptKeys(parseApproval(perm));

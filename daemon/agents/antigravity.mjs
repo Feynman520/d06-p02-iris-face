@@ -111,9 +111,17 @@ const WORK_RE = /esc to cancel/i;
 const ATT_RE = /(Do you trust|trust the contents|\(y\/n\)|\[Y\/n\]|Enter to select|Enter to confirm|Do you want to (proceed|allow|run)|Allow this|1\. Yes)/i;
 // 권한 물음(1.5.16 실측, 2026-11-25 — 전부 허용이 아닌 권한 모드에서 뜬다): "Requesting permission for:" … "> 1. Yes, run command" … "4. No, cancel" + 안내줄
 // "↑/↓ Navigate · tab Amend …". 이 물음이 떠 있는 동안에도 맨 아래 상태줄은 "esc to cancel" 이라 일하는 중으로 보였다 — 물음을 먼저 본다.
-// 대화 글 속의 같은 낱말에 속지 않게 화면 끝 16줄 안에서, 안내줄 또는 (제목 + 번호 선택지)가 함께 있을 때만.
-const PERM_TAIL = (s) => String(s).split('\n').filter((l) => l.trim()).slice(-16).join('\n');
-const permAsk = (s) => { const t = PERM_TAIL(s); return /↑\/↓ Navigate/.test(t) || (/Requesting permission for:/.test(t) && /^\s*>?\s*1\. Yes/m.test(t)); };
+// 대화 글 속의 같은 낱말에 속지 않게(2026-11-25 코덱스 검토 1번 — "↑/↓ Navigate 는 방향키 안내입니다" 같은 답 한 줄에 확인 필요로 바뀌었다) 넷을 모두 본다:
+//   ① 입력을 기다리는 화면("? for shortcuts")이 아니다 ② 맨 아래가 상태줄 "esc to cancel" 이다(이 물음이 busy 로 잘못 보이는 바로 그 경우만 다룬다 —
+//   상태줄이 없는 물음은 아래 ATT_RE 가 지금까지처럼 본다) ③ 줄 머리에 고른 번호 선택지("> 1. Yes, run command" — 방향키로 옮기면 "> 2. …")가 있다
+//   ④ 줄 머리에 안내줄 · 제목 · "N. No, cancel" 가운데 하나가 있다(창이 좁아 안내줄이 꺾이거나 제목이 화면 끝 14줄 밖으로 밀려도 하나는 남는다).
+// idleCheck 는 화면 끝 14줄(빈 줄 제외)만 넘긴다 — 여기서도 그만큼만 본다.
+const permAsk = (s) => {
+  const ls = String(s).split('\n').filter((l) => l.trim()).slice(-14);
+  const b = ls.slice(-3).join('\n');
+  if (/\? for shortcuts/i.test(b) || !WORK_RE.test(b)) return false;
+  return ls.some((l) => /^\s*>\s*\d\.\s+\S/.test(l)) && ls.some((l) => /^\s*↑\/↓ Navigate\b/.test(l) || /^\s*Requesting permission for:\s*$/.test(l) || /^\s*\d\.\s+No, cancel\b/.test(l));
+};
 export const screen = {
   /** send() 의 Enter 확인용: 일하는 중인가 */
   working: { test: (s) => !permAsk(s) && WORK_RE.test(BOTTOM(String(s).split('\n'))) },

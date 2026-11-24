@@ -450,7 +450,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/ontology/graph') return json(res, 200, ontologyGraph(WS_ROOT));
     // 판 B: 설치된 도구(출처 base·iris·manual 붙임) + 엄선 목록 상태. 설치·제거는 같은 출처만, 한 번에 하나(엔진 큐).
     // agents = 이 PC 에서 쓰는 에이전트 이름들(도구 화면이 Antigravity 탭을 보일지 정한다, 2026-11-25)
-    if (req.method === 'GET' && p === '/api/tools') return json(res, 200, { ...tools.annotate(listTools(WS_ROOT)), catalog: tools.status(), agents: Object.keys(activeAgentsMap(AGENTS)).filter((a) => a !== 'antigravity' || agyStatus.current()?.state !== 'missing') });
+    // 안티그래비티 프로그램이 없는 PC(state = missing)에서는 탭도 줄도 내놓지 않는다 — .gemini 폴더만 남아 있어도(2026-11-25 코덱스 검토 2번).
+    if (req.method === 'GET' && p === '/api/tools') {
+      const agentIds = Object.keys(activeAgentsMap(AGENTS)).filter((a) => a !== 'antigravity' || agyStatus.current()?.state !== 'missing');
+      const list = tools.annotate(listTools(WS_ROOT)); const keep = (rows) => (rows || []).filter((r) => r.agent !== 'antigravity' || agentIds.includes('antigravity'));
+      return json(res, 200, { ...list, skills: keep(list.skills), mcp: keep(list.mcp), plugins: keep(list.plugins), catalog: tools.status(), agents: agentIds });
+    }
     if (req.method === 'POST' && (p === '/api/tools/install' || p === '/api/tools/remove' || p === '/api/tools/cancel')) {
       if (!sameOrigin(req)) { log(`403 tools: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       const b = await readBody(req); const id = String(b?.id || '');
