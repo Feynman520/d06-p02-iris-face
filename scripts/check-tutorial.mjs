@@ -113,6 +113,18 @@ ok(folderName('R01', '교사', 'Teacher') === 'R01-교사(Teacher)' && folderNam
   fs.writeFileSync(path.join(r, 'home', '.agents', 'skills', 'cx', 'SKILL.md'), '---\nname: cx-skill\ndescription: 코덱스 공용 자리\n---\n', 'utf8');
   const th = listTools(r, { home: path.join(r, 'home') });
   ok(th.counts.skills === 2 && th.skills.find(s => s.name === 'cx-skill')?.agent === 'codex', '3 사용자 폴더 .agents\\skills = Codex 스킬로 셈(v2.92)');
+  // 안티그래비티(2026-11-25, 보이기만): <사용자 폴더>\.gemini 의 MCP · 사용자가 넣은 스킬. 값(주소 · 인자 · env)은 싣지 않는다.
+  ok(!th.mcp.some(m => m.agent === 'antigravity') && !th.skills.some(s => s.agent === 'antigravity'), '3 .gemini 가 없으면 Antigravity 줄 없음');
+  const gm = path.join(r, 'home', '.gemini');
+  writeJson(path.join(gm, 'config', 'mcp_config.json'), { mcpServers: { docs: { command: 'C:\\agy-tools\\node.exe', args: ['--agy-secret-arg'], env: { K: 'AGY-SECRET-1' } }, remote: { serverUrl: 'https://mcp.example/agy-secret-path' }, off: { command: 'x.exe', disabled: true } } });
+  fs.mkdirSync(path.join(gm, 'config', 'skills', 'ag'), { recursive: true });
+  fs.writeFileSync(path.join(gm, 'config', 'skills', 'ag', 'SKILL.md'), '---\nname: ag-skill\ndescription: 안티그래비티 스킬\n---\n', 'utf8');
+  const tg = listTools(r, { home: path.join(r, 'home') }); const ag = tg.mcp.filter(m => m.agent === 'antigravity');
+  ok(ag.length === 3 && ag.find(m => m.name === 'docs').program === 'node.exe' && ag.find(m => m.name === 'remote').kind === 'http' && ag.find(m => m.name === 'off').enabled === false, '3 Antigravity MCP: 이름 · 실행 파일 이름 · 종류 · 꺼짐');
+  ok(tg.skills.find(s => s.name === 'ag-skill')?.agent === 'antigravity' && tg.counts.mcp === th.counts.mcp + 3 && tg.counts.skills === th.counts.skills + 1, '3 Antigravity 스킬(config\\skills) · 개수에 더해짐 · Claude · Codex 줄은 그대로');
+  ok(!/AGY-SECRET|agy-secret|agy-tools/.test(JSON.stringify(tg)), '3 Antigravity 줄에도 env · 인자 · 주소 · 전체 경로 값 없음');
+  fs.writeFileSync(path.join(gm, 'config', 'mcp_config.json'), '', 'utf8'); // 빈 파일(agy 가 처음 만드는 모양)
+  ok(listTools(r, { home: path.join(r, 'home') }).mcp.filter(m => m.agent === 'antigravity').length === 0, '3 빈 mcp_config.json = 줄 없음(오류 없음)');
 }
 
 // ---------- 4) 온톨로지 그래프 ----------
@@ -444,7 +456,8 @@ else {
     ok(!/SECRET-/.test(await p.content()), '7 MCP 의 인자·env 값은 화면에 없음(MCP 탭을 연 채로)');
     await p.locator('#tl-kinds [data-kind="skills"]').click(); await sleep(150);
     const tabs = await p.locator('#tl-agents [data-agent]').evaluateAll(bs => bs.map(b => b.textContent.replace(/\s*\d+$/, '').trim()).join(','));
-    ok(tabs === '전체,Claude 전용,Codex 전용,둘 다', `7 에이전트 탭 (${tabs})`);
+    // 2026-11-25: 이 PC 에 agy 가 있으면 「Antigravity 전용」 탭이 더해지고 마지막 탭 이름이 「여럿이 함께」가 된다 — 없으면 예전 넷 그대로
+    ok(tabs === '전체,Claude 전용,Codex 전용,둘 다' || tabs === '전체,Claude 전용,Codex 전용,Antigravity 전용,여럿이 함께', `7 에이전트 탭 (${tabs})`);
     await p.locator('#tl-agents [data-agent="codex"]').click(); await sleep(100);
     const tc = await p.locator('#st-tools').textContent();
     ok(/codex-home-skill/.test(tc) && !/demo-skill/.test(tc), '7 Codex 전용 탭 = Codex 에만 있는 것');

@@ -17,9 +17,13 @@ window.ToolsView = (() => {
     { key: 'plugins', cat: 'plugin', title: 'Plugin', icon: 'bolt', desc: 'Skill·MCP·명령을 한 묶음으로 설치하는 것' },
   ];
   if (!KINDS.some(k => k.key === kind)) kind = 'skills';
-  const AGENTS = [['all', '전체'], ['claude', 'Claude 전용'], ['codex', 'Codex 전용'], ['both', '둘 다']];
-  const chip = (a) => `<span class="chip ${a === 'codex' ? 'codex' : 'claude'}">${a === 'codex' ? 'Codex' : 'Claude'}</span>`;
-  const whose = (agents) => agents.length > 1 ? 'both' : agents[0] === 'codex' ? 'codex' : 'claude';
+  // 에이전트 탭 · 배지(2026-11-25 Antigravity 추가 — 1단계 = 보이기만). Antigravity 탭은 데몬이 그 에이전트를 안다고 알려 줄 때만(응답의 agents) 보인다 —
+  // 안티그래비티가 없는 PC · 다시 켜기 전의 옛 데몬에서는 지금까지와 같은 탭 넷이다.
+  const AGENT_NAME = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
+  const hasAgy = () => Array.isArray(data?.agents) && data.agents.includes('antigravity');
+  const agentTabs = () => [['all', '전체'], ['claude', 'Claude 전용'], ['codex', 'Codex 전용'], ...(hasAgy() ? [['antigravity', 'Antigravity 전용'], ['both', '여럿이 함께']] : [['both', '둘 다']])];
+  const chip = (a) => `<span class="chip ${AGENT_NAME[a] ? a : 'claude'}">${AGENT_NAME[a] || 'Claude'}</span>`;
+  const whose = (agents) => agents.length > 1 ? 'both' : (AGENT_NAME[agents[0]] ? agents[0] : 'claude');
   const byAgent = (rows) => agent === 'all' ? rows : rows.filter(r => whose(r.agents) === agent);
   const K = () => KINDS.find(k => k.key === kind);
   const INST_GROUPS = [
@@ -95,7 +99,8 @@ window.ToolsView = (() => {
     }
     const avail = cats.filter(c => !irisIds.has(c.id) && !Object.values(c.state?.agents || {}).includes('installed'));
     const allRows = [...inst.map(r => ({ t: 'inst', agents: r.agents, r })), ...avail.map(c => ({ t: 'cat', agents: c.agents, c }))];
-    ags.innerHTML = AGENTS.map(([a, t]) => `<button type="button" data-agent="${a}" aria-pressed="${agent === a}">${t} <b>${a === 'all' ? allRows.length : allRows.filter(x => whose(x.agents) === a).length}</b></button>`).join('');
+    if (agent === 'antigravity' && !hasAgy()) agent = 'all';
+    ags.innerHTML = agentTabs().map(([a, t]) => `<button type="button" data-agent="${a}" aria-pressed="${agent === a}">${t} <b>${a === 'all' ? allRows.length : allRows.filter(x => whose(x.agents) === a).length}</b></button>`).join('');
     const words = q.trim().toLowerCase();
     const match = (s) => !words || s.toLowerCase().includes(words);
 
@@ -130,7 +135,7 @@ window.ToolsView = (() => {
     body.innerHTML = `<p class="tl-kdesc">${Icons.svg(k.icon, 14)}<span>${esc(k.desc)}</span></p>`
       // 설치된 것 = 세 묶음(v2.104, 사용자 "설치 패키지에 들어 있는 기본 도구는 표시"): 기본 · IRIS 로 설치함 · 직접 설치함. 비어 있는 묶음은 숨긴다.
       + INST_GROUPS.map(([grp, title, note]) => { const n = instShown.filter(r => (r.origin || 'manual') === grp).length; return n ? `<section class="st-grp tl-card" data-sec="${grp}"><h3 class="tl-h"><span class="tl-t">${title}</span><small>${note}</small><span class="auth-n">${n}개</span></h3>${instHtml(grp)}</section>` : ''; }).join('')
-      + (instShown.length ? '' : `<section class="st-grp tl-card" data-sec="none">${empty(words ? '찾는 이름이 없습니다' : `설치된 ${k.title} 없음`)}</section>`)
+      + (instShown.length ? '' : `<section class="st-grp tl-card" data-sec="none">${empty(words ? '찾는 이름이 없습니다' : agent === 'antigravity' ? `Antigravity 에 연결한 ${k.title} 없음 — 지금은 보기만 됩니다(Antigravity 쪽 설치는 IRIS 가 아직 해 주지 않습니다). 안전 장치(경로 · 일괄 종료 가드)는 도구와 상관없이 걸려 있습니다` : `설치된 ${k.title} 없음`)}</section>`)
       + `<section class="st-grp tl-card" data-sec="available"><h3 class="tl-h"><span class="tl-t">설치할 수 있음</span><small>IRIS 가 골라 시험한 목록 · 설치·제거는 새로 여는 세션부터 적용</small><span class="auth-n">${byAgent(avail).length}개</span></h3>${availHtml || empty(words ? '찾는 이름이 없습니다' : '지금은 더 설치할 것이 없습니다')}</section>`;
   }
 

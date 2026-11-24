@@ -80,10 +80,15 @@ function outbound() {
   const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true });
   return (r.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 }
-let browser;
+let browser, own = false;
 try {
   let up = false; for (let i = 0; i < 60 && !up; i++) { await sleep(250); try { up = (await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok; } catch {} }
   ok(up, `3 시험 데몬 ${PORT} pid=${d.pid}`);
+  // 2026-11-23 사고: 다른 검사가 같은 포트에 먼저 띄운 데몬이 대신 답하면, 그 데몬에는 가짜 의견함 설정이 없어 시험 글이 진짜 의견함으로 나간다.
+  // 포트에서 답하는 것이 방금 띄운 데몬(pid 같음)일 때만 보내는 시험을 한다 — 아니면 하나도 보내지 않고 멈춘다.
+  own = up && (await api('/api/health')).body.pid === d.pid;
+  ok(own, `3 포트 ${PORT} 에서 답하는 것 = 방금 띄운 시험 데몬(다른 검사가 같은 포트를 쓰는 중이면 끝난 뒤 다시 돌린다)`);
+  if (!own) throw new Error(`포트 ${PORT} 를 다른 데몬이 쓰는 중 — 보내는 시험을 하지 않고 멈춤`);
   const g = await api('/api/feedback');
   ok(g.status === 200 && /^IRIS 창 \d+\.\d+\.\d+/.test(g.body.info) && /Windows|win32|linux|darwin/.test(g.body.info) && g.body.fallback === 'https://iris-workspace.com/feedback', `3 정보 줄 (${g.body.info})`);
   const o = outbound(); ok(o.length === 0 && hits.length === 0, `3 누르기 전 바깥 연결 0 · 의견함 호출 0${o.length ? ' → ' + o.join(', ') : ''}`);
@@ -100,6 +105,30 @@ try {
   mode = 'ok';
   const log = fs.existsSync(path.join(state, 'daemon.log')) ? fs.readFileSync(path.join(state, 'daemon.log'), 'utf8') : '';
   ok(/feedback: sent F-20261113-0000aa/.test(log) && !/시험 한 줄/.test(log), '3 로그 = 접수 번호만(내용 없음)');
+
+  // 받는 곳을 정해 주지 않은 시험 데몬은 진짜 의견함으로 보내지 않는다(2026-11-23 사고의 두 번째 막이) — 가짜 의견함 설정 없이 하나 더 띄워 본다
+  {
+    const P2 = PORT + 3; const st2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-fb2-'));
+    fs.writeFileSync(path.join(st2, 'settings.json'), JSON.stringify({ voice: { preload: false } }), 'utf8'); fs.writeFileSync(path.join(st2, 'sessions.json'), '[]', 'utf8');
+    const env2 = { ...process.env, IRIS_FACE_PORT: String(P2), IRIS_FACE_STATE: st2, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' }; delete env2.IRIS_FACE_FEEDBACK_URL;
+    const d2 = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore', env: env2 });
+    try {
+      let pid2 = 0; for (let i = 0; i < 60 && pid2 !== d2.pid; i++) { await sleep(250); try { pid2 = (await (await fetch(`http://127.0.0.1:${P2}/api/health`)).json()).pid; } catch {} }
+      ok(pid2 === d2.pid, `3 설정 없는 시험 데몬 ${P2} pid=${d2.pid}`);
+      if (pid2 === d2.pid) {
+        const n0 = hits.length;
+        const r2 = await fetch(`http://127.0.0.1:${P2}/api/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'bug', body: 'x' }) });
+        const j2 = await r2.json().catch(() => ({}));
+        const ps2 = `Get-NetTCPConnection -OwningProcess ${d2.pid} -ErrorAction SilentlyContinue | Where-Object { $_.RemoteAddress -notmatch '^(127\\.|::1$|0\\.0\\.0\\.0$|::$)' } | ForEach-Object { $_.RemoteAddress + ':' + $_.RemotePort }`;
+        const out2 = (spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps2], { encoding: 'utf8', windowsHide: true }).stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        const log2 = fs.existsSync(path.join(st2, 'daemon.log')) ? fs.readFileSync(path.join(st2, 'daemon.log'), 'utf8') : '';
+        ok(r2.status === 400 && j2.error === 'offline' && hits.length === n0 && out2.length === 0 && /feedback: refused/.test(log2), `3 받는 곳 설정이 없는 시험 데몬 = 보내지 않고 거절(바깥 연결 0)${out2.length ? ' → ' + out2.join(', ') : ''}`);
+      }
+    } finally {
+      try { process.kill(d2.pid); } catch {}
+      await sleep(400); try { fs.rmSync(st2, { recursive: true, force: true }); } catch {}
+    }
+  }
 
   // 화면(playwright 있을 때)
   const req = createRequire(import.meta.url); let pw = null;
@@ -138,7 +167,7 @@ try {
 } catch (x) { fail++; console.log(`FAIL unexpected — ${x.message}`); }
 finally {
   try { await browser?.close(); } catch {}
-  try { await fetch(`http://127.0.0.1:${PORT}/api/shutdown`, { method: 'POST' }); } catch {}
+  if (own) { try { await fetch(`http://127.0.0.1:${PORT}/api/shutdown`, { method: 'POST' }); } catch {} } // 남의 시험 데몬은 끄지 않는다
   let alive = true; for (let i = 0; i < 16 && alive; i++) { await sleep(250); try { process.kill(d.pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; } }
   if (alive) { try { process.kill(d.pid); } catch {} }
   mock.close();

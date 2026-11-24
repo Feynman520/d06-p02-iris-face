@@ -305,6 +305,17 @@ export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.home
   }
   // 코덱스 플러그인(판 B, 2026-11-10): config.toml 의 [plugins."이름@마켓"] — 화면에 코덱스 쪽도 보이게
   for (const p of codexPluginsIn(readText(path.join(cx, 'config.toml')))) plugins.push({ agent: 'codex', name: p.name, market: p.market, enabled: p.enabled, version: '', description: '' });
+  // 안티그래비티(2026-11-25 사용자 요청 "도구에 Antigravity 가 없음" — 1단계 = 보이기만, IRIS 가 설치 · 제거하지 않는다): 설정 폴더는 언제나 <사용자 폴더>\.gemini.
+  // 읽는 것 = MCP(config\mcp_config.json 의 mcpServers — 이름 · 종류 · 실행 파일 이름만) · 사용자가 넣은 스킬(config\skills · skills). agy 에 들어 있는 기본 스킬과
+  // 플러그인(저장 자리 미확인)은 세지 않는다. .gemini 가 없는 PC 는 아무것도 더하지 않는다.
+  if (home) {
+    const gm = path.join(home, '.gemini');
+    const servers = readJson(path.join(gm, 'config', 'mcp_config.json'))?.mcpServers;
+    if (servers && typeof servers === 'object' && !Array.isArray(servers)) {
+      for (const [name, v] of Object.entries(servers)) mcp.push({ agent: 'antigravity', name, kind: v?.url || v?.serverUrl || v?.httpUrl || v?.type === 'http' || v?.type === 'sse' ? 'http' : 'stdio', program: v?.command ? path.basename(String(v.command)) : '', ...(v?.disabled === true ? { enabled: false } : {}) });
+    }
+    skills.push(...skillsIn(path.join(gm, 'config', 'skills'), 'antigravity'), ...skillsIn(path.join(gm, 'skills'), 'antigravity'));
+  }
   const by = (a, b) => a.name.localeCompare(b.name);
   return { ok: true, counts: { skills: skills.length, mcp: mcp.length, plugins: plugins.length }, skills: skills.sort(by), mcp: mcp.sort(by), plugins: plugins.sort(by) };
 }

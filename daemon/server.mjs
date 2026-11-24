@@ -449,7 +449,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/ontology/graph') return json(res, 200, ontologyGraph(WS_ROOT));
     // 판 B: 설치된 도구(출처 base·iris·manual 붙임) + 엄선 목록 상태. 설치·제거는 같은 출처만, 한 번에 하나(엔진 큐).
-    if (req.method === 'GET' && p === '/api/tools') return json(res, 200, { ...tools.annotate(listTools(WS_ROOT)), catalog: tools.status() });
+    // agents = 이 PC 에서 쓰는 에이전트 이름들(도구 화면이 Antigravity 탭을 보일지 정한다, 2026-11-25)
+    if (req.method === 'GET' && p === '/api/tools') return json(res, 200, { ...tools.annotate(listTools(WS_ROOT)), catalog: tools.status(), agents: Object.keys(activeAgentsMap(AGENTS)).filter((a) => a !== 'antigravity' || agyStatus.current()?.state !== 'missing') });
     if (req.method === 'POST' && (p === '/api/tools/install' || p === '/api/tools/remove' || p === '/api/tools/cancel')) {
       if (!sameOrigin(req)) { log(`403 tools: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       const b = await readBody(req); const id = String(b?.id || '');
@@ -475,6 +476,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/feedback') {
       if (!sameOrigin(req)) { log(`403 feedback: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       let b; try { b = await readBody(req); } catch { return json(res, 400, { ok: false, error: 'bad' }); }
+      // 시험 데몬(포트 ≠ 3458)은 받는 곳을 따로 정해 주지 않으면 진짜 의견함으로 보내지 않는다(2026-11-23 사고: 검사 둘이 같은 시험 포트를 써서
+      // 한 검사의 시험 글 2통이 가짜 의견함 설정이 없는 다른 검사의 데몬을 거쳐 진짜 의견함 · 메일로 나갔다). 화면은 평소의 실패 길(홈페이지 주소)을 보인다.
+      if (PORT !== 3458 && !process.env.IRIS_FACE_FEEDBACK_URL) { log('feedback: refused — 시험 데몬은 진짜 의견함으로 보내지 않음'); return json(res, 400, { ok: false, error: 'offline' }); }
       const r = await sendFeedback(b, { info: feedbackInfo(updater.installed()) });
       log(`feedback: ${r.ok ? `sent ${r.receipt}` : `failed ${r.error}`}`); // 내용·이메일은 로그에 싣지 않는다
       return json(res, r.ok ? 200 : 400, r);

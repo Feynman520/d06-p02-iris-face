@@ -137,6 +137,24 @@ try {
   const cx = await p.locator('#tl-body').textContent();
   ok(/실패한 것/.test(cx) && !/my-own/.test(cx) && !/포스터 디자인/.test(cx), 'Codex 전용 = Codex 에만 있는 것');
   await p.locator('#tl-agents [data-agent="all"]').click();
+  // Antigravity(2026-11-25, 보이기만): 데몬이 agents 로 알려 줄 때만 탭이 생기고, 그 줄에는 설치 · 제거 단추가 없다
+  ok(!/Antigravity/.test(tabs) && /둘 다 \d+/.test(tabs), '데몬이 Antigravity 를 알려 주지 않으면 탭은 예전 넷(전체 · Claude 전용 · Codex 전용 · 둘 다)');
+  W.agents = ['claude', 'codex', 'antigravity'];
+  W.mcp.push({ agent: 'antigravity', name: 'agy-only', kind: 'stdio', program: 'node.exe', origin: 'manual' }, { agent: 'antigravity', name: 'playwright', kind: 'stdio', program: 'node.exe', origin: 'base' });
+  await p.evaluate(() => window.ToolsView.onTools({ type: 'tools', busy: null, changed: true })); await p.waitForTimeout(400);
+  await p.locator('#tl-kinds [data-kind="mcp"]').click(); await p.waitForTimeout(150);
+  const tabs2 = await p.locator('#tl-agents [data-agent]').evaluateAll((bs) => bs.map((b) => b.textContent.trim()).join(' | '));
+  ok(/Antigravity 전용 1/.test(tabs2) && /여럿이 함께 \d+/.test(tabs2) && !/둘 다/.test(tabs2), `Antigravity 탭(${tabs2})`);
+  ok(await p.locator('.tl-row:has-text("playwright") .chip.antigravity').count() === 1 && await p.locator('.tl-row:has-text("playwright") .chip.claude').count() === 1, '같은 이름의 도구 = 한 줄에 에이전트 배지를 모음(Claude + Antigravity)');
+  await p.locator('#tl-agents [data-agent="antigravity"]').click(); await p.waitForTimeout(150);
+  const agBody = await p.locator('#tl-body').textContent();
+  ok(/agy-only/.test(agBody) && !/Canva/.test(agBody) && await p.locator('.tl-row:has-text("agy-only") [data-act]').count() === 0 && await p.locator('.tl-row:has-text("agy-only") .chip.antigravity').count() === 1, 'Antigravity 전용 = Antigravity 에만 있는 것 · 단추 없음(보기만)');
+  await p.locator('#tl-kinds [data-kind="plugins"]').click(); await p.waitForTimeout(150);
+  ok(/Antigravity 에 연결한 .* 없음/.test(await p.locator('[data-sec="none"]').textContent()), 'Antigravity 탭에 아무것도 없으면 보기만 된다는 안내');
+  W.mcp = W.mcp.filter((m) => m.agent !== 'antigravity'); delete W.agents;
+  await p.evaluate(() => window.ToolsView.onTools({ type: 'tools', busy: null, changed: true })); await p.waitForTimeout(400);
+  ok(await p.locator('#tl-agents [data-agent="antigravity"]').count() === 0 && await p.locator('#tl-agents [data-agent="all"]').getAttribute('aria-pressed') === 'true', 'Antigravity 가 사라지면 탭도 사라지고 「전체」로 돌아감');
+  await p.locator('#tl-kinds [data-kind="skills"]').click(); await p.waitForTimeout(150);
   // 설치: 확인 창 → 진행 표시 → 다시 읽기
   await p.locator('.tl-row[data-id="canvas-design"] [data-act="install"]').click();
   await p.waitForTimeout(80);
