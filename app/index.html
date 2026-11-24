@@ -55,6 +55,9 @@
         <section class="st-grp"><h3><span class="chip codex">Codex</span></h3>
           <div class="st-opt"><span class="st-opt-text">승인<small>명령을 실행하기 전에 물을지</small></span><select id="st-approval" class="pick"></select></div>
           <div class="st-opt"><span class="st-opt-text">샌드박스<small>파일·네트워크에 닿을 수 있는 범위</small></span><select id="st-sandbox" class="pick"></select></div></section>
+        <!-- 2026-11-25 사용자 요청: Antigravity 권한 모드. 목록은 데몬(/api/agents 의 antigravity.permissions)이 준다 — 없으면(안티그래비티가 없는 PC · 다시 켜기 전의 옛 데몬) 이 카드를 숨긴다. -->
+        <section class="st-grp" id="st-agy-grp" hidden><h3><span class="chip antigravity">Antigravity</span></h3>
+          <div class="st-opt"><span class="st-opt-text">권한 모드<small>도구를 쓰기 전에 물을지 · 새로 여는 대화부터</small></span><select id="st-agy-perm" class="pick"></select></div></section>
         <section class="st-grp"><h3>다시 켤 때</h3>
           <label class="st-opt"><span class="st-opt-text">끊긴 세션 이어 열기<small>IRIS를 켠 채 PC가 꺼졌거나 갑자기 닫힌 세션을 다음 실행 때 같은 카드에서 다시 엽니다</small></span><input id="st-autoresume" class="sw" type="checkbox"></label>
           <p class="st-hint"><b>켬 권장</b> · 일을 마치면 세션을 닫는 데 익숙한 터미널 사용자. 갑자기 꺼졌을 때만 이어 줍니다.</p>

@@ -29,10 +29,12 @@ const navOrder = [...aside.matchAll(/class="st-nav-i" data-pane="([a-z]+)"/g)].m
 ok(JSON.stringify(navOrder) === JSON.stringify(PANES), `1 목차 ${PANES.length}줄 = 묶음과 같은 순서`);
 ok(aside.indexOf('id="st-nav"') > aside.lastIndexOf('class="st-pane'), '1 목차가 묶음 뒤 = 오른쪽');
 ok(PANES.slice(1).every(p => new RegExp(`data-pane="${p}" hidden`).test(aside)), '1 처음엔 디자인만 보이고 나머지는 숨김');
-const IDS = ['st-themes', 'st-stages', 'st-density', 'st-density-v', 'st-fps', 'st-remeasure', 'st-pause', 'st-perm', 'st-approval', 'st-sandbox', 'st-notify', 'st-notify-os', 'st-notify-test', 'st-mods', 'st-auth-sec', 'st-auth', 'st-auth-act', 'st-update', 'st-update-act', 'st-update-auto', 'st-recovery', 'st-root', 'st-onto', 'st-tools', 'st-tutorial', 'btn-shutdown', 'maker', 'st-close'];
+const IDS = ['st-themes', 'st-stages', 'st-density', 'st-density-v', 'st-fps', 'st-remeasure', 'st-pause', 'st-perm', 'st-approval', 'st-sandbox', 'st-agy-grp', 'st-agy-perm', 'st-notify', 'st-notify-os', 'st-notify-test', 'st-mods', 'st-auth-sec', 'st-auth', 'st-auth-act', 'st-update', 'st-update-act', 'st-update-auto', 'st-recovery', 'st-root', 'st-onto', 'st-tools', 'st-tutorial', 'btn-shutdown', 'maker', 'st-close'];
 const missing = IDS.filter(id => (aside.match(new RegExp(`id="${id}"`, 'g')) || []).length !== 1);
 ok(!missing.length, `1 기존 요소 id ${IDS.length}개 보존(각 1번)${missing.length ? ' — 빠짐: ' + missing.join(',') : ''}`);
 ok(!/class="st-foot"/.test(aside), '1 옛 바닥줄(st-foot) 없음 — 전부 종료는 목차 아래');
+// 2026-11-25: Antigravity 권한 칸은 처음엔 숨김(데몬이 목록을 줄 때만) · 새 대화의 선택값에는 안티그래비티일 때만 그 값이 실린다
+ok(/id="st-agy-grp" hidden/.test(aside) && /sel\.agent === 'antigravity' \? \(st\.agyPermission \|\| ''\)/.test(fs.readFileSync(path.join(ROOT, 'app', 'main.js'), 'utf8')), '1 Antigravity 권한 칸: 처음엔 숨김 · 선택값은 안티그래비티 세션에만');
 const navIcons = [...aside.matchAll(/data-icon="([a-z]+)"/g)].map(m => m[1]);
 ok(navIcons.length === PANES.length && navIcons.every(n => new RegExp(`\\b${n}: '`).test(icons)), `1 목차 아이콘 = icons.js 이름 (${navIcons.join(',')})`);
 ok(/function startPreviews\(\) \{\s*destroyPreviews\(\); if \(!open \|\| pane !== 'design'\) return;/.test(js), '1 애니메이션 미리보기는 「디자인」 묶음이 보일 때만');
@@ -225,6 +227,19 @@ else {
         ok(ac.other === 'tc:newco:n-1', '2 계정: 모르는 공급자는 Claude 칸이 아니라 단추 없는 「다른 계정」 칸');
         await p.locator('#st-auth [data-kind="antigravity"] [data-dash]').click(); await sleep(400);
         ok(renewCalls === 0 && await p.evaluate(() => !document.querySelector('#dlg') || document.querySelector('#dlg').hidden), '2 계정: 구글 계정의 단추는 갱신(로그인) 요청을 보내지 않음 · 확인 창도 뜨지 않음');
+        // 세션 기본값: Antigravity 권한 모드(2026-11-25) — 데몬이 목록을 줄 때만 카드가 보인다. 처음 값 = 전부 허용(저장된 키 없음)
+        if (!(await p.locator('#settings').isVisible())) { await p.locator('#btn-settings').click(); await sleep(400); }
+        await p.locator('#st-nav .st-nav-i[data-pane="session"]').click(); await sleep(300);
+        if (await p.locator('#st-agy-grp').isVisible()) {
+          ok((await saved()).agyPermission === undefined && (await p.inputValue('#st-agy-perm')) === '' && /Antigravity 전부 허용/.test(await p.locator('#st-sum-session').textContent()), '2 세션 기본값: Antigravity 카드 · 처음 값 = 전부 허용(저장된 키 없음)');
+          await p.selectOption('#st-agy-perm', 'plan'); await sleep(600);
+          ok((await saved()).agyPermission === 'plan' && /Antigravity 계획만/.test(await p.locator('#st-sum-session').textContent()), '2 세션 기본값: Antigravity 권한을 고르면 저장되고 목차 요약에 보임');
+          ok((await saved()).permission === undefined || (await saved()).permission === (await p.inputValue('#st-perm')), '2 세션 기본값: Antigravity 칸을 바꿔도 Claude 권한 값은 그대로');
+          await fetch(`${B}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agyPermission: 'manual' }) }); await sleep(500);
+          ok((await p.inputValue('#st-agy-perm')) === '', '2 세션 기본값: 목록에 없는 저장 값(옛 값 · 손으로 적은 값) = 전부 허용으로 보임');
+          await p.selectOption('#st-agy-perm', 'auto'); await sleep(400); await p.selectOption('#st-agy-perm', ''); await sleep(500);
+          ok((await saved()).agyPermission === '', '2 세션 기본값: 전부 허용으로 되돌리기');
+        } else console.log('SKIP 2 세션 기본값 Antigravity 카드: 이 데몬에는 안티그래비티 권한 목록이 없음');
         if (capDir) { await p.locator('#btn-settings').click().catch(() => {}); }
       }
       ok(errs.length === 0, `2 ${W}px 페이지 오류 ${errs.length}건${errs.length ? ' ' + errs.join(' | ') : ''}`);

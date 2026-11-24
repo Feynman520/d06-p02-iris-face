@@ -42,7 +42,7 @@ eq(Object.keys(agents.AGENTS), ['claude', 'codex', 'antigravity'], '명부 순�
   eq(all.slice().sort(), mdl.HAND_LIST.map((m) => m.id).sort(), '목록: 넘길 수 있는 이름 = 손 표의 정확한 이름 전부(지어낸 이름 0)');
 }
 let n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh', permission: 'plan', approval: 'never', sandbox: 'read-only' });
-eq([n.agent, n.model, n.modelLabel, n.modelActual, n.effort, n.permission, n.approval, n.sandbox, n.readOnly], ['antigravity', 'gemini-4-neon', 'Gemini 4 Neon', 'gemini-4-neon-xhigh', 'xhigh', '', '', '', false], '정리: 모델 + 깊이 → 정확한 이름, 권한 칸은 비움');
+eq([n.agent, n.model, n.modelLabel, n.modelActual, n.effort, n.permission, n.approval, n.sandbox, n.readOnly], ['antigravity', 'gemini-4-neon', 'Gemini 4 Neon', 'gemini-4-neon-xhigh', 'xhigh', 'plan', '', '', false], '정리: 모델 + 깊이 → 정확한 이름, 권한은 안티그래비티 목록의 값만(2026-11-25) · 코덱스 칸은 비움');
 n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-argon', effort: 'xhigh' });
 eq([n.effort, n.modelActual], ['high', 'gemini-4-argon-high'], '정리: 그 모델에 없는 깊이 = 가장 가까운 아래(xhigh → high)');
 n = agents.normalize({ agent: 'antigravity', model: 'gemini-4-argon', effort: 'max' });
@@ -147,6 +147,16 @@ const l1 = agents.buildCommand({ agent: 'antigravity' }, TMP), l2 = agents.build
 ok(l1.cmdline !== l2.cmdline, '같은 선택이라도 카드마다 다른 기록 파일');
 eq(agents.isFastModel('antigravity', 'gemini-4-argon-high'), false, 'fast 없음');
 eq(agents.permLabel({ agent: 'antigravity' }), '권한 자동 승인', '권한 표시');
+// 권한 모드(2026-11-25): 빈 값 · 모르는 값 = 전부 허용(지금까지와 같은 명령), 고른 값만 --mode 로
+{
+  const A = (permission) => { const a = agents.buildCommand({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'high', permission }, TMP).args; return a.slice(2, a.indexOf('--log-file')).join(' '); };
+  eq([A(undefined), A(''), A('nope'), A('bypassPermissions'), A('manual'), A('constructor')], Array(6).fill('--dangerously-skip-permissions'), '권한: 값 없음 · 모르는 값 · 클로드 값 = 전부 허용(예전과 같은 명령)');
+  eq([A('auto'), A('acceptEdits'), A('plan')], ['--mode auto', '--mode accept-edits', '--mode plan'], '권한: 고른 모드 → --mode');
+  eq(ad.table.permissions.map((p) => p.id), ['', 'auto', 'acceptEdits', 'plan'], '권한 목록 = 실측으로 확인한 넷(매번 묻기는 CLI 에 없음)');
+  eq([agents.permLabel({ agent: 'antigravity', permission: 'plan' }), agents.permLabel({ agent: 'antigravity', permission: 'nope' })], ['계획만', '권한 자동 승인'], '권한 표시: 고른 모드 이름 · 모르는 값은 기본 표시');
+  const kept = agents.normalize({ agent: 'antigravity', model: 'gemini-4-neon', effort: 'high', permission: 'acceptEdits', approval: 'never', sandbox: 'read-only' });
+  eq([kept.permission, kept.approval, kept.sandbox, kept.readOnly], ['acceptEdits', '', '', false], '권한: 코덱스 칸(승인 · 샌드박스)은 언제나 빈 값');
+}
 // 재개 모델 지키기: 안티그래비티 이름은 지키고, 클로드 · 코덱스는 gemini 이름을 받지 않는다(머리 글자 검사 그대로)
 eq(agents.keepResumeModel({ agent: 'antigravity', model: 'gemini-4-argon-high', modelActual: 'gemini-4-argon-high' }, { agent: 'antigravity', model: 'gemini-9-old', modelActual: 'gemini-9-old' }).modelActual, 'gemini-9-old', '재개: 목록에서 빠진 안티그래비티 모델도 그대로');
 eq(agents.keepResumeModel({ agent: 'claude', model: 'opus', modelActual: 'claude-opus-5-5' }, { agent: 'claude', modelActual: 'gemini-4-argon-high' }).modelActual, 'claude-opus-5-5', '재개: 클로드는 gemini 이름을 받지 않음');
@@ -200,6 +210,20 @@ eq([S(busy), S(idle), S(quoted), S(trust), S('Antigravity CLI 1.5.14\n')], ['bus
 eq([ad.screen.working.test(busy), ad.screen.working.test(idle), ad.screen.attention.test(quoted), ad.screen.attention.test(trust)], [true, false, false, true], 'Enter 확인용 식');
 eq(ad.screen.activity(busy.split('\n')), 'Generating…', '진행 문구');
 ok(ad.screen.interrupted('  ⎿  Interrupted · What should Antigravity CLI do instead?') && !ad.screen.interrupted('중단(Interrupted)이라는 낱말'), '중단 표식');
+// 권한 물음(1.5.16 실제 세션에서 찍은 화면, 2026-11-25): 맨 아래 상태줄이 "esc to cancel" 이어도 일하는 중이 아니라 확인 필요다 —
+// 이것을 놓치면 「전부 허용」이 아닌 권한 모드에서 물음이 떠도 화면은 계속 작업 중으로 보이고 확인 카드가 뜨지 않는다.
+const perm = ['● Ran (echo IRIS_PERM_PROBE)', '────────────────', 'Requesting permission for:', '   echo IRIS_PERM_PROBE', 'Run this command?', '> 1. Yes, run command',
+  "  2. Yes, and always allow in this conversation for commands that start with 'echo IRIS_PERM_PROBE'", "  3. Yes, and always allow for commands that start with 'echo IRIS_PERM_PROBE' (Persist to settings.json)",
+  '  4. No, cancel', '  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command', 'esc to cancel                              accept-edits · Gemini 3.8 Flash · low'].join('\n');
+const talked = ['> 권한 물음이 뭐야?', '  "Requesting permission for:" 다음에 1. Yes, run command 같은 선택지가 뜹니다.', ...Array.from({ length: 16 }, (_, i) => `  설명 ${i + 1}`), '────', '>', '────', '? for shortcuts'].join('\n');
+eq([S(perm), ad.screen.working.test(perm), ad.screen.attention.test(perm)], ['attention', false, true], '권한 물음 = 확인 필요(상태줄 esc to cancel 에 속지 않음)');
+eq([S(talked), ad.screen.attention.test(talked), S(busy)], ['idle', false, 'busy'], '대화 글 속의 같은 낱말 · 평소 일하는 화면은 그대로');
+{
+  const { parseApproval } = await imp('daemon/approval.mjs');
+  const card = ad.promptKeys(parseApproval(perm));
+  eq([card.kind, card.question, card.options.map((o) => o.key).join(''), card.options[0].label, card.options[3].label, card.options[3].desc], ['choice', 'Run this command?', '1234', 'Yes, run command', 'No, cancel', ''], '권한 물음 → 확인 카드(선택지 4개 · 숫자 키 · 안내줄은 설명에서 뺌)');
+  eq(ad.promptKeys(null), null, '확인 카드 다듬기: 빈 값 그대로');
+}
 
 // ── 4. 띄우기 직전 준비(~/.gemini) ──
 const cwdA = path.join(TMP, 'work A');

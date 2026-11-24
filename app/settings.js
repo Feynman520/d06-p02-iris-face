@@ -119,6 +119,10 @@ window.Settings = (() => {
     fill($('#st-perm'), agents?.claude?.permissions || FALLBACK.permissions, cfg.permission);
     fill($('#st-approval'), agents?.codex?.approvals || FALLBACK.approvals, cfg.approval);
     fill($('#st-sandbox'), agents?.codex?.sandboxes || FALLBACK.sandboxes, cfg.sandbox);
+    // Antigravity 권한 모드(2026-11-25): 목록은 데몬만 준다(화면 쪽 사본 없음 — 데몬이 모르는 값을 고르게 하지 않는다). 저장된 값이 목록에 없으면 처음 값(전부 허용).
+    const agyPerms = agents?.antigravity?.permissions;
+    $('#st-agy-grp').hidden = !Array.isArray(agyPerms) || !agyPerms.length;
+    if (!$('#st-agy-grp').hidden) fill($('#st-agy-perm'), agyPerms, agyPerms.some(o => o.id === cfg.agyPermission) ? cfg.agyPermission : '');
     renderMods();
     renderAuth();
     renderUpdate();
@@ -224,7 +228,7 @@ window.Settings = (() => {
     const set = (id, t) => { const el = $(id); if (el) { el.textContent = t; el.title = t; } };
     const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0], st = R.STAGES.find(s => s.id === cfg.stage) || R.STAGES[0];
     set('#st-sum-design', `${th.name} · ${st.name}`);
-    set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}`);
+    set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}${$('#st-agy-grp').hidden ? '' : ` · Antigravity ${optText('#st-agy-perm')}`}`);
     set('#st-sum-ontology', '역할 캐릭터 · 폴더 나무');
     set('#st-sum-tools', 'Skill · MCP · Plugin');
     set('#st-sum-feedback', '개발자에게 바로');
@@ -486,8 +490,10 @@ window.Settings = (() => {
     // 계정은 공급자 이름으로 가른다 — "코덱스가 아니면 클로드"로 나누지 않는다(2026-11-25 사용자 신고: 구글 계정 2개가 Claude 칸에 들어가 「갱신」이 Claude 로그인을 열었다).
     // 모르는 공급자는 어느 칸에도 넣지 않고 단추 없는 「다른 계정」 칸에 둔다.
     const iris = items.filter(i => i.group === 'iris'), acc = items.filter(i => i.group !== 'iris');
-    const cl = acc.filter(i => i.provider === 'anthropic'), cx = acc.filter(i => i.provider === 'codex'), gg = acc.filter(i => i.provider === 'google');
-    const etc = acc.filter(i => !['anthropic', 'codex', 'google'].includes(i.provider));
+    // Claude = 'anthropic'(지금 도구가 적는 값) · 값이 없거나 'claude'(옛 도구 · 옛 자료)도 Claude 로 본다 — 구글 계정이 생기기 전의 자료는 지금까지처럼.
+    const isClaude = (i) => !i.provider || i.provider === 'anthropic' || i.provider === 'claude';
+    const cl = acc.filter(isClaude), cx = acc.filter(i => i.provider === 'codex'), gg = acc.filter(i => i.provider === 'google');
+    const etc = acc.filter(i => !cl.includes(i) && !cx.includes(i) && !gg.includes(i));
     const plain = (i) => `<div class="st-opt auth-row ${esc(i.level)}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small>IRIS 가 아직 모르는 종류의 계정입니다 — 사용량 대시보드에서 관리하세요</small></span><span class="auth-right"><span class="auth-d">${esc(AUTH_WORD[i.level] || '모름')}</span></span></div>`;
     host.innerHTML = card('iris', `<span class="auth-sec-t">${Icons.svg('key', 14)}IRIS 열쇠</span><small>IRIS 창이 Claude 세션을 열 때 쓰는 열쇠</small>`, iris, '열쇠 없음 — Claude 세션은 각 계정 로그인으로 열립니다')
       + card('claude', `<span class="chip claude">Claude</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 Claude 계정</small>`, cl, '계정 없음 — 대시보드에서 추가')
@@ -513,7 +519,7 @@ window.Settings = (() => {
   async function renewAuth(id) {
     const it = (auth?.info?.items || []).find(i => i.id === id); if (!it) return;
     // 중계기 계정의 갱신은 Claude · Codex 만 여기서 한다 — 그 밖의 공급자는 대시보드로(데몬 auth.mjs 도 같은 거절을 한다)
-    if (it.group !== 'iris' && !['anthropic', 'codex'].includes(it.provider)) return opts.openDashboard?.();
+    if (it.group !== 'iris' && it.provider && !['anthropic', 'claude', 'codex'].includes(it.provider)) return opts.openDashboard?.();
     const how = it.group === 'iris'
       ? `브라우저에 claude.ai 승인 화면이 열립니다.\n${/@/.test(it.name) ? `${it.name} 계정인지 확인하고 ` : ''}「승인」을 누르면 IRIS 창용 1년 열쇠가 저장됩니다(열쇠는 화면에 보이지 않습니다).\n새로 여는 세션부터 적용됩니다.`
       : it.renew === 'teamclaude-longkey' ? `Edge 시크릿(InPrivate) 창에 claude.ai 승인 화면이 열립니다.\n그 창에서 ${it.name} 계정으로 로그인한 뒤 「승인」을 누르면 이 계정이 1년 열쇠로 바뀝니다(평소 브라우저 로그인은 그대로).\n다른 계정으로 승인하면 아무것도 바꾸지 않습니다.`
@@ -574,6 +580,7 @@ window.Settings = (() => {
     $('#st-perm').addEventListener('change', (e) => pick({ permission: e.target.value }));
     $('#st-approval').addEventListener('change', (e) => pick({ approval: e.target.value }));
     $('#st-sandbox').addEventListener('change', (e) => pick({ sandbox: e.target.value }));
+    $('#st-agy-perm').addEventListener('change', (e) => pick({ agyPermission: e.target.value }));
     $('#st-autoresume').addEventListener('change', (e) => pick({ autoResume: e.target.checked }));
     $('#st-notify').addEventListener('change', (e) => pick({ notifyDone: e.target.checked }));
     $('#st-notify-os').addEventListener('change', (e) => { if (e.target.checked) Notify.requestOs(); pick({ notifyOs: e.target.checked }); });

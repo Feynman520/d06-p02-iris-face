@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyLongKey, longKeyFile, scrub, AuthWatch } from '../daemon/auth.mjs';
+import { applyLongKey, longKeyFile, scrub, AuthWatch, DASH_LOGIN } from '../daemon/auth.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -83,13 +83,17 @@ ok((await w.renew('nope')).ok === false, '4 모르는 항목 거절');
   ] };
   const g = await w2.renew('tc:google:google-1');
   ok(g.ok === false && g.dashboard === true && calls.length === 0 && !w2.job, '4b 구글(Antigravity) 계정 갱신 = 거절 + 대시보드 안내 · 로그인 호출 0');
-  const n = await w2.renew('tc:newco:n-1'), x = await w2.renew('tc:none:x-1');
-  ok(n.ok === false && x.ok === false && calls.length === 0, '4b 모르는 공급자 · 공급자 없는 항목도 Claude 로 넘기지 않고 거절');
+  const n = await w2.renew('tc:newco:n-1');
+  ok(n.ok === false && n.dashboard === true && calls.length === 0, '4b 이름이 있는 모르는 공급자 = Claude 로 넘기지 않고 거절');
   const a = await w2.renew('tc:anthropic:a@example.com');
   ok(a.ok && calls.length === 1 && calls[0].body.op === 'login' && calls[0].body.provider === 'anthropic', '4b Claude 계정 → 대시보드 login(anthropic) 그대로');
   w2.job = null;
   const c = await w2.renew('tc:codex:codex-1');
   ok(c.ok && calls.length === 2 && calls[1].body.provider === 'codex', '4b Codex 계정 → 대시보드 login(codex) 그대로');
+  w2.job = null;
+  const x = await w2.renew('tc:none:x-1');
+  ok(x.ok && calls.length === 3 && calls[2].body.provider === 'anthropic', '4b 공급자 값이 없는 옛 자료 = 지금까지처럼 Claude(구글 계정이 생기기 전의 도구)');
+  ok(!('constructor' in DASH_LOGIN) && DASH_LOGIN.google === undefined, '4b 공급자 표에 물려받은 이름(constructor 등) 없음 · 구글 없음');
 }
 await sleep(300); // 도구 자식 프로세스의 작업 폴더가 풀리길 기다린다(윈도 EPERM)
 try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더 — 남아도 무해 */ }

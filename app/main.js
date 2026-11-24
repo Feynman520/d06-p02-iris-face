@@ -77,7 +77,7 @@
   // 안티그래비티의 사고 깊이가 없는 모델(Orchestrator — 목록의 efforts 가 빈 줄)은 깊이를 보내지 않는다 — 기억해 둔 깊이는 다른 모델로 돌아올 때 쓴다.
   // 클로드 · 코덱스는 예전 그대로(저장된 깊이를 보낸다 — 데몬이 정리한다).
   const effortFor = (agent) => { const m = agent === 'antigravity' ? AGENTS?.[agent]?.models?.find((x) => x.id === sel.model[agent]) : null; return (m && Array.isArray(m.efforts) && !m.efforts.length) ? '' : sel.effort[agent]; };
-  function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: effortFor(sel.agent), permission: sel.agent === 'claude' ? (st.permission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
+  function currentSel() { const st = Settings.get(); return { agent: sel.agent, model: sel.model[sel.agent], effort: effortFor(sel.agent), permission: sel.agent === 'claude' ? (st.permission || '') : sel.agent === 'antigravity' ? (st.agyPermission || '') : '', approval: sel.agent === 'codex' ? (st.approval || '') : '', sandbox: sel.agent === 'codex' ? (st.sandbox || '') : '' }; }
   const fill = (el, list, val) => { el.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join(''); el.value = val ?? ''; };
   const AGENT_NAME = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
   // v2.96.2(2026-10-27 사용자 결정, 옛 v2.76 한 줄 안내 대체): 입력창 위 긴 안내 글은 없앴다. 프로그램이 없거나 계정이 0개인
