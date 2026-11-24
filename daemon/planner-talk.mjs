@@ -419,7 +419,7 @@ export class PlannerTalk {
       if (this.busy) return { ok: false, say: '앞의 말을 정리하는 중이에요. 잠시만요.' }; // 확인 · 빠른 단추도 같다 — 정리하는 동안 수첩의 전제가 바뀌지 않게
       if (body.quick === 'move-rest') return pl.rules ? pl.rules.moveRestToTomorrow(isDate(body.day) ? body.day : null) : { ok: false, say: '지금은 옮길 수 없어요.' }; // 하루 끝 정리의 「내일로 옮기기」(AI 안 씀)
       if (body.confirm) return this.#confirm(String(body.confirm), body.yes === true);
-      if (cfg.plannerTalk === false) return { ok: false, say: '말하기가 꺼져 있어요. 설정 → 플래너에서 켤 수 있어요.' };
+      if (cfg.plannerTalk === false) return { ok: false, say: '말하기가 꺼져 있어요. 설정 → 알림 · 플래너에서 켤 수 있어요.' };
       const text = String(body.text ?? '').replace(/\s+/g, ' ').trim();
       if (!text) return { ok: false, say: '무엇을 넣거나 바꿀지 말해 주세요.' };
       if (text.length > TEXT_MAX) return { ok: false, say: `말이 너무 길어요(${TEXT_MAX}자까지). 나눠서 말해 주세요.` };

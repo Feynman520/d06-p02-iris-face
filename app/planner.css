@@ -233,6 +233,12 @@
 .st-pl-time:disabled, #settings .st-chip:disabled { opacity: .45; cursor: default; }
 #settings div.st-opt { cursor: default; }
 #st-pl-usage { white-space: pre-line; }
+/* 설정 → 알림 · 플래너(2026-11-25 묶음을 합침): 딸린 값(시각 · 몇 분 전)은 아래 줄이 아니라 같은 줄 오른쪽에 스위치와 나란히 */
+#settings .st-opt-r { flex: none; display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; max-width: 62%; }
+#settings div.st-opt > label.st-opt-text { cursor: pointer; }
+#settings .st-opt:has(.sw:disabled) .st-pl-time:disabled, #settings .st-opt:has(.sw:disabled) .st-chip:disabled { opacity: 1; } /* 줄 전체가 이미 흐리다 — 두 번 흐리지 않게 */
+.st-pl-quiet-h { display: inline-flex; align-items: center; gap: 8px; font-weight: 400; }
+#st-pl-quiet-note[hidden] { display: none; }
 @keyframes pl-pop { from { opacity: 0; transform: scale(.86); } to { opacity: 1; transform: none; } }
 @keyframes pl-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes pl-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }

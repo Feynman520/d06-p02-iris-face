@@ -17,7 +17,7 @@ let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) { pass++; console.log(`PASS ${n}`); } else { fail++; console.log(`FAIL ${n}`); } };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const src = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
-const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'planner', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음 추가 · v2.105: 의견 보내기 · 플래너(설계 조각 ⑧)
+const PANES = ['design', 'session', 'ontology', 'tools', 'planner', 'mods', 'account', 'about', 'feedback']; // 2026-11-25: 「알림」(notify)은 「알림 · 플래너」(planner)에 합침 // v2.90: 온톨로지·도구 묶음 추가 · v2.105: 의견 보내기 · 플래너(설계 조각 ⑧)
 
 // ---------- 1) 정적 ----------
 const html = src('app/index.html'), js = src('app/settings.js'), icons = src('app/icons.js'), main = src('app/main.js');
@@ -46,7 +46,12 @@ const { PLANNER_DEFAULTS } = await import(pathToFileURL(path.join(ROOT, 'daemon'
 const plPane = aside.slice(aside.indexOf('data-pane="planner"'), aside.indexOf('data-pane="mods"'));
 const PL_IDS = ['st-pl-on', 'st-pl-morning', 'st-pl-morning-at', 'st-pl-start', 'st-pl-lead', 'st-pl-evening', 'st-pl-evening-at', 'st-pl-overlap', 'st-pl-talk', 'st-pl-sessions', 'st-pl-check', 'st-pl-quiet', 'st-pl-quiet-note', 'st-pl-usage', 'st-pl-folder'];
 ok(PL_IDS.every((id) => (plPane.match(new RegExp(`id="${id}"`, 'g')) || []).length === 1), `1 플래너 묶음의 요소 ${PL_IDS.length}개(각 1번)`);
-ok((plPane.match(/class="sw"/g) || []).length === 8 && (plPane.match(/class="st-opt(?: child)?"/g) || []).length === 12, '1 플래너: 스위치 여덟 줄 + 딸린 값 셋 + 잠시 조용히 한 줄(모두 .st-opt 모양)');
+// 2026-11-25 「알림 · 플래너」로 합침(사용자 요청 — 시안 docs\시안-설정개선-2026-11-24.html ④): 작업 알림 스위치 둘 + 플래너 스위치 여덟 = 열, 줄(.st-opt)도 열.
+// 딸린 값(시각 둘 · 몇 분 전)은 따로 줄을 차지하지 않고 같은 줄 오른쪽(.st-opt-r)에, 「잠시 조용히」는 카드 머리에 있다.
+ok((plPane.match(/class="sw"/g) || []).length === 10 && (plPane.match(/class="st-opt(?: child)?"/g) || []).length === 10 && (plPane.match(/class="st-opt-r"/g) || []).length === 3, '1 알림 · 플래너: 스위치 열 개 = 줄 열 개(.st-opt) · 딸린 값 셋은 같은 줄 오른쪽');
+ok(/id="st-notify"/.test(plPane) && /id="st-notify-os"/.test(plPane) && /id="st-notify-test"/.test(plPane) && !/data-pane="notify"/.test(aside) && /<h2>알림 · 플래너<\/h2>/.test(plPane), '1 알림 · 플래너: 작업 알림 카드가 이 묶음 안에 · 옛 「알림」 묶음 없음');
+ok(plPane.indexOf('id="st-notify"') > 0 && plPane.indexOf('id="st-notify-os"') < plPane.indexOf('id="st-pl-on"') && plPane.indexOf('id="st-pl-on"') < plPane.indexOf('id="st-pl-rules"'), '1 알림 · 플래너: 카드 순서 = 작업 알림 → 플래너 → 일정 알림(작업 알림은 플래너 카드 밖 — 플래너를 꺼도 잠기지 않는다)');
+ok(/const paneOf = \(p\) => \(p === 'notify' \? 'planner' : p\)/.test(js), '1 옛 묶음 이름 notify(기억해 둔 마지막 묶음 · 다른 코드의 부름)는 planner 로 읽음');
 const plDefSrc = (js.match(/const PL_DEF = (\{[^}]*\});/) || [])[1];
 let plDef = null; try { plDef = new Function(`return ${plDefSrc}`)(); } catch { /* 형식이 바뀜 */ }
 ok(plDef && JSON.stringify(Object.entries(plDef).sort()) === JSON.stringify(Object.entries(PLANNER_DEFAULTS).sort()), '1 플래너: 화면의 처음 값 = 데몬의 처음 값(PLANNER_DEFAULTS)과 같음');
@@ -113,9 +118,20 @@ else {
         const after = await p.locator('#st-sum-design').textContent();
         ok(after !== before && after.startsWith(await p.locator('#st-themes .st-theme').nth(3).textContent()), `2 테마 바꾸면 목차 요약도 (${after})`);
         await p.locator('#st-themes .st-theme').first().click(); await sleep(200);
-        await p.locator('#st-nav .st-nav-i[data-pane="notify"]').click(); await p.locator('#st-close').click(); await sleep(200);
+        await p.locator('#st-nav .st-nav-i[data-pane="tools"]').click(); await p.locator('#st-close').click(); await sleep(200);
         await p.locator('#btn-settings').click(); await sleep(500);
-        ok(await p.locator('.st-pane[data-pane="notify"]').isVisible(), '2 다시 열면 마지막으로 본 묶음');
+        ok(await p.locator('.st-pane[data-pane="tools"]').isVisible(), '2 다시 열면 마지막으로 본 묶음');
+        // 2026-11-25 묶음을 합침: 옛 이름 notify 로 기억해 둔 사람 · 옛 이름으로 여는 코드는 「알림 · 플래너」로 온다
+        await p.locator('#st-close').click(); await sleep(200);
+        await p.evaluate(() => window.Settings.show('notify')); await sleep(400);
+        ok(await p.locator('.st-pane[data-pane="planner"]').isVisible() && (await vis()) === 1 && await p.locator('#st-notify').isVisible() && await p.locator('#st-pl-on').isVisible(), '2 옛 묶음 이름(notify)으로 열어도 「알림 · 플래너」 — 작업 알림과 플래너가 한 묶음에');
+        ok((await p.locator('#st-nav .st-nav-i[data-pane="planner"] .st-nav-t').textContent()).replace(/\s+/g, ' ').trim() === '알림 · 플래너알림 켜짐 · 플래너 켜짐', `2 목차 한 줄 = 알림 켜짐 · 플래너 켜짐 (${(await p.locator('#st-nav .st-nav-i[data-pane="planner"] .st-nav-t').textContent()).replace(/\s+/g, ' ').trim()})`);
+        // 작업 알림 스위치: 저장 값 · 딸린 스위치 잠금은 예전 그대로(자리만 옮김)
+        await p.locator('#st-notify').evaluate((e) => e.click()); await sleep(500);
+        const nf1 = await (await fetch(`http://127.0.0.1:${PORT}/api/settings`)).json();
+        ok(nf1.notifyDone === false && await p.locator('#st-notify-os').isDisabled() && (await p.locator('#st-sum-notify').textContent()) === '알림 꺼짐' && await p.locator('#st-pl-on').isEnabled() && await p.locator('#st-pl-morning').isEnabled(), '2 작업 알림을 끄면 「윈도 알림도」만 잠기고 플래너 스위치는 그대로');
+        await p.locator('#st-notify').evaluate((e) => e.click()); await sleep(500);
+        ok((await (await fetch(`http://127.0.0.1:${PORT}/api/settings`)).json()).notifyDone === true && await p.locator('#st-notify-os').isEnabled(), '2 작업 알림 다시 켬');
         ok(await p.locator('#btn-shutdown').isVisible() && await p.locator('#maker').isVisible(), '2 전부 종료·버전이 목차 아래에 늘 보임');
         // ---- 플래너 묶음(설계 조각 ⑧): 스위치 · 딸린 값 · 잠시 조용히 · 사용량 · 끔일 때 실제로 멈추는지 ----
         const B = `http://127.0.0.1:${PORT}`;

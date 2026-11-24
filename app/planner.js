@@ -182,7 +182,7 @@ window.Planner = (() => {
   }
   function footHtml() {
     const off = lock() || cfg.plannerTalk === false;
-    const ph = !view ? '플래너를 불러오지 못했어요' : !view.enabled ? '플래너가 꺼져 있어요' : view.readOnly ? '지금은 볼 수만 있어요' : cfg.plannerTalk === false ? '말하기가 꺼져 있어요(설정 → 플래너)' : '아이리스에게 말하기';
+    const ph = !view ? '플래너를 불러오지 못했어요' : !view.enabled ? '플래너가 꺼져 있어요' : view.readOnly ? '지금은 볼 수만 있어요' : cfg.plannerTalk === false ? '말하기가 꺼져 있어요(설정 → 알림 · 플래너)' : '아이리스에게 말하기';
     return `<div class="pl-foot"><input type="text" id="pl-in" placeholder="${esc(ph)}" aria-label="아이리스에게 말하기" autocomplete="off" maxlength="500"${off ? ' disabled' : ''}><button type="button" class="pl-send" id="pl-send" data-tip="보내기" aria-label="보내기"${off || busy ? ' disabled' : ''}>${I('send')}</button></div>`;
   }
   function noteHtml() {

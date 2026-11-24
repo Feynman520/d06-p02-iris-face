@@ -132,7 +132,7 @@ export class Planner {
    */
   apply(ops, meta = {}) {
     this.#ready();
-    if (!this.enabled) throw new PlannerError('disabled', '플래너가 꺼져 있습니다. 설정 → 플래너에서 켤 수 있습니다.');
+    if (!this.enabled) throw new PlannerError('disabled', '플래너가 꺼져 있습니다. 설정 → 알림 · 플래너에서 켤 수 있습니다.');
     let r;
     try { r = this.store.apply(ops, meta); }
     catch (e) { if (e instanceof PlannerError && e.code === 'conflict') this.#changed(null); throw e; } // 다시 읽은 장부를 화면도 다시 받게
@@ -202,8 +202,8 @@ export class Planner {
       else { const m = Number(minutes); if (!Number.isInteger(m) || m < 1 || m > 1440) return { ok: false, say: '얼마 동안 조용히 할지 다시 말해 주세요(길어도 하루까지예요).' }; t = new Date(now.getTime() + m * 60_000); }
     }
     const iso = t ? t.toISOString() : null;
-    if (typeof this.settings.set !== 'function') return { ok: false, say: '지금은 설정을 바꿀 수 없어요. 설정 → 플래너에서 바꿔 주세요.' };
-    let saved; try { saved = this.settings.set({ plannerQuietUntil: iso }); } catch (e) { this.log(`planner: 설정을 적지 못했습니다 (${e?.code || 'error'})`); return { ok: false, say: '설정을 적지 못했어요. 설정 → 플래너에서 바꿔 주세요.' }; }
+    if (typeof this.settings.set !== 'function') return { ok: false, say: '지금은 설정을 바꿀 수 없어요. 설정 → 알림 · 플래너에서 바꿔 주세요.' };
+    let saved; try { saved = this.settings.set({ plannerQuietUntil: iso }); } catch (e) { this.log(`planner: 설정을 적지 못했습니다 (${e?.code || 'error'})`); return { ok: false, say: '설정을 적지 못했어요. 설정 → 알림 · 플래너에서 바꿔 주세요.' }; }
     // 화면의 설정 사본을 맞추는 방송: 바뀐 키와 데몬이 적은 시각(updatedAt)을 함께 — 화면이 자기 시각으로 "최신"을 만들지 않게
     this.#send({ type: 'planner', rev: this.store.rev, proposals: this.store.list('proposed').length, cfg: { plannerQuietUntil: iso }, cfgAt: (saved && saved.updatedAt) || null });
     this.log(`planner: quiet ${iso ? 'on' : 'off'}`);

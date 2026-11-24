@@ -130,8 +130,10 @@ window.Settings = (() => {
     renderNav();
   }
   // ---- 묶음과 오른쪽 목차(v2.87, 사용자 선택 = 시안 A′): 한 번에 한 묶음만. 마지막으로 본 묶음을 기억한다. ----
-  const PANES = ['design', 'session', 'ontology', 'tools', 'notify', 'planner', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js) · 플래너(설계 조각 ⑧)
-  let pane = (() => { try { const p = localStorage.getItem('iris.settings.pane'); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
+  const PANES = ['design', 'session', 'ontology', 'tools', 'planner', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js) · 플래너(설계 조각 ⑧)
+  // 2026-11-25: 옛 「알림」 묶음(notify)은 「알림 · 플래너」(planner)에 합쳤다 — 기억해 둔 마지막 묶음 · 다른 코드가 부르는 옛 이름은 새 묶음으로 읽는다.
+  const paneOf = (p) => (p === 'notify' ? 'planner' : p);
+  let pane = (() => { try { const p = paneOf(localStorage.getItem('iris.settings.pane')); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
   let modsSum = '';
   // 미리보기 캔버스는 「디자인」 묶음이 보일 때만 돌린다(다른 묶음에서 숨은 캔버스 11개가 GPU 를 쓰지 않게)
   function startPreviews() {
@@ -140,6 +142,7 @@ window.Settings = (() => {
     for (const c of $('#st-stages').querySelectorAll('canvas.stage-pv')) previews.push(IrisStars.preview(c, { style: c.dataset.pv, colors }));
   }
   function showPane(p) {
+    p = paneOf(p);
     if (!PANES.includes(p)) return;
     pane = p; try { localStorage.setItem('iris.settings.pane', p); } catch {}
     for (const el of document.querySelectorAll('#settings .st-pane')) el.hidden = el.dataset.pane !== p;
@@ -178,7 +181,9 @@ window.Settings = (() => {
     $('#st-pl-quiet').innerHTML = q
       ? `<button class="st-chip cur" type="button" data-quiet="off"${on ? '' : ' disabled'}>다시 알리기</button>`
       : `<button class="st-chip" type="button" data-quiet="60"${on ? '' : ' disabled'}>1시간</button><button class="st-chip" type="button" data-quiet="today"${on ? '' : ' disabled'}>오늘 하루</button>`;
-    $('#st-pl-quiet-note').textContent = q ? `${clockWord(q)}까지 조용히 하는 중입니다. 끝나면 그사이 지나간 약속을 모아서 말합니다` : '그동안 플래너의 말풍선만 멈춥니다(약속 알림 포함). 달력과 작업 완료 알림은 그대로입니다';
+    // 조용히 하는 동안에만 한 줄로 알린다(평소 설명은 「잠시 조용히」에 마우스를 올리면 나오는 글 — 2026-11-25 묶음을 합치며 줄을 줄임)
+    $('#st-pl-quiet-note').hidden = !q;
+    $('#st-pl-quiet-note').textContent = q ? `${clockWord(q)}까지 조용히 하는 중입니다(플래너의 말풍선만 — 작업 알림은 그대로). 끝나면 그사이 지나간 약속을 모아서 말합니다` : '';
     clearTimeout(plQuietTimer); if (q && open) plQuietTimer = setTimeout(() => { if (open) { renderPlanner(); renderNav(); } }, Math.min(q - Date.now() + 500, 2 ** 31 - 1));
   }
   /** 사용량 한 줄 — 실제 응답에 실린 값만 더한 것(어림을 지어내지 않는다). 토큰 수를 알려 주지 않은 호출은 "모름"으로 따로 센다. */
@@ -232,7 +237,7 @@ window.Settings = (() => {
     set('#st-sum-ontology', '역할 캐릭터 · 폴더 나무');
     set('#st-sum-tools', 'Skill · MCP · Plugin');
     set('#st-sum-feedback', '개발자에게 바로');
-    set('#st-sum-notify', cfg.notifyDone === false ? '꺼짐' : `끝나면 알림${cfg.notifyOs !== false ? ' · 윈도 알림' : ''}`);
+    set('#st-sum-notify', cfg.notifyDone === false ? '알림 꺼짐' : '알림 켜짐'); // 목차 한 줄 = "알림 켜짐 · 플래너 켜짐"(2026-11-25 묶음을 합침)
     const plQ = plQuietMs();
     set('#st-sum-planner', plv('plannerEnabled') === false ? '꺼짐' : plQ ? `조용히 · ${clockWord(plQ)}까지` : `켜짐${plv('plannerCheck') === true ? ' · 준비 점검' : ''}`);
     set('#st-sum-mods', modsSum);
@@ -555,7 +560,7 @@ window.Settings = (() => {
   const koName = (s) => (String(s || '').match(/\(([^)]+)\)\s*$/) || [])[1] || s; // 'Sejun Ham (함세준)' → '함세준'
   function applyMaker() { $('#maker').textContent = `v${health?.version || '—'} · ${koName(health?.about?.author || ABOUT_DEF.author)}`; }
   /** p = 열 묶음(없으면 마지막으로 본 묶음). 예: 헤더 모듈 버튼이 멈춘 모듈을 보여 줄 때 show('mods'). */
-  function show(p) { if (!open) opts.onShow?.(); open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(p)) pane = p; showPane(pane); renderPanel(); }
+  function show(p) { if (!open) opts.onShow?.(); open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(paneOf(p))) pane = paneOf(p); showPane(pane); renderPanel(); }
   function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
   function pick(patch) { Object.assign(cfg, patch); applyAll(); const sent = save(); renderPanel(); opts.onChange?.(cfg); sent.then(() => opts.onChange?.(cfg)); } // onChange 두 번: 화면은 바로, 데몬에 적힌 뒤 한 번 더(데몬이 준 한 장을 다시 읽는 쪽을 위해)
 
