@@ -208,6 +208,23 @@ else {
         ok((await p.evaluate(() => window.Settings.get().plannerStartMin)) === 15, '2 화면 밖에서 저장한 값(방송)도 사본에 반영됨');
         await p.evaluate(async () => { const c = JSON.parse(localStorage.getItem('iris.settings')); c.plannerStartMin = 5; c.updatedAt = '2020-01-01T00:00:00.000Z'; localStorage.setItem('iris.settings', JSON.stringify(c)); await window.Settings.resync(); }); await sleep(300);
         ok((await p.evaluate(() => window.Settings.get().plannerStartMin)) === 15, '2 다시 붙을 때(resync): 데몬의 값이 더 새것이면 그것으로 맞춤');
+        // 계정 · 보안: 계정은 공급자 이름으로 가른다(2026-11-25 사용자 신고 — 구글(Antigravity) 계정 2개가 Claude 칸에 들어가 「갱신」이 Claude 로그인을 열었다)
+        await p.locator('#st-nav .st-nav-i[data-pane="account"]').click(); await sleep(300);
+        let renewCalls = 0; p.on('request', (r) => { if (/\/api\/auth\/renew/.test(r.url())) renewCalls++; });
+        const accRows = async () => p.evaluate(() => {
+          const it = (id, provider, label, level) => ({ id, group: 'teamclaude', provider, name: label, label, longKey: false, expiresAt: null, daysLeft: null, level, renew: 'teamclaude-login', optional: false });
+          window.Settings.setAuth({ available: true, job: null, info: { worst: 'ok', due: [], checkedAt: '2026-11-25T00:00:00.000Z', items: [
+            it('tc:anthropic:a@example.com', 'anthropic', 'a', 'ok'), it('tc:codex:codex-1', 'codex', 'codex-1', 'ok'),
+            it('tc:google:google-1', 'google', 'google-1', 'ok'), it('tc:google:google-2', 'google', 'google-2', 'expired'), it('tc:newco:n-1', 'newco', 'n-1', 'ok')] } });
+          const rows = (k) => [...document.querySelectorAll(`#st-auth [data-kind="${k}"] [data-auth]`)].map((e) => `${e.dataset.auth}${e.querySelector('[data-renew]') ? '+renew' : ''}${e.querySelector('[data-dash]') ? '+dash' : ''}`).join(' ');
+          return { claude: rows('claude'), codex: rows('codex'), agy: rows('antigravity'), other: rows('other'), n: document.querySelector('#st-auth [data-kind="antigravity"] .auth-n')?.textContent || '' };
+        });
+        const ac = await accRows();
+        ok(ac.claude === 'tc:anthropic:a@example.com+renew' && ac.codex === 'tc:codex:codex-1+renew', `2 계정: Claude 칸에는 Claude 계정만 · Codex 칸에는 Codex 계정만 — ${JSON.stringify(ac)}`);
+        ok(ac.agy === 'tc:google:google-2+dash tc:google:google-1' && ac.n === '2개', '2 계정: 구글 계정은 Antigravity 칸(급한 줄이 위) · 정상인 줄에는 단추 없음 · 끊긴 줄만 「대시보드에서 다시 로그인」');
+        ok(ac.other === 'tc:newco:n-1', '2 계정: 모르는 공급자는 Claude 칸이 아니라 단추 없는 「다른 계정」 칸');
+        await p.locator('#st-auth [data-kind="antigravity"] [data-dash]').click(); await sleep(400);
+        ok(renewCalls === 0 && await p.evaluate(() => !document.querySelector('#dlg') || document.querySelector('#dlg').hidden), '2 계정: 구글 계정의 단추는 갱신(로그인) 요청을 보내지 않음 · 확인 창도 뜨지 않음');
         if (capDir) { await p.locator('#btn-settings').click().catch(() => {}); }
       }
       ok(errs.length === 0, `2 ${W}px 페이지 오류 ${errs.length}건${errs.length ? ' ' + errs.join(' | ') : ''}`);

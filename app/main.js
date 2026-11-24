@@ -774,7 +774,7 @@
   }, 0));
 
   // ---------- 꾸미기 설정 + 사용량 배터리 (app/settings.js) ----------
-  Settings.init({ sessionCount: () => sessions.length, onShow: () => closeDrawer(), onChange: (c) => window.Planner?.applySettings(c) }); // 서랍은 한 번에 하나 — 설정을 열면 대시보드·모듈 서랍은 닫는다 · 설정이 바뀌면 플래너 화면도 바로 따라간다
+  Settings.init({ sessionCount: () => sessions.length, onShow: () => closeDrawer(), onChange: (c) => window.Planner?.applySettings(c), openDashboard: () => toggleDash(true) }); // 서랍은 한 번에 하나 — 설정을 열면 대시보드·모듈 서랍은 닫는다 · 설정이 바뀌면 플래너 화면도 바로 따라간다
   // ---------- 작업 완료 알림(app/notify.js, 2026-09-11): 데몬 status(done) → 오른쪽 아래 작은 알림(+창이 뒤면 OS 알림). 누르면 그 세션으로. ----------
   // ---------- 플래너(app/planner.js, 2026-11-22): 육각 단추 + 말풍선 + 달력 판. 폴더 열기는 영혼 안 폴더만(데몬이 검사), 대화 시작은 「첫 대화 해 보기」처럼 요청문만 채운다(보내기는 사용자). ----------
   Planner.init({

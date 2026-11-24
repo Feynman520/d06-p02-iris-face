@@ -421,18 +421,32 @@ window.Settings = (() => {
     const sub = due.map(i => i.level === 'expired' ? `${i.label} 만료` : `${i.label} D-${i.daysLeft}`).join(' · ');
     Notify.push({ title: '로그인 갱신 필요', sub: `${sub} — 설정 → 인증에서 갱신`, status: 'attention', force: true });
   }
-  // 넷째 카드 = 안티그래비티 로그인(2026-11-23). 중계기 밖이라 대시보드 계정이 아니다 — 이 PC 의 구글 로그인 하나. 데몬이 agy 에게 물은 판정만 보인다.
+  // 넷째 카드 = 안티그래비티(2026-11-23 · 2026-11-25 계정 줄을 이 카드로 옮김). 중계기가 돌려 쓰는 구글 계정(목록의 provider 'google')을 줄로 보이고,
+  // 데몬이 agy 에게 물은 판정 줄은 정상이 아닐 때(또는 계정 줄이 없을 때)만 보인다. 구글 계정은 중계기가 스스로 갱신하므로 정상인 줄에는 단추가 없다 —
+  // 끊긴 줄만 「대시보드에서 다시 로그인」(코드를 붙여 넣는 걸음이 있어 대시보드의 「＋ Antigravity 계정」 길을 그대로 쓴다).
   let agyInfo = null;
-  function agyCard() {
-    if (!agyInfo || agyInfo.state === 'missing') return '';
-    const viaGate = agyInfo.connection === 'gate'; // 2026-11-23: 중계기(IRIS Gate)의 구글 계정을 돌려 쓴다
-    const W = { ok: [viaGate ? '중계기로 연결됨' : '로그인됨', 'ok'], auth: ['로그인 안 됨', 'expired'], gate: ['중계기 못 씀', 'expired'], unknown: ['확인 못 함', 'unknown'] }[agyInfo.state] || ['확인 못 함', 'unknown'];
-    const how = agyInfo.state === 'gate' ? `${agyInfo.detail || '중계기 상태를 읽지 못했습니다.'} — 이 PC 의 구글 로그인으로 몰래 돌리지 않습니다.`
-      : agyInfo.state === 'auth' ? '터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하세요(앱 · 확장과 함께 쓰는 로그인).'
-      : agyInfo.state === 'ok' ? (viaGate ? '중계기(IRIS Gate)에 등록한 구글 계정으로 돌려 씁니다. 계정 추가 · 한도는 사용량 대시보드에서 봅니다.' : '이 PC 의 구글 계정 하나로 씁니다(돌려 쓰기 없음). 로그아웃은 agy 화면의 /logout — Antigravity 앱 로그인도 함께 풀립니다.')
-      : '데몬이 아직 확인하지 못했습니다(네트워크 · 시간 초과). 로그아웃으로 보지 않습니다.';
-    return `<section class="st-grp auth-card" data-kind="antigravity"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">로그인</span><small>${viaGate ? '중계기(IRIS Gate)를 거치는 구글 계정' : '중계기를 거치지 않는 구글 로그인'}</small></h3>`
-      + `<div class="st-opt auth-row ${W[1]}"><span class="st-opt-text">${esc(W[0])}<small>${esc(how)}${agyInfo.at ? ` · 확인 ${esc(fmtWhen(agyInfo.at))}` : ''}</small></span></div></section>`;
+  function agyRow(i) {
+    const cur = agyInfo?.state === 'ok' && agyInfo.account && agyInfo.account === i.label;
+    const bad = i.level === 'expired' || i.level === 'soon';
+    const desc = [bad ? '다시 로그인해야 합니다' : '중계기가 스스로 갱신', cur ? '지금 쓰는 계정' : ''].filter(Boolean).join(' · ');
+    return `<div class="st-opt auth-row ${esc(i.level)}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small><span class="auth-kind">구글 로그인</span>${esc(desc)}</small></span>`
+      + `<span class="auth-right"><span class="auth-d">${esc(bad ? '끊김' : (AUTH_WORD[i.level] || '모름'))}</span>${bad ? '<button class="text-btn accent" type="button" data-dash="1" title="사용량 대시보드를 엽니다 — 거기서 Antigravity 계정으로 다시 로그인합니다">대시보드에서 다시 로그인</button>' : ''}</span></div>`;
+  }
+  function agyCard(list = []) {
+    const known = agyInfo && agyInfo.state !== 'missing';
+    if (!known && !list.length) return '';
+    const viaGate = agyInfo?.connection === 'gate' || list.length > 0; // 2026-11-23: 중계기(IRIS Gate)의 구글 계정을 돌려 쓴다
+    let stateRow = '';
+    if (known && (agyInfo.state !== 'ok' || !list.length)) {
+      const W = { ok: [viaGate ? '중계기로 연결됨' : '로그인됨', 'ok'], auth: ['로그인 안 됨', 'expired'], gate: ['중계기 못 씀', 'expired'], unknown: ['확인 못 함', 'unknown'] }[agyInfo.state] || ['확인 못 함', 'unknown'];
+      const how = agyInfo.state === 'gate' ? `${agyInfo.detail || '중계기 상태를 읽지 못했습니다.'} — 이 PC 의 구글 로그인으로 몰래 돌리지 않습니다.`
+        : agyInfo.state === 'auth' ? '터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하세요(앱 · 확장과 함께 쓰는 로그인).'
+        : agyInfo.state === 'ok' ? (viaGate ? '중계기(IRIS Gate)에 등록한 구글 계정으로 돌려 씁니다. 계정 추가 · 한도는 사용량 대시보드에서 봅니다.' : '이 PC 의 구글 계정 하나로 씁니다(돌려 쓰기 없음). 로그아웃은 agy 화면의 /logout — Antigravity 앱 로그인도 함께 풀립니다.')
+        : '데몬이 아직 확인하지 못했습니다(네트워크 · 시간 초과). 로그아웃으로 보지 않습니다.';
+      stateRow = `<div class="st-opt auth-row ${W[1]}"><span class="st-opt-text">${esc(W[0])}<small>${esc(how)}${agyInfo.at ? ` · 확인 ${esc(fmtWhen(agyInfo.at))}` : ''}</small></span></div>`;
+    }
+    return `<section class="st-grp auth-card" data-kind="antigravity"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">${list.length ? '계정 열쇠' : '로그인'}</span><small>${viaGate ? '중계기가 번갈아 쓰는 구글(Antigravity) 계정' : '중계기를 거치지 않는 구글 로그인'}</small>${list.length ? `<span class="auth-n">${list.length}개</span>` : ''}</h3>`
+      + stateRow + list.map(agyRow).join('') + '</section>';
   }
   let agyAt = 0;
   async function loadAgy() { agyAt = Date.now(); try { const r = await fetch('/api/antigravity/status'); agyInfo = r.ok ? await r.json() : null; } catch { agyInfo = null; } }
@@ -469,12 +483,17 @@ window.Settings = (() => {
     // 빈 카드도 그린다 — 0개면 어디서 더하는지 한 줄.
     const card = (kind, head, list, empty) => `<section class="st-grp auth-card" data-kind="${kind}"><h3 class="auth-sec-h">${head}<span class="auth-n">${list.length}개</span></h3>`
       + (list.length ? list.map(row).join('') : `<div class="upd-line st-sub auth-empty">${empty}</div>`) + '</section>';
+    // 계정은 공급자 이름으로 가른다 — "코덱스가 아니면 클로드"로 나누지 않는다(2026-11-25 사용자 신고: 구글 계정 2개가 Claude 칸에 들어가 「갱신」이 Claude 로그인을 열었다).
+    // 모르는 공급자는 어느 칸에도 넣지 않고 단추 없는 「다른 계정」 칸에 둔다.
     const iris = items.filter(i => i.group === 'iris'), acc = items.filter(i => i.group !== 'iris');
-    const cl = acc.filter(i => i.provider !== 'codex'), cx = acc.filter(i => i.provider === 'codex');
+    const cl = acc.filter(i => i.provider === 'anthropic'), cx = acc.filter(i => i.provider === 'codex'), gg = acc.filter(i => i.provider === 'google');
+    const etc = acc.filter(i => !['anthropic', 'codex', 'google'].includes(i.provider));
+    const plain = (i) => `<div class="st-opt auth-row ${esc(i.level)}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small>IRIS 가 아직 모르는 종류의 계정입니다 — 사용량 대시보드에서 관리하세요</small></span><span class="auth-right"><span class="auth-d">${esc(AUTH_WORD[i.level] || '모름')}</span></span></div>`;
     host.innerHTML = card('iris', `<span class="auth-sec-t">${Icons.svg('key', 14)}IRIS 열쇠</span><small>IRIS 창이 Claude 세션을 열 때 쓰는 열쇠</small>`, iris, '열쇠 없음 — Claude 세션은 각 계정 로그인으로 열립니다')
       + card('claude', `<span class="chip claude">Claude</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 Claude 계정</small>`, cl, '계정 없음 — 대시보드에서 추가')
       + card('codex', `<span class="chip codex">Codex</span><span class="auth-sec-t">계정 열쇠</span><small>중계기가 번갈아 쓰는 ChatGPT(Codex) 계정</small>`, cx, '계정 없음 — 대시보드에서 추가')
-      + agyCard()
+      + agyCard(gg)
+      + (etc.length ? `<section class="st-grp auth-card" data-kind="other"><h3 class="auth-sec-h"><span class="auth-sec-t">다른 계정</span><span class="auth-n">${etc.length}개</span></h3>${etc.map(plain).join('')}</section>` : '')
       + (auth?.info?.checkedAt ? `<div class="upd-line st-sub auth-checked">마지막 확인 ${esc(fmtWhen(auth.info.checkedAt))} · 3일 전부터 알림</div>` : '');
     if (job && (job.running || job.result)) {
       const el = document.createElement('div');
@@ -493,6 +512,8 @@ window.Settings = (() => {
   }
   async function renewAuth(id) {
     const it = (auth?.info?.items || []).find(i => i.id === id); if (!it) return;
+    // 중계기 계정의 갱신은 Claude · Codex 만 여기서 한다 — 그 밖의 공급자는 대시보드로(데몬 auth.mjs 도 같은 거절을 한다)
+    if (it.group !== 'iris' && !['anthropic', 'codex'].includes(it.provider)) return opts.openDashboard?.();
     const how = it.group === 'iris'
       ? `브라우저에 claude.ai 승인 화면이 열립니다.\n${/@/.test(it.name) ? `${it.name} 계정인지 확인하고 ` : ''}「승인」을 누르면 IRIS 창용 1년 열쇠가 저장됩니다(열쇠는 화면에 보이지 않습니다).\n새로 여는 세션부터 적용됩니다.`
       : it.renew === 'teamclaude-longkey' ? `Edge 시크릿(InPrivate) 창에 claude.ai 승인 화면이 열립니다.\n그 창에서 ${it.name} 계정으로 로그인한 뒤 「승인」을 누르면 이 계정이 1년 열쇠로 바뀝니다(평소 브라우저 로그인은 그대로).\n다른 계정으로 승인하면 아무것도 바꾸지 않습니다.`
@@ -583,7 +604,10 @@ window.Settings = (() => {
     loadUpdate();
     // 인증(v2.84): 절 머리 「다시 확인」 + 행마다 갱신 단추
     $('#st-auth-act')?.addEventListener('click', async () => { authBusy = true; renderAuth(); await loadAuth(true); authBusy = false; renderAuth(); });
-    $('#st-auth')?.addEventListener('click', (e) => { const b = e.target.closest('button[data-renew]'); if (b) renewAuth(b.closest('[data-auth]').dataset.auth); });
+    $('#st-auth')?.addEventListener('click', (e) => {
+      if (e.target.closest('button[data-dash]')) return opts.openDashboard?.(); // 구글(Antigravity) 계정의 다시 로그인 = 대시보드에서(2026-11-25)
+      const b = e.target.closest('button[data-renew]'); if (b) renewAuth(b.closest('[data-auth]').dataset.auth);
+    });
     loadAuth();
     $('#st-tutorial')?.addEventListener('click', () => { hide(); window.Tutorial?.open({ replay: true }); }); // v2.90
     $('#maker').onclick = about;

@@ -42,10 +42,13 @@ function postJson(port, p, body, timeoutMs = 8000) {
   });
 }
 
+/** 대시보드의 login 동작이 아는 공급자(대시보드 server.mjs 의 op:'login' — 클로드 · 코덱스). 여기 없는 공급자는 갱신을 시작하지 않는다. */
+export const DASH_LOGIN = new Set(['anthropic', 'codex']);
+
 export class AuthWatch {
-  /** opts: { log, broadcast, node, dir, everyMs, ensureDash } — dir 를 주면 시험용 가짜 도구 폴더 */
-  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null } = {}) {
-    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash });
+  /** opts: { log, broadcast, node, dir, everyMs, ensureDash, post } — dir 를 주면 시험용 가짜 도구 폴더, post 는 시험용 가짜 대시보드 호출 */
+  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson } = {}) {
+    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post });
     this.available = !!dir;
     this.info = null; this.job = null; this.timer = null; this.lastKey = '';
   }
@@ -106,9 +109,12 @@ export class AuthWatch {
       return { ok: true, started: 'iris-longkey', message: '브라우저에서 승인해 주세요. 끝나면 새 세션부터 1년 열쇠를 씁니다.' };
     }
     if (item.group === 'teamclaude') {
+      // 2026-11-25 사용자 신고("Antigravity 계정의 갱신을 누르니 Claude 브라우저가 떴다"): 공급자를 "코덱스가 아니면 클로드"로 넘기지 않는다.
+      // 대시보드의 login 은 클로드 · 코덱스 둘뿐이다 — 그 밖의 공급자(구글 = Antigravity, 앞으로 생길 것)는 여기서 거절하고 대시보드로 안내한다.
+      if (!DASH_LOGIN.has(item.provider)) return { ok: false, dashboard: true, error: `${item.label} 계정은 여기서 갱신하지 않습니다 — 사용량 대시보드에서 다시 로그인하세요.` };
       if (this.ensureDash) { const d = await this.ensureDash(); if (!d?.alive) return { ok: false, error: '대시보드 도구가 꺼져 있습니다' }; }
       const before = new Date(Date.now() - 1000).toISOString(); // 대시보드가 적는 startedAt 은 요청 직후라 이보다 늦다
-      const r = await postJson(dashPort(), '/api/action', { op: 'login', provider: item.provider === 'codex' ? 'codex' : 'anthropic' });
+      const r = await this.post(dashPort(), '/api/action', { op: 'login', provider: item.provider });
       if (!r.json?.ok) return { ok: false, error: r.json?.message || `HTTP ${r.status}` };
       this.job = { running: true, id, kind: 'teamclaude-login', startedAt: before, lines: [`브라우저에서 ${item.label} 계정으로 로그인돼 있는지 확인한 뒤 승인하세요.`], result: null };
       this.broadcast({ type: 'auth', info: this.public() });

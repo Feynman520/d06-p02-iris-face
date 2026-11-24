@@ -67,6 +67,30 @@ ok(!all.includes('x'.repeat(40)), '4 방송에 열쇠 토막 없음');
 ok(!all.includes('oauth/authorize'), '4 방송에 승인 주소(state 포함) 없음');
 ok(sent.some(m => m.done === true), '4 끝나면 done 방송');
 ok((await w.renew('nope')).ok === false, '4 모르는 항목 거절');
+
+// ---- 4b절 공급자 갈림(2026-11-25 사용자 신고: Antigravity 계정의 「갱신」이 Claude 로그인을 열었다) ----
+// 대시보드 호출은 가짜(post)로 받고, 끝 기다리기(pollDashLogin)는 끈다 — 실제 대시보드 접촉 0.
+{
+  const calls = [];
+  const w2 = new AuthWatch({ dir, broadcast: () => {}, post: async (port, p, body) => { calls.push({ p, body }); return { status: 200, json: { ok: true } }; } });
+  w2.pollDashLogin = () => {};
+  w2.info = { items: [
+    { id: 'tc:anthropic:a@example.com', group: 'teamclaude', provider: 'anthropic', name: 'a@example.com', label: 'a', renew: 'teamclaude-login', level: 'ok' },
+    { id: 'tc:codex:codex-1', group: 'teamclaude', provider: 'codex', name: 'codex-1', label: 'codex-1', renew: 'teamclaude-login', level: 'ok' },
+    { id: 'tc:google:google-1', group: 'teamclaude', provider: 'google', name: 'google-1', label: 'google-1', renew: 'teamclaude-login', level: 'ok' },
+    { id: 'tc:newco:n-1', group: 'teamclaude', provider: 'newco', name: 'n-1', label: 'n-1', renew: 'teamclaude-login', level: 'ok' },
+    { id: 'tc:none:x-1', group: 'teamclaude', name: 'x-1', label: 'x-1', renew: 'teamclaude-login', level: 'ok' },
+  ] };
+  const g = await w2.renew('tc:google:google-1');
+  ok(g.ok === false && g.dashboard === true && calls.length === 0 && !w2.job, '4b 구글(Antigravity) 계정 갱신 = 거절 + 대시보드 안내 · 로그인 호출 0');
+  const n = await w2.renew('tc:newco:n-1'), x = await w2.renew('tc:none:x-1');
+  ok(n.ok === false && x.ok === false && calls.length === 0, '4b 모르는 공급자 · 공급자 없는 항목도 Claude 로 넘기지 않고 거절');
+  const a = await w2.renew('tc:anthropic:a@example.com');
+  ok(a.ok && calls.length === 1 && calls[0].body.op === 'login' && calls[0].body.provider === 'anthropic', '4b Claude 계정 → 대시보드 login(anthropic) 그대로');
+  w2.job = null;
+  const c = await w2.renew('tc:codex:codex-1');
+  ok(c.ok && calls.length === 2 && calls[1].body.provider === 'codex', '4b Codex 계정 → 대시보드 login(codex) 그대로');
+}
 await sleep(300); // 도구 자식 프로세스의 작업 폴더가 풀리길 기다린다(윈도 EPERM)
 try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* 임시 폴더 — 남아도 무해 */ }
 
@@ -79,6 +103,9 @@ ok(!/TeamClaude/.test(ui.slice(ui.indexOf('// ---- 인증'), ui.indexOf('// ----
 const authUi = ui.slice(ui.indexOf('function renderAuth'), ui.indexOf('function setAuth'));
 ok(!/sec\.hidden\s*=\s*!\(auth\?\.available/.test(authUi), '5 도구 없음이어도 인증 절을 숨기지 않음');
 ok(/auth-missing/.test(authUi) && /업데이트/.test(authUi), '5 도구 없음 = 이유와 받는 길(업데이트) 한 줄');
+// 2026-11-25: 계정을 "코덱스가 아니면 클로드"로 가르지 않는다(구글 = Antigravity 계정이 Claude 칸에 들어갔던 고장)
+ok(!/provider\s*!==\s*'codex'/.test(authUi) && /provider === 'anthropic'/.test(authUi) && /provider === 'google'/.test(authUi), '5 계정 칸은 공급자 이름으로 가름("코덱스가 아니면 클로드" 없음)');
+ok(!/provider === 'codex' \? 'codex' : 'anthropic'/.test(fs.readFileSync(path.join(ROOT, 'daemon', 'auth.mjs'), 'utf8')), '5 데몬도 모르는 공급자를 Claude 로그인으로 넘기지 않음');
 
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
