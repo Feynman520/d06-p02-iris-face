@@ -192,8 +192,8 @@ window.Settings = (() => {
     el.textContent = lines.join('\n'); // 줄바꿈은 CSS(white-space: pre-line)로 — 데몬이 준 글을 HTML 로 넣지 않는다
   }
   async function openPlannerFolder() {
-    try { const r = await fetch('/api/planner/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); const d = await r.json().catch(() => ({})); if (!r.ok) Dialog.alert(d.error || `폴더를 열지 못했습니다(${r.status}).`); }
-    catch (e) { Dialog.alert(`폴더를 열지 못했습니다: ${e.message}`); }
+    try { const r = await fetch('/api/planner/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); const d = await r.json().catch(() => ({})); if (!r.ok) Dialog.notice(d.error || `폴더를 열지 못했습니다(${r.status}).`); }
+    catch (e) { Dialog.notice('폴더를 열지 못했습니다.', { sub: e.message }); }
   }
   function setQuiet(v) {
     const now = new Date();
@@ -277,14 +277,15 @@ window.Settings = (() => {
   const bumpInstalling = () => { try { window.dispatchEvent(new CustomEvent('iris:mod-installing')); } catch {} };
   /** 성공 여부(boolean)를 돌려준다 — 헤더 설치 흐름이 실패 때 자동 열기 예약을 거두려고 본다. */
   async function modAct(name, act) {
-    if (act === 'remove' && !(await Dialog.confirm(`모듈 "${name}"을 제거할까요?\n그 모듈의 폴더와 안에 저장된 데이터(로그인·설정·기록)가 함께 지워집니다. 모듈이 백업 문구를 줬다면 적어 두셨는지 확인하세요.`))) return false;
+    if (act === 'remove' && !(await Dialog.confirm('모듈이 백업 문구를 줬다면 적어 두셨는지 먼저 확인하세요.', { title: '이 모듈을 제거할까요?', tag: name, icon: 'trash', okLabel: '제거', danger: true,
+      ledger: [['end', '지워지는 것', '모듈 폴더와 그 안의 데이터(로그인 · 설정 · 기록) — 되돌릴 수 없습니다'], ['keep', '그대로인 것', 'IRIS 의 대화와 다른 모듈']] }))) return false;
     if (act === 'install') { if (installing.has(name)) return false; installing.add(name); bumpInstalling(); if (open) renderMods(); }
     let okay = false;
     try {
       const r = await fetch(act === 'install' ? `/api/catalog/${encodeURIComponent(name)}/install` : `/api/modules/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) Dialog.alert(`${ACT_WORD[act]} 실패: ${d.error || r.status}`); else okay = true;
-    } catch (e) { Dialog.alert(`${ACT_WORD[act]} 실패: ${e.message}`); }
+      if (!r.ok) Dialog.error({ title: `모듈 ${ACT_WORD[act]}에 실패했습니다`, message: act === 'install' ? '인터넷 연결을 확인한 뒤 다시 설치해 주세요.' : '', detail: String(d.error || r.status) }); else okay = true;
+    } catch (e) { Dialog.error({ title: `모듈 ${ACT_WORD[act]}에 실패했습니다`, message: act === 'install' ? '인터넷 연결을 확인한 뒤 다시 설치해 주세요.' : '', detail: e.message }); }
     if (installing.delete(name)) bumpInstalling();
     if (open) renderMods();
     return okay;
@@ -376,29 +377,29 @@ window.Settings = (() => {
     Notify.push({ title: r?.ok && !bad ? '업데이트 완료' : '업데이트 일부 실패', sub: [okList.join(' · '), bad ? `실패: ${(UPD_PART[bad.kind] || [bad.kind])[0]} — ${bad.reason || ''}` : ''].filter(Boolean).join(' / ') || '적용을 마쳤습니다', status: bad ? 'attention' : 'idle', force: true });
   }
   async function updAct(act) {
-    if (act === 'check') { updBusy = true; renderUpdate(); try { const r = await fetch('/api/update/check', { method: 'POST' }); upd = r.ok ? await r.json() : upd; if (!r.ok) Dialog.alert('확인 실패: 릴리스를 읽지 못했습니다.'); } catch (e) { Dialog.alert(`확인 실패: ${e.message}`); } finally { updBusy = false; renderUpdate(); } return; }
+    if (act === 'check') { updBusy = true; renderUpdate(); try { const r = await fetch('/api/update/check', { method: 'POST' }); upd = r.ok ? await r.json() : upd; if (!r.ok) Dialog.error({ title: '새 판이 있는지 확인하지 못했습니다', message: '새 판 목록을 읽지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.' }); } catch (e) { Dialog.error({ title: '새 판이 있는지 확인하지 못했습니다', message: '인터넷 연결을 확인한 뒤 다시 눌러 주세요.', detail: e.message }); } finally { updBusy = false; renderUpdate(); } return; }
     if (act === 'apply') {
       updBusy = true; renderUpdate();
       let r;
       try { const res = await fetch('/api/update/apply', { method: 'POST' }); r = await res.json().catch(() => ({})); } catch (e) { r = { ok: false, reason: e.message }; }
       updBusy = false; if (r.info) upd = r.info; renderUpdate();
       // 1.x → 2.0 은 실패가 아니라 "새로 설치하세요" 안내다 — 실패 문구를 붙이지 않는다(Task 21).
-      if (!r.ok && r.reinstall) { Dialog.alert(`${r.reinstall.note}\n\n${r.reinstall.url}`); return; }
-      if (!r.ok) { Dialog.alert(`업데이트 실패: ${r.reason || r.error || '알 수 없는 오류'}`); return; }
+      if (!r.ok && r.reinstall) { Dialog.alert(`${r.reinstall.note}\n\n${r.reinstall.url}`, { title: '새로 설치해야 하는 판입니다' }); return; }
+      if (!r.ok) { Dialog.error({ title: '업데이트하지 못했습니다', message: '대화는 그대로입니다.', detail: r.reason || r.error || '알 수 없는 오류' }); return; }
       // 부품 하나가 걸려도 나머지는 끝까지 간다 — 성공했다고만 말하지 않고 실패한 부품의 사유를 함께 알린다.
-      if (!upd?.plan) { Dialog.alert(r.reason ? `일부만 바꿨습니다. 세션은 그대로입니다.\n\n실패: ${r.reason}` : '최신 판으로 바꿨습니다. 세션은 그대로입니다.'); return; }
+      if (!upd?.plan) { if (r.reason) Dialog.alert('바꾸지 못한 부품이 있습니다. 대화는 그대로입니다.', { title: '일부만 바꿨습니다', kind: 'warn', detail: r.reason }); else Dialog.notice('최신 판으로 바꿨습니다.', { sub: '대화는 그대로입니다.', tone: 'ok' }); return; }
       act = 'confirm-apply';
     }
     if (act === 'apply-now' || act === 'confirm-apply') {
       const n = opts.sessionCount?.() ?? 0;
       const kinds = (upd?.plan?.items || []).map(i => `${(UPD_PART[i.kind] || [i.kind])[0]} v${i.version}`).join(' · ');
-      const msg = `받아 둔 새 판을 지금 적용할까요?\n\n${kinds}\n\n세션 ${n}개가 끝나고 적용 뒤 자동으로 다시 열립니다. IRIS 창도 잠시 닫혔다 스스로 다시 켜집니다.`;
-      if (!(await Dialog.confirm(msg, { okLabel: '지금 적용', cancelLabel: '나중에' }))) { renderUpdate(); return; }
+      const msg = `대화 ${n}개가 끝났다가 적용 뒤 자동으로 다시 열립니다. IRIS 창도 잠시 닫혔다 스스로 다시 켜집니다.`;
+      if (!(await Dialog.confirm(msg, { title: '받아 둔 새 판을 지금 적용할까요?', tag: kinds, icon: 'download', okLabel: '지금 적용', cancelLabel: '나중에' }))) { renderUpdate(); return; }
       try {
         const res = await fetch('/api/update/apply-now', { method: 'POST' }); const d = await res.json().catch(() => ({}));
-        if (!res.ok) { Dialog.alert(`적용 실패: ${d.reason || d.error || res.status}`); return; }
+        if (!res.ok) { Dialog.error({ title: '새 판을 적용하지 못했습니다', message: '대화는 그대로입니다.', detail: String(d.reason || d.error || res.status) }); return; }
         Notify.push({ title: '업데이트 적용 중', sub: '창이 잠시 닫혔다 다시 열립니다', status: 'idle', force: true });
-      } catch (e) { Dialog.alert(`적용 실패: ${e.message}`); }
+      } catch (e) { Dialog.error({ title: '새 판을 적용하지 못했습니다', detail: e.message }); }
     }
   }
 
@@ -496,13 +497,13 @@ window.Settings = (() => {
       ? `브라우저에 claude.ai 승인 화면이 열립니다.\n${/@/.test(it.name) ? `${it.name} 계정인지 확인하고 ` : ''}「승인」을 누르면 IRIS 창용 1년 열쇠가 저장됩니다(열쇠는 화면에 보이지 않습니다).\n새로 여는 세션부터 적용됩니다.`
       : it.renew === 'teamclaude-longkey' ? `Edge 시크릿(InPrivate) 창에 claude.ai 승인 화면이 열립니다.\n그 창에서 ${it.name} 계정으로 로그인한 뒤 「승인」을 누르면 이 계정이 1년 열쇠로 바뀝니다(평소 브라우저 로그인은 그대로).\n다른 계정으로 승인하면 아무것도 바꾸지 않습니다.`
       : `브라우저에 로그인 승인 화면이 열립니다.\n브라우저가 ${it.label} 계정으로 로그인돼 있는지 확인한 뒤 「승인」을 누르세요.\n다른 계정으로 승인하면 그 계정이 갱신·추가됩니다.`;
-    if (!(await Dialog.confirm(how, { okLabel: '시작', cancelLabel: '취소' }))) return;
+    if (!(await Dialog.confirm(how, { title: '로그인 열쇠를 갱신할까요?', icon: 'refresh', okLabel: '시작', cancelLabel: '취소' }))) return;
     try {
       const r = await fetch('/api/auth/renew', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
       const d = await r.json().catch(() => ({}));
       if (d.auth) setAuth(d.auth);
-      if (!r.ok) Dialog.alert(`갱신을 시작하지 못했습니다: ${d.error || r.status}`);
-    } catch (e) { Dialog.alert(`갱신을 시작하지 못했습니다: ${e.message}`); }
+      if (!r.ok) Dialog.error({ title: '갱신을 시작하지 못했습니다', detail: String(d.error || r.status) });
+    } catch (e) { Dialog.error({ title: '갱신을 시작하지 못했습니다', detail: e.message }); }
     if (open) renderAuth();
   }
 
@@ -569,14 +570,14 @@ window.Settings = (() => {
     // 비밀 금고(v2.62): 보관된 복구 문구를 화면 창으로 보여 준다(데몬이 secrets-vault.ps1 -Action ShowRecovery 실행, 문구는 이 화면·로그에 오지 않음)
     $('#st-recovery')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget; btn.disabled = true;
-      try { const r = await fetch('/api/vault/reveal', { method: 'POST' }); const j = await r.json().catch(() => ({})); if (!r.ok) Dialog.alert(`복구 문구를 열지 못했습니다: ${j.error || r.status}`); }
-      catch (err) { Dialog.alert(`복구 문구를 열지 못했습니다: ${err.message}`); }
+      try { const r = await fetch('/api/vault/reveal', { method: 'POST' }); const j = await r.json().catch(() => ({})); if (!r.ok) Dialog.error({ title: '복구 문구를 열지 못했습니다', detail: String(j.error || r.status) }); }
+      catch (err) { Dialog.error({ title: '복구 문구를 열지 못했습니다', detail: err.message }); }
       finally { btn.disabled = false; }
     });
     $('#st-update-auto').addEventListener('change', async (e) => {
       const on = e.target.checked;
       try { const r = await fetch('/api/update/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: on }) }); if (r.ok) upd = await r.json(); }
-      catch (err) { Dialog.alert(`설정을 바꾸지 못했습니다: ${err.message}`); }
+      catch (err) { Dialog.notice('설정을 바꾸지 못했습니다.', { sub: err.message }); }
       renderUpdate();
     });
     loadUpdate();

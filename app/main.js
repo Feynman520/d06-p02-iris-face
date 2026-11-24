@@ -143,15 +143,15 @@
     const s = cur(); if (!s) return; const c = currentSel();
     const to = `${AGENT_KO[c.agent]} ${$('#sel-model').selectedOptions[0]?.textContent}${c.effort ? ` · ${c.effort}` : ''}`;
     const cross = c.agent !== s.agent;
-    if (!cross && !s.sessionId) { await Dialog.alert('첫 메시지를 보낸 뒤에 바꿀 수 있습니다.'); return; }
+    if (!cross && !s.sessionId) { await Dialog.notice('첫 메시지를 보낸 뒤에 바꿀 수 있습니다.'); return; }
     const msg = cross
-      ? `${AGENT_KO[s.agent]} → ${to}\n\n다른 에이전트라 같은 세션을 그대로 잇지는 못하고, 지금까지의 대화를 글로 묶어 새 ${AGENT_KO[c.agent]} 세션의 첫 요청으로 넘깁니다(최근 8천 자). 계속할까요?`
-      : `${to}으로 같은 대화를 다시 엽니다(현재 프로세스 종료). 계속할까요?`;
-    if (!(await Dialog.confirm(msg, { okLabel: '계속' }))) return;
+      ? `다른 에이전트라 같은 대화를 그대로 잇지는 못합니다. 지금까지의 대화를 글로 묶어(최근 8천 자) 새 ${AGENT_KO[c.agent]} 대화의 첫 요청으로 넘깁니다.`
+      : '같은 대화를 다시 엽니다. 지금 하던 작업이 있으면 멈춥니다.';
+    if (!(await Dialog.confirm(msg, { title: cross ? '에이전트를 바꿀까요?' : '모델을 바꿀까요?', tag: cross ? `${AGENT_KO[s.agent]} → ${to}` : to, icon: 'refresh', okLabel: '바꾸기' }))) return;
     try {
       await api('POST', `/api/sessions/${s.id}/switch`, { agent: c.agent, model: c.model, expectModel: expectOf(c), effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox });
       setupMode = 'new'; renderSetup(); if (cross) { Transcript.clear(); setTimeout(() => loadTranscript(s.id), 1500); }
-    } catch (e) { Dialog.alert(e.message); }
+    } catch (e) { Dialog.error({ title: cross ? '에이전트를 바꾸지 못했습니다' : '모델을 바꾸지 못했습니다', message: '대화는 그대로입니다.', detail: e.message }); }
   };
 
   // ---------- 연결 ----------
@@ -182,8 +182,8 @@
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
       else if (m.type === 'subtranscript') SubPanel.onTranscript(m);          // 서랍이 보고 있는 보조의 기록
       else if (m.type === 'bg') { bgMap.set(m.id, Array.isArray(m.list) ? m.list : []); render(); Notify.onSubs(m.id, liveN(m.id), SubPanel.list(m.id).length, sessions.find(x => x.id === m.id)); } // 배경 작업(v2.80)
-      else if (m.type === 'sessions') { sessions = m.list; render(); }
-      else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s, liveN(m.id)); } }
+      else if (m.type === 'sessions') { sessions = m.list; render(); renderQuitting(); }
+      else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); renderQuitting(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s, liveN(m.id)); } }
       else if (m.type === 'replay') { if (m.id === current && term) { term.reset(); term.write(m.data); } }
       else if (m.type === 'output') { if (m.id === current && term) term.write(m.data); }
       else if (m.type === 'transcript') { if (m.id === current) { if (m.reset) Transcript.render(m.items, m.meta); else Transcript.append(m.items, m.meta); afterTranscript(m.meta); } }
@@ -282,7 +282,7 @@
           const r = await fetch(`/api/sessions/${id}/title`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) });
           const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
           const t = sessions.find(x => x.id === id); if (t) { t.title = j.title; t.titleSource = j.titleSource; }
-        } catch (e) { Dialog.alert('이름을 바꾸지 못했습니다: ' + e.message); }
+        } catch (e) { Dialog.notice('이름을 바꾸지 못했습니다.', { sub: e.message }); }
       }
       render();
     };
@@ -394,8 +394,8 @@
   const UPLOAD_MAX = 50 * 1024 * 1024; // 데몬 /api/upload 한도와 같다
   async function uploadAll(files) {
     for (const f of files) {
-      if (f.size > UPLOAD_MAX) { await Dialog.alert(`50MB를 넘는 파일은 첨부할 수 없습니다: ${f.name}`); continue; }
-      try { await upload(f); } catch (err) { await Dialog.alert(err.message); }
+      if (f.size > UPLOAD_MAX) { await Dialog.notice('50MB를 넘는 파일은 첨부할 수 없습니다.', { sub: f.name }); continue; }
+      try { await upload(f); } catch (err) { await Dialog.notice('파일을 첨부하지 못했습니다.', { sub: `${f.name} — ${err.message}` }); }
     }
   }
   for (const id of ['#file-in', '#file-any']) $(id).addEventListener('change', async (e) => { await uploadAll([...e.target.files]); e.target.value = ''; });
@@ -412,7 +412,7 @@
     // DataTransfer 는 이 처리기가 끝나면 비워지므로 파일·폴더 구분을 먼저 동기로 뽑아 둔다
     const picked = [...(e.dataTransfer.items || [])].filter(it => it.kind === 'file').map(it => ({ file: it.getAsFile(), dir: !!it.webkitGetAsEntry?.()?.isDirectory })).filter(x => x.file);
     const dirs = picked.filter(x => x.dir).map(x => x.file.name);
-    if (dirs.length) await Dialog.alert(`폴더는 첨부할 수 없습니다(파일만 가능): ${dirs.join(', ')}`);
+    if (dirs.length) await Dialog.notice('폴더는 첨부할 수 없습니다. 파일만 넣을 수 있어요.', { sub: dirs.join(', ') });
     await uploadAll(picked.filter(x => !x.dir).map(x => x.file));
     if (mode === 'chat') $('#composer-text').focus();
   });
@@ -428,13 +428,13 @@
     if (mode === 'chat') $('#composer-text').focus();
   });
   let camStream = null;
-  $('#btn-cam').onclick = async () => { try { camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false }); $('#cam-video').srcObject = camStream; $('#cam').hidden = false; } catch (err) { Dialog.alert('카메라를 열 수 없습니다: ' + err.message); } };
+  $('#btn-cam').onclick = async () => { try { camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false }); $('#cam-video').srcObject = camStream; $('#cam').hidden = false; } catch (err) { Dialog.error({ title: '카메라를 열 수 없습니다', message: '윈도우 설정 → 개인 정보 → 카메라 허용을 확인해 주세요.', detail: err.message }); } };
   function camStop() { camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('#cam').hidden = true; }
   $('#cam-cancel').onclick = camStop;
   $('#cam-shot').onclick = async () => {
     const v = $('#cam-video'); const c = document.createElement('canvas'); c.width = v.videoWidth || 1280; c.height = v.videoHeight || 720; c.getContext('2d').drawImage(v, 0, 0);
     const blob = await new Promise(r => c.toBlob(r, 'image/png')); camStop();
-    try { await upload(blob, `camera-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`); } catch (err) { Dialog.alert(err.message); }
+    try { await upload(blob, `camera-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`); } catch (err) { Dialog.notice('사진을 첨부하지 못했습니다.', { sub: err.message }); }
   };
   // 🎤 음성 입력(app/voice.js): 녹음 → 데몬 로컬 위스퍼 → 글이 입력창에 들어옴(자동 전송 없음). 녹음·전사 중엔 보내기 잠금.
   Voice.init({ textarea: $('#composer-text'), button: $('#btn-mic'), strip: $('#voice-strip'), folderHint: () => shortPath(cur()?.cwd || folder?.path || ''), onBusy: (b) => { $('#btn-send').disabled = b; } });
@@ -558,7 +558,7 @@
   }
   async function installModule(name) {
     const m = modules.find(x => x.name === name); if (!m || m.installed !== false || isInstalling(name)) return;
-    if (!(await Dialog.confirm(`${m.label}을(를) 설치할까요?\n최신 릴리스를 내려받아 서명을 확인한 뒤 설치합니다. 설치 뒤 자동으로 시작됩니다.`, { okLabel: '설치' }))) return;
+    if (!(await Dialog.confirm('최신 판을 내려받아 서명을 확인한 뒤 설치합니다. 설치가 끝나면 바로 시작합니다.', { title: `${m.label} 모듈을 설치할까요?`, icon: 'download', okLabel: '설치' }))) return;
     clearTimeout(pendingOpen.get(name)); pendingOpen.set(name, setTimeout(() => pendingOpen.delete(name), 60000));
     renderModules();
     const ok = await (window.Settings?.installModule ? Settings.installModule(name) : installFallback(name));
@@ -566,8 +566,8 @@
     renderModules();
   }
   async function installFallback(name) { // Settings 가 설치를 못 맡을 때만(같은 판이면 오지 않는 길). 실패 알림은 여기서.
-    try { const r = await fetch(`/api/catalog/${encodeURIComponent(name)}/install`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) { Dialog.alert(`설치 실패: ${d.error || r.status}`); return false; } return true; }
-    catch (e) { Dialog.alert(`설치 실패: ${e.message}`); return false; }
+    try { const r = await fetch(`/api/catalog/${encodeURIComponent(name)}/install`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) { Dialog.error({ title: '모듈을 설치하지 못했습니다', message: '인터넷 연결을 확인한 뒤 다시 설치해 주세요.', detail: String(d.error || r.status) }); return false; } return true; }
+    catch (e) { Dialog.error({ title: '모듈을 설치하지 못했습니다', message: '인터넷 연결을 확인한 뒤 다시 설치해 주세요.', detail: e.message }); return false; }
   }
   window.addEventListener('iris:mod-installing', renderModules); // 설정 화면에서 설치를 시작·끝냈을 때도 헤더 고리를 맞춘다
   $('#limits').onclick = () => toggleDash(); $('#dash-close').onclick = () => closeDrawer();
@@ -597,7 +597,7 @@
         Transcript.prime(text); // 기록파일이 생기기 전에도 요청문 + "세션 여는 중"을 바로 보여 준다(멈춘 것처럼 보이지 않게)
       }
       ta.value = ''; autoGrow(); attachments.length = 0; renderAttach();
-    } catch (e) { Dialog.alert(e.message); }
+    } catch (e) { Dialog.error({ title: '요청을 보내지 못했습니다', message: '입력창의 글은 그대로 있습니다. 다시 보내 주세요.', detail: e.message }); }
     finally { btn.disabled = false; btn.classList.remove('busy'); }
   }
   $('#btn-send').onclick = submit;
@@ -634,42 +634,77 @@
   $('#btn-close').onclick = async () => {
     const s = cur(); if (!s) return;
     const alive = !(s.status === 'dead' || s.status === 'exited');
-    if (alive && !(await Dialog.confirm(`${shortPath(s.cwd)} 세션(${label(s)})을 종료할까요? PID ${s.pid} 트리만 종료됩니다.`, { okLabel: '종료', danger: true }))) return;
-    try { if (alive) await api('DELETE', `/api/sessions/${s.id}`); else await api('POST', `/api/sessions/${s.id}/forget`); goHome(); } catch (e) { Dialog.alert(e.message); }
+    // 어느 대화인지 이름으로 보이고, 닫히는 것과 그대로인 것을 밝힌다(2026-11-24 — PID 는 화면에 적지 않는다: 이 대화의 프로세스 가계도만 끝난다는 뜻은 「닫히는 것」 줄이 말한다)
+    const others = liveSessions().filter(x => x.id !== s.id).length;
+    if (alive && !(await Dialog.confirm('', { title: '이 대화를 종료할까요?', tag: s.title || shortPath(s.cwd), icon: 'close', okLabel: '대화 종료', danger: true,
+      ledger: [['end', '닫히는 것', '이 대화, 이 대화가 쓰던 도구'], ['keep', '그대로인 것', others ? `다른 대화 ${others}개, 이 대화의 기록` : '이 대화의 기록']] }))) return;
+    try { if (alive) await api('DELETE', `/api/sessions/${s.id}`); else await api('POST', `/api/sessions/${s.id}/forget`); goHome(); } catch (e) { Dialog.error({ title: alive ? '대화를 종료하지 못했습니다' : '카드를 지우지 못했습니다', detail: e.message }); }
   };
   $('#btn-forget').onclick = () => $('#btn-close').click();
   // 죽은 카드 그 자리에서 재개(v2.42): 데몬이 같은 세션 id로 --resume / codex resume 을 띄운다. 세션 id를 모르는 카드(첫 메시지 전)는 데몬이 400으로 거절.
   $('#btn-resume').onclick = async () => {
     const s = cur(); if (!s) return; const btn = $('#btn-resume'); btn.disabled = true;
-    try { await api('POST', `/api/sessions/${s.id}/resume`, {}); } catch (e) { Dialog.alert(e.message); } finally { btn.disabled = false; }
+    try { await api('POST', `/api/sessions/${s.id}/resume`, {}); } catch (e) { Dialog.error({ title: '대화를 다시 열지 못했습니다', detail: e.message }); } finally { btn.disabled = false; }
   };
   $('#btn-copy-resume').onclick = () => { const t = cur()?.resumeCmd; if (t) navigator.clipboard?.writeText(t); };
   $('#btn-home').onclick = goHome;
   // 전부 종료(v2.97): ⏻·창 ×·트레이가 같은 절차 — Electron 이면 메인의 quitAll() 한 길, 브라우저 모드면 여기서 같은 API(?wait=1)를 부른다.
   const liveSessions = () => sessions.filter(s => !['dead', 'exited', 'orphan'].includes(s.status));
   const workingSessions = () => sessions.filter(s => ['busy', 'attention', 'delegated', 'waiting'].includes(viewStatus(s)));
+  // 「종료하는 중」(2026-11-24 새 모양): 어디까지 왔는지 두 단계로 보인다 — ① 대화와 도구 끝내기(데몬이 보내는 세션 목록에서 살아 있는 대화가 0 이 되면 끝) ② 남은 것이 없는지 확인(창이 닫힐 때까지).
+  //   데몬은 종료 도중의 진행을 따로 알려 주지 않으므로, 이미 받는 세션 목록만으로 그린다(데몬 무수정). text 를 주면 단계 대신 그 글(브라우저 모드의 결과 · 실패)을 보인다.
+  let quitShown = false, quitTotal = 0, quitText = '';
+  function renderQuitting() {
+    const el = $('#quitting'); if (!el || !quitShown) return;
+    const result = !!quitText;
+    $('#quitting-ico').innerHTML = Dialog.icon(result ? 'info' : 'power');
+    $('#quitting-title').textContent = result ? 'IRIS 종료' : '종료하는 중입니다';
+    $('#quitting-msg').textContent = result ? quitText : '끝나면 창이 저절로 닫힙니다.';
+    const steps = $('#quitting-steps'); steps.hidden = result;
+    if (result) return;
+    const left = liveSessions().length; quitTotal = Math.max(quitTotal, left);
+    const [a, b] = steps.children;
+    a.className = left ? 'now' : 'done'; b.className = left ? '' : 'now';
+    a.querySelector('small').textContent = quitTotal ? `${quitTotal - left} / ${quitTotal}` : '';
+  }
   function showQuitting(text) {
     let el = $('#quitting');
-    if (!el) { el = document.createElement('div'); el.id = 'quitting'; el.className = 'dlg quitting'; el.innerHTML = '<div class="dlg-box" role="alertdialog" aria-live="polite"><div class="dlg-title">IRIS 종료</div><div id="quitting-msg" class="dlg-msg"></div></div>'; document.body.appendChild(el); }
-    $('#quitting-msg').textContent = text || `세션 ${liveSessions().length}개와 그 세션이 띄운 로컬 MCP 를 끝내고 확인하는 중입니다…\n끝나면 창이 닫힙니다.`;
-    el.hidden = false;
+    if (!el) {
+      el = document.createElement('div'); el.id = 'quitting'; el.className = 'dlg quitting';
+      el.innerHTML = '<div class="dlg-box" data-kind="busy" role="alertdialog" aria-live="polite"><div class="dlg-head"><span class="dlg-ico" id="quitting-ico"></span><div class="dlg-title" id="quitting-title"></div></div><div id="quitting-msg" class="dlg-msg"></div>'
+        + '<ol class="dlg-steps" id="quitting-steps"><li><i></i><span>대화와 도구 끝내기</span><small></small></li><li><i></i><span>남은 것이 없는지 확인</span></li></ol></div>';
+      document.body.appendChild(el);
+    }
+    if (!quitShown) quitTotal = liveSessions().length;
+    quitShown = true; quitText = text || '';
+    renderQuitting(); el.hidden = false;
   }
-  const hideQuitting = () => { const el = $('#quitting'); if (el) el.hidden = true; };
+  const hideQuitting = () => { quitShown = false; quitText = ''; const el = $('#quitting'); if (el) el.hidden = true; };
   async function quitAll() {
     if (window.irisHost?.quitAll) { showQuitting(); return window.irisHost.quitAll(); }
     showQuitting();
     try {
       const r = await api('POST', '/api/shutdown?wait=1');
       const rep = r.report || {};
-      showQuitting(rep.ok ? 'IRIS 를 종료했습니다. 이 탭을 닫아도 됩니다.'
-        : `IRIS 를 종료했지만 일부를 확인하지 못했습니다.\n${(rep.survivors || []).map(p => `· PID ${p.pid} ${p.name || ''}`).join('\n')}${rep.verified === false ? '\n· 세션 아래 프로그램(MCP)까지 확인하지 못했습니다.' : ''}\n자세한 기록: state\\shutdown-report.json`);
-    } catch (e) { showQuitting(`종료 결과를 받지 못했습니다(${e.message}). 세션이 아직 실행 중일 수 있습니다.`); }
+      showQuitting(rep.ok ? 'IRIS를 종료했습니다. 이 탭을 닫아도 됩니다.'
+        : `종료했지만 확인하지 못한 것이 있습니다.\n${(rep.survivors || []).map(p => `· ${p.name || '이름 모름'} (PID ${p.pid})`).join('\n')}${rep.verified === false ? '\n· 대화가 쓰던 도구까지 끝났는지 확인하지 못했습니다.' : ''}\n자세한 기록: state\\shutdown-report.json`);
+    } catch (e) { showQuitting(`종료 결과를 받지 못했습니다(${e.message}). 대화가 아직 실행 중일 수 있습니다.`); }
   }
-  $('#btn-shutdown').onclick = async () => { if (!(await Dialog.confirm(`세션 ${liveSessions().length}개와 그 세션이 띄운 로컬 MCP 를 끝내고 IRIS 를 종료할까요?\n대화 기록은 남고, 다음에 카드에서 「↻ 여기서 재개」로 이어 갈 수 있습니다.`, { okLabel: '전부 종료', danger: true }))) return; quitAll(); };
+  // 종료를 묻는 창(⏻ · 창 ×가 같이 쓴다): 닫히는 것과 남는 것을 두 줄로. 붉은 단추는 작업 중인 대화가 있을 때만(하던 일이 멈춘다).
+  //   창 ×로 닫을 때는 「창만 내리기」(최소화 = 대화를 살려 둠)를 함께 내놓는다 — 창 쪽(preload)이 그 답을 알아들을 때만(closeMinimize).
+  function askQuit(fromClose) {
+    const n = liveSessions().length, w = workingSessions().length;
+    const body = n ? `열려 있는 대화 ${n}개가 함께 닫힙니다.${w ? ` ${w}개는 작업 중이라 하던 일이 중간에 멈춥니다.` : ''}` : '열려 있는 대화가 없습니다.';
+    return Dialog.confirm(body, { title: 'IRIS를 종료할까요?', icon: 'power', kind: w ? 'danger' : 'ask', danger: !!w, okLabel: '전부 종료',
+      ledger: n ? [['end', '닫히는 것', `대화 ${n}개, 대화가 쓰던 도구`], ['keep', '남는 것', '대화 기록 — 다음에 「여기서 재개」로 이어 갑니다']] : null,
+      extra: fromClose && window.irisHost?.closeMinimize ? '창만 내리기' : null });
+  }
+  $('#btn-shutdown').onclick = async () => { if ((await askQuit(false)) !== true) return; quitAll(); };
   // 창 × (Electron): 작업 중인 세션이 있을 때만 묻는다 — 대기 중 세션뿐이면 바로 닫는다(닫을 때마다 확인 창을 늘리지 않음)
   window.irisHost?.onCloseRequest?.(async () => {
     const w = workingSessions(); if (!w.length) return true;
-    return Dialog.confirm(`작업 중인 세션 ${w.length}개가 있습니다.\n창을 닫으면 IRIS 의 모든 세션과 그 세션이 띄운 로컬 MCP 가 종료됩니다. 대화 기록은 남습니다.\n(세션을 살려 두려면 최소화하세요)`, { okLabel: '닫고 종료', danger: true });
+    const r = await askQuit(true);
+    return r === 'extra' ? 'minimize' : r === true;
   });
   window.irisHost?.onQuitting?.(() => showQuitting());
   window.irisHost?.onQuitCancel?.(() => hideQuitting());
@@ -749,7 +784,7 @@
       // 입력창에 쓰던 요청이나 첨부가 있으면 다른 폴더의 새 작업에 섞이지 않게 먼저 묻는다(그대로 두기 = 아무 일도 하지 않음)
       const draftBox = $('#composer-text');
       if (draftBox.value.trim() || attachments.length) {
-        if (!(await Dialog.confirm('입력창에 쓰던 요청이 있습니다.\n지우고 이 폴더에서 새 작업을 시작할까요?', { okLabel: '지우고 시작' }))) return;
+        if (!(await Dialog.confirm('입력창에 쓰던 요청이 있습니다. 이 폴더에서 새 작업을 시작하면 그 글은 지워집니다.', { title: '쓰던 요청을 지우고 시작할까요?', kind: 'warn', okLabel: '지우고 시작' }))) return;
         draftBox.value = ''; attachments.length = 0; renderAttach(); draftBox.dispatchEvent(new Event('input', { bubbles: true }));
       }
       if (current) goHome();

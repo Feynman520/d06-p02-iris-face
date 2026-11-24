@@ -38,12 +38,12 @@ window.Voice = (() => {
   async function toggle() {
     if (state === 'recording') return stop();
     if (state === 'transcribing') return;                  // 전사 중엔 무시(끝나면 자동 해제)
-    if (unavailable) return Dialog.alert('🎤 음성 입력을 쓸 수 없습니다.\n\n' + unavailable + '\n\n설치한 뒤 ⏻ 전부 종료 → IRIS-Face 를 다시 실행하면 켜집니다. (글자 입력은 그대로 쓸 수 있습니다.)');
+    if (unavailable) return Dialog.alert(unavailable + '\n\n설치한 뒤 ⏻ 전부 종료 → IRIS 를 다시 실행하면 켜집니다. 글자 입력은 그대로 쓸 수 있습니다.', { title: '음성 입력을 쓸 수 없습니다', kind: 'warn' });
     await start();
   }
   async function start() {
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
-    catch (e) { return Dialog.alert('마이크를 열 수 없습니다: ' + e.message + '\n(윈도우 설정 → 개인 정보 → 마이크 허용을 확인해 주세요)'); }
+    catch (e) { return Dialog.error({ title: '마이크를 열 수 없습니다', message: '윈도우 설정 → 개인 정보 → 마이크 허용을 확인해 주세요.', detail: e.message }); }
     state = 'recording'; discard = false; chunks = []; busy(true);
     ctx = new AudioContext(); analyser = ctx.createAnalyser(); analyser.fftSize = 512; ctx.createMediaStreamSource(stream).connect(analyser);
     const buf = new Uint8Array(analyser.fftSize);
@@ -61,7 +61,7 @@ window.Voice = (() => {
     try { rec.start(250); }
     catch (e) {   // 녹음기 시작 실패(코덱·장치) — 스트림을 놓고 원래 상태로
       cancelAnimationFrame(raf); stream.getTracks().forEach(t => t.stop()); stream = null; ctx.close(); ctx = null; rec = null; busy(false); hide();
-      return Dialog.alert('녹음을 시작할 수 없습니다: ' + e.message);
+      return Dialog.error({ title: '녹음을 시작할 수 없습니다', detail: e.message });
     }
     t0 = Date.now();
     show('recording'); el('.vs-time').textContent = '00:00'; el('.vs-retry').hidden = true; msg('듣는 중 — 다시 누르면 정지, Esc는 취소');

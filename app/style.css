@@ -664,12 +664,53 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 #view[data-mode="term"] #chat-wrap { display: none; }
 
 /* ---- 화면 안 대화상자(app/dialog.js) — 네이티브 alert/confirm 대체. 창 초점을 잃지 않는다 ---- */
-.dlg { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(0,0,0,.45); }
-.dlg-box { min-width: 320px; max-width: min(560px, calc(100vw - 48px)); background: var(--overlay); border: 1px solid var(--line-2); border-radius: 14px; padding: 18px 18px 14px; box-shadow: 0 24px 70px rgba(0,0,0,.6); }
-.dlg-msg { white-space: pre-wrap; font-size: 13.5px; color: var(--ink); line-height: 1.6; }
-.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.dlg-actions .text-btn.danger { color: var(--bad); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); }
-.dlg-actions .text-btn.danger:hover { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+/* 모양(2026-11-24 사용자 선택 = 시안 A 「가운데 카드」): 종류 아이콘 + 제목 한 줄 → 설명 → 「닫히는 것 / 남는 것」 표 → 단추. 종류의 색은 --k 하나로(물음 = 청보라 · 위험 · 실패 = 붉은색 · 주의 = 노란색). */
+.dlg { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(4,6,12,.58); }
+.dlg-box { --k: var(--iris); --dlg-bg: color-mix(in srgb, var(--overlay) 88%, var(--base)); --on-bad: #2a0a12;
+  width: fit-content; min-width: min(380px, calc(100vw - 48px)); max-width: min(460px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto;
+  background: var(--dlg-bg); border: 1px solid var(--line-2); border-radius: 14px; padding: 18px 18px 14px; box-shadow: 0 24px 60px rgba(0,0,0,.55); }
+.dlg-box[data-kind="danger"], .dlg-box[data-kind="error"] { --k: var(--bad); }
+.dlg-box[data-kind="warn"] { --k: var(--warn); }
+:root:is([data-iris-theme="ivory"], [data-iris-theme="mist"], [data-iris-theme="paper"]) .dlg { background: rgba(28,36,48,.34); }
+:root:is([data-iris-theme="ivory"], [data-iris-theme="mist"], [data-iris-theme="paper"]) .dlg-box { --dlg-bg: color-mix(in srgb, var(--base) 50%, #fff); --on-bad: #fff; box-shadow: 0 22px 50px rgba(28,36,48,.28); }
+.dlg-head { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; }
+.dlg-ico { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--k); background: color-mix(in srgb, var(--k) 15%, transparent); }
+.dlg-ico svg { width: 18px; height: 18px; }
+.dlg-title { font-size: 15.5px; line-height: 1.35; font-weight: 650; color: var(--ink); letter-spacing: -.005em; }
+.dlg-msg { white-space: pre-wrap; font-size: 13px; color: var(--ink-2); line-height: 1.6; overflow-wrap: anywhere; }
+.dlg-head[hidden] + .dlg-msg { font-size: 13.5px; color: var(--ink); }   /* 제목 없이 글만 있는 창(옛 모양 그대로 읽히게) */
+.dlg-tag { display: inline-block; max-width: 100%; margin-top: 8px; padding: 3px 9px; border-radius: 999px; background: var(--raised); color: var(--ink); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.dlg-ledger { margin: 12px 0 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.dlg-ledger > div { display: grid; grid-template-columns: 78px 1fr; gap: 10px; padding: 7px 11px; font-size: 12.5px; line-height: 1.5; }
+.dlg-ledger > div + div { border-top: 1px solid var(--line); }
+.dlg-ledger dt { color: var(--ink-3); } .dlg-ledger dd { margin: 0; color: var(--ink); }
+.dlg-ledger .end dt { color: var(--bad); } .dlg-ledger .keep dt { color: var(--ok); }
+.dlg-detail { margin-top: 10px; font-size: 12px; color: var(--ink-3); }
+.dlg-detail summary { cursor: pointer; width: fit-content; }
+.dlg-detail pre { margin: 6px 0 0; padding: 7px 9px; max-height: 120px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px/1.5 var(--mono); color: var(--ink-2); background: var(--raised); border-radius: 7px; }
+.dlg-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.dlg-keys { margin-right: auto; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dlg-keys kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line-2); border-radius: 4px; color: var(--ink-2); }
+.dlg-btn { flex: none; height: 32px; padding: 0 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--ink); border: 1px solid var(--line-2); white-space: nowrap; }
+.dlg-btn:hover { background: var(--raised); }
+.dlg-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--ink) 55%, transparent); outline-offset: 2px; }
+.dlg-keys:empty { display: none; }   /* 세 번째 단추가 있으면 키 안내를 비운다 — 빈 자리가 남아 그 단추가 가운데로 밀리지 않게 */
+.dlg-ledger dd { font-weight: 400; }
+.dlg-btn.pri { background: var(--iris); border-color: var(--iris); color: var(--base); }
+.dlg-btn.pri:hover { background: color-mix(in srgb, var(--iris) 88%, var(--ink)); }
+.dlg-btn.pri.danger { background: var(--bad); border-color: var(--bad); color: var(--on-bad); }
+.dlg-btn.pri.danger:hover { background: color-mix(in srgb, var(--bad) 88%, var(--ink)); }
+.dlg-btn.ghost { margin-right: auto; border-color: transparent; color: var(--ink-2); padding: 0 8px; }
+/* 「종료하는 중」의 단계(main.js showQuitting): 끝난 것 = 초록 체크 · 하는 중 = 도는 고리 · 기다리는 것 = 빈 고리 */
+.dlg-steps { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.dlg-steps li { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--ink-3); }
+.dlg-steps li i { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line-2); display: grid; place-items: center; }
+.dlg-steps li.done { color: var(--ink-2); } .dlg-steps li.done i { border-color: var(--ok); background: var(--ok); }
+.dlg-steps li.done i::after { content: ""; width: 7px; height: 4px; border: solid var(--dlg-bg); border-width: 0 0 1.8px 1.8px; transform: translateY(-1px) rotate(-45deg); }
+.dlg-steps li.now { color: var(--ink); } .dlg-steps li.now i { border-color: var(--iris); border-top-color: transparent; animation: dlgSpin .9s linear infinite; }
+.dlg-steps li small { margin-left: auto; font-size: 11.5px; color: var(--ink-3); }
+@keyframes dlgSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dlg-steps li.now i { animation: none; border-top-color: var(--iris); } }
 
 /* ---- 🎤 음성 입력 띠(입력창 위) + 마이크 단추 상태 (2026-09-10) ---- */
 .voice-strip { width: 100%; max-width: var(--dock-w); display: flex; align-items: center; gap: 10px; padding: 6px 12px; margin-bottom: 6px; background: color-mix(in srgb, var(--raised) 88%, transparent); border: 1px solid var(--line-2); border-radius: 12px; font-size: 12.5px; color: var(--ink-2); backdrop-filter: blur(14px); }
@@ -719,7 +760,6 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 .toast-x { flex: none; width: 24px; height: 24px; border-radius: 6px; color: var(--ink-3); font-size: 12px; }
 .toast-x:hover { background: var(--raised); color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
-.dlg-title { font-size: 12px; letter-spacing: .08em; color: var(--ink-3); margin-bottom: 10px; }
 /* 전부 종료 중(v2.97): 정리·확인이 끝날 때까지 창을 덮어 "닫힌 줄 알았는데 아직 도는" 상태를 만들지 않는다 — 확인 창보다 위 */
 .dlg.quitting { z-index: 60; cursor: progress; }
 .about-head { display: flex; align-items: center; gap: 10px; }

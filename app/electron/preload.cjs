@@ -14,9 +14,12 @@ contextBridge.exposeInMainWorld('irisHost', {
   quitAll: () => ipcRenderer.invoke('iris:quit-all'),
   onCloseRequest: (cb) => { ipcRenderer.on('iris:close-request', async (_e, id) => {
     ipcRenderer.send('iris:close-ack', { id }); // 받았음 — 사용자가 확인 창에서 고르는 동안 메인이 기다린다
-    let go = true; try { go = (await cb()) !== false; } catch {}
-    ipcRenderer.send('iris:close-answer', { id, go });
+    // cb 의 답: true = 닫고 종료 · false = 취소 · 'minimize' = 창만 내리기(대화를 살려 둠, 2026-11-24)
+    let r = true; try { r = await cb(); } catch {}
+    const minimize = r === 'minimize';
+    ipcRenderer.send('iris:close-answer', { id, go: !minimize && r !== false, minimize });
   }); },
+  closeMinimize: true, // 이 창은 'minimize' 답을 알아듣는다 — 화면은 이 표시가 있을 때만 「창만 내리기」 단추를 내놓는다(옛 창 + 새 화면이면 그 답이 "닫기"로 읽히므로)
   onQuitting: (cb) => { ipcRenderer.on('iris:quit-start',(_e, info) => { try { cb(info || {}); } catch {} }); },
   onQuitCancel: (cb) => { ipcRenderer.on('iris:quit-cancel', () => { try { cb(); } catch {} }); },
 });

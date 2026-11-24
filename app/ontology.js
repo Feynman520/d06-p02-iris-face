@@ -263,8 +263,8 @@ window.OntologyView = (() => {
   }
   async function openFolder(id) {
     const n = byId.get(id); if (!n) return;
-    try { const r = await fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: n.path }) }); if (!r.ok) Dialog.alert(`폴더를 열지 못했습니다: ${(await r.json().catch(() => ({}))).error || r.status}`); }
-    catch (err) { Dialog.alert(`폴더를 열지 못했습니다: ${err.message}`); }
+    try { const r = await fetch('/api/open-folder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel: n.path }) }); if (!r.ok) Dialog.notice('폴더를 열지 못했습니다.', { sub: String((await r.json().catch(() => ({}))).error || r.status) }); }
+    catch (err) { Dialog.notice('폴더를 열지 못했습니다.', { sub: err.message }); }
   }
   /** Esc 한 번 = 한 단계 뒤로(검색 지우기 → 관계 화면의 한 폴더 보기 풀기 → 고른 역할에서 격자로). main.js onEscape 가 서랍을 닫기 전에 부른다.
       처리했으면 true. 페이지 keydown 과 Electron 중계가 같은 Esc 로 두 번 부를 수 있어 300ms 안의 두 번째는 처리한 것으로만 답한다. */

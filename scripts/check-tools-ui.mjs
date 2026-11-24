@@ -20,7 +20,8 @@ const HARNESS = `<!doctype html><html><head><meta charset="utf-8"><link rel="sty
 <script src="/icons.js"></script>
 <script>
   window.__dialogs = []; window.__answer = true;
-  window.Dialog = { confirm: async (m, o) => { window.__dialogs.push({ kind: 'confirm', ...o }); return window.__answer; }, alert: async (m) => { window.__dialogs.push({ kind: 'alert', message: m }); } };
+  window.Dialog = { confirm: async (m, o) => { window.__dialogs.push({ kind: 'confirm', ...o }); return window.__answer; }, alert: async (m, o) => { window.__dialogs.push({ kind: 'alert', message: m, ...o }); },
+    error: async (o) => { window.__dialogs.push({ kind: 'error', ...o }); return false; }, notice: async (m, o) => { window.__dialogs.push({ kind: 'notice', message: m, ...o }); return true; } };   // 2026-11-24: 실패 = Dialog.error(제목 + 원래 오류 글) · 가벼운 알림 = Dialog.notice(말풍선)
 </script>
 <script src="/tools.js"></script></body></html>`;
 const server = http.createServer((q, s) => {
@@ -156,7 +157,7 @@ try {
   ok(d2.okLabel === '제거' && d2.danger === true && /제거 대기/.test(d2.html) && /세션이 모두 끝나면/.test(d2.html), '제거 = 위험 표시 확인 창(열린 세션이면 대기한다는 안내)');
   await p.waitForTimeout(600);
   ok(posts.includes('remove:theme-factory'), '제거 요청');
-  ok(/「제거 대기」/.test((await p.evaluate(() => window.__dialogs.at(-1))).message || ''), '미뤄진 제거 = 「제거 대기」 안내 알림');
+  ok(await p.evaluate(() => { const d = window.__dialogs.at(-1); return d.kind === 'alert' && /「제거 대기」/.test(d.title || '') && /제거 취소/.test(d.message || ''); }), '미뤄진 제거 = 「제거 대기」 안내 창(제목 + 되돌리는 법)');
   const pend = p.locator('[data-sec="iris"] .tl-row[data-id="theme-factory"]');
   ok(/제거 대기/.test(await pend.textContent()) && /세션이 모두 끝나면 지웁니다/.test(await pend.textContent()) && await pend.locator('[data-act="remove"]').count() === 0, '제거 대기 줄 = 표시 + 설명, 「제거」 단추 없음');
   const nd = await p.evaluate(() => window.__dialogs.length);
@@ -172,7 +173,7 @@ try {
   ok(await p.locator('[data-act]:not([disabled])').count() > 0, '다시 열기 = 데몬 busy 가 null 이면 잠김 풀림');
   // 실패 응답 = 알림
   await avail.locator('.tl-row[data-id="skill-err"] [data-act="install"]').click(); await p.waitForTimeout(500);
-  ok((await p.evaluate(() => window.__dialogs.filter((d) => d.kind === 'alert').map((d) => d.message).join('|'))).includes('지문이 맞지 않습니다'), '실패 = 원인 알림');
+  ok(await p.evaluate(() => window.__dialogs.some((d) => d.kind === 'error' && /하지 못했습니다$/.test(d.title || '') && String(d.detail || '').includes('지문이 맞지 않습니다'))), '실패 = 무엇이 안 됐는지(제목) + 원인(자세히)');
   // MCP·Plugin 탭과 계정 안내
   await p.locator('#tl-kinds [data-kind="plugins"]').click();
   const pl = await p.locator('#tl-body').textContent();

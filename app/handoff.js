@@ -57,11 +57,11 @@ window.Handoff = (() => {
     try {
       const r = await fetch('/api/handoff/resume', { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) { Dialog.alert(`설치를 이어서 열지 못했습니다: ${d.reason || d.error || r.status}`); if (btn) { btn.disabled = false; btn.textContent = '설치 이어하기'; } busy = false; return; }
+      if (!r.ok || !d.ok) { Dialog.error({ title: '설치를 이어서 열지 못했습니다', detail: String(d.reason || d.error || r.status) }); if (btn) { btn.disabled = false; btn.textContent = '설치 이어하기'; } busy = false; return; }
       Notify.push({ title: '설치 창을 열었습니다', sub: '새 창에서 남은 단계를 이어서 합니다 — 이 창은 그대로 둡니다', status: 'idle', force: true });
       close();
     } catch (e) {
-      Dialog.alert(`설치를 이어서 열지 못했습니다: ${e.message}`);
+      Dialog.error({ title: '설치를 이어서 열지 못했습니다', detail: e.message });
       if (btn) { btn.disabled = false; btn.textContent = '설치 이어하기'; }
     }
     busy = false;

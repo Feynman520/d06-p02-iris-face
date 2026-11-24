@@ -45,6 +45,7 @@
     "verify:memory": "node scripts/check-memory.mjs",
     "verify:notice": "node scripts/check-notice.mjs",
     "verify:notify": "node scripts/check-notify.mjs",
+    "verify:dialog": "node scripts/check-dialog.mjs",
     "verify:planner-store": "node scripts/check-planner-store.mjs",
     "verify:planner-api": "node scripts/check-planner-api.mjs",
     "verify:planner-ui": "node scripts/check-planner-ui.mjs",

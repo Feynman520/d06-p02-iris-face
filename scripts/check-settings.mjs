@@ -178,8 +178,9 @@ else {
         const f2 = await post('/api/planner/open-folder', {}, { origin: 'https://evil.example' });
         ok(f1.code === 404 && f1.out.code === 'empty' && f2.code === 403 && !fs.existsSync(path.join(state, 'planner')), '2 수첩 폴더 열기: 아직 적은 것이 없으면 폴더를 만들지 않고 그렇게 말함 · 다른 출처 403');
         await p.locator('#st-pl-folder').click(); await sleep(500);
-        ok((await p.locator('.dlg, .dialog, [role="dialog"], [role="alertdialog"]').filter({ hasText: '아직 수첩에 적은 것이 없어' }).count()) >= 1 || (await p.getByText('아직 수첩에 적은 것이 없어').count()) >= 1, '2 「수첩 폴더 열기」: 빈 수첩이면 화면 안 알림으로 알려 줌(네이티브 창 아님)');
-        await p.keyboard.press('Escape'); await sleep(300);
+        // 2026-11-24: 고를 것이 없는 알림은 창으로 막지 않고 말풍선으로(Dialog.notice) — 설정 서랍이 덮고 있으면 구석의 말풍선 자리(#pl-over)에 뜬다. 닫을 창이 없으므로 Esc 를 누르지 않는다(누르면 서랍이 닫힌다).
+        const said = await p.evaluate(() => ({ bubble: [...document.querySelectorAll('.pl-say')].some((e) => e.textContent.includes('아직 수첩에 적은 것이 없어') && e.getBoundingClientRect().width > 0), dialog: !!document.querySelector('#dlg') && !document.querySelector('#dlg').hidden }));
+        ok(said.bubble && !said.dialog, `2 「수첩 폴더 열기」: 빈 수첩이면 말풍선으로 알려 줌(막는 창 0 · 네이티브 창 아님) — ${JSON.stringify(said)}`);
         // 설정의 사본 맞추기: 어느 창에서 저장하든 붙어 있는 다른 창의 사본이 따라온다(옛 사본을 통째로 저장해 되돌리는 일을 막는다)
         const p2 = await browser.newPage({ viewport: { width: 1000, height: 700 } });
         const errs2 = []; p2.on('pageerror', e => errs2.push(e.message));

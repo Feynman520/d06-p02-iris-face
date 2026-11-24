@@ -163,7 +163,7 @@ window.ToolsView = (() => {
   async function act(op, id) {
     const c = catById(id); if (!c || busy || acting) return;
     if (op !== 'cancel') {
-      const yes = await Dialog.confirm('', { title: op === 'install' ? '도구 설치' : '도구 제거', html: confirmHtml(c, op), okLabel: op === 'install' ? '설치' : '제거', danger: op === 'remove' });
+      const yes = await Dialog.confirm('', { title: op === 'install' ? '이 도구를 설치할까요?' : '이 도구를 제거할까요?', icon: op === 'install' ? 'download' : 'trash', html: confirmHtml(c, op), okLabel: op === 'install' ? '설치' : '제거', danger: op === 'remove' });
       if (!yes) return;
     }
     acting = id; render();
@@ -172,8 +172,8 @@ window.ToolsView = (() => {
     catch (err) { r = { ok: false, error: err.message }; }
     acting = null;
     await load(true);
-    if (!r.ok) Dialog.alert(`${op === 'install' ? '설치' : op === 'remove' ? '제거' : '제거 취소'}하지 못했습니다: ${r.error || '알 수 없는 오류'}`);
-    else if (r.deferred) Dialog.alert(`열려 있는 세션이 있어 지금은 「제거 대기」로 두었습니다. 세션을 모두 닫으면(⏻ 전부 종료 포함) 그때 지웁니다. 그 전에는 「제거 취소」로 되돌릴 수 있습니다.`);
+    if (!r.ok) Dialog.error({ title: op === 'install' ? '도구를 설치하지 못했습니다' : op === 'remove' ? '도구를 제거하지 못했습니다' : '제거를 취소하지 못했습니다', detail: r.error || '알 수 없는 오류' });
+    else if (r.deferred) Dialog.alert('열려 있는 대화가 있어 지금은 지우지 않았습니다. 대화를 모두 닫으면(⏻ 전부 종료 포함) 그때 지웁니다. 그 전에는 「제거 취소」로 되돌릴 수 있습니다.', { title: '「제거 대기」로 두었습니다' });
   }
 
   /** ws {type:'tools'} — 진행 단계 표시 · 끝나면 다시 읽기 */

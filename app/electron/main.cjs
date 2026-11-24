@@ -181,7 +181,8 @@ function askPage(channel, ackMs = 1500) {
     let t = setTimeout(() => done(true), ackMs);
     function done(go) { clearTimeout(t); ipcMain.removeListener('iris:close-ack', onAck); ipcMain.removeListener('iris:close-answer', onAnswer); resolve(go); }
     function onAck(_e, a) { if (a && a.id === id) clearTimeout(t); }
-    function onAnswer(_e, a) { if (a && a.id === id) done(a.go !== false); }
+    // 답에 minimize 가 있으면(확인 창의 「창만 내리기」, 2026-11-24) 창을 내리고 닫지 않는다 — 대화는 그대로 산다
+    function onAnswer(_e, a) { if (!a || a.id !== id) return; if (a.minimize) { try { if (win && !win.isDestroyed()) win.minimize(); } catch {} return done(false); } done(a.go !== false); }
     ipcMain.on('iris:close-ack', onAck); ipcMain.on('iris:close-answer', onAnswer);
     try { win.webContents.send(channel, id); } catch { done(true); }
   });
