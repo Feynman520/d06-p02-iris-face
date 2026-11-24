@@ -100,13 +100,14 @@ window.Planner = (() => {
 
   /**
    * 기간 뱃지: 며칠째 | 11/24~12/11. 날짜는 언제나 월/일이고 「N일차」는 그대로 둔다(2026-11-23 사용자 결정).
+   * 단 마감일(기간의 마지막 날)에는 「N일차」를 적지 않는다 — 안 끝냈으면 「마감」만, 끝냈으면 기간만(2026-11-24 사용자 지정: 'N일차 · 마감' → '마감').
    * 마감일(기간의 마지막 날)과 지난 기간은 빨간 글자 대신 글로 말하고(「마감」 · 「N일 지남」) 달력의 마감 점과 같은 노란색으로 둔다 — 빨간색은 오류처럼 보인다는 신고.
    */
   function badge(r) {
     if (!r.period) return '';
     const p = r.period;
     const overdue = r.red && !p.last ? Math.max(1, diffDays(p.end, view.today)) : 0;
-    const lead = overdue ? `${overdue}일 지남` : [p.index ? `${p.index}일차` : '', r.red && p.last ? '마감' : ''].filter(Boolean).join(' · ');
+    const lead = overdue ? `${overdue}일 지남` : p.last ? (r.red ? '마감' : '') : p.index ? `${p.index}일차` : '';
     const tip = `${longDay(p.start)}부터 ${longDay(p.end)}까지${p.last ? ' · 마감일' : ''}${overdue ? ` · 마감일이 ${overdue}일 지났어요` : ''}`;
     return `<span class="pl-pill span${r.red ? ' due' : ''}" data-tip="${esc(tip)}">${lead ? `<b>${esc(lead)}</b>` : ''}${esc(rangeText(p.start, p.end))}</span>`;
   }

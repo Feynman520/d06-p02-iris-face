@@ -120,7 +120,7 @@ try {
     const probe = (v) => { const i = document.createElement('i'); i.style.color = v; document.body.appendChild(i); const c = getComputedStyle(i).color; i.remove(); return c; };
     return { title: r.querySelector('.tx').textContent, badge: b.textContent, n: document.querySelectorAll('.pl-list .pl-pill.span.due').length, badgeColor: getComputedStyle(b).color, titleColor: getComputedStyle(r.querySelector('.tx')).color,
       warn: probe(cs.getPropertyValue('--warn')), bad: probe(cs.getPropertyValue('--bad')), ink: probe(cs.getPropertyValue('--ink')), redRows: document.querySelectorAll('.pl-r.end').length }; })()`);
-  ok(due && due.n === 1 && due.title === '수업 나눔 주간' && due.badge === '3일차 · 마감11/24~11/26', `마감일: 뱃지에 「N일차 · 마감」 + 기간 — ${due && due.badge}`);
+  ok(due && due.n === 1 && due.title === '수업 나눔 주간' && due.badge === '마감11/24~11/26', `마감일: 뱃지에 「마감」 + 기간(마감일에는 「N일차」를 적지 않는다 — 2026-11-24 사용자 지정) — ${due && due.badge}`);
   ok(due && due.badgeColor === due.warn && due.titleColor === due.ink && due.titleColor !== due.bad && due.badgeColor !== due.bad && due.redRows === 0, `마감일은 빨간색이 아님: 뱃지 = 노란색(달력의 마감 점과 같은 색) · 이름 = 평소 색 — 뱃지 ${due && due.badgeColor} · 이름 ${due && due.titleColor}`);
   await shot('3-lastday');
   await page.click('.pl-cal button[data-day="2026-11-12"]'); await settle();
