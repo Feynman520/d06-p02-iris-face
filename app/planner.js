@@ -112,23 +112,22 @@ window.Planner = (() => {
     return `<span class="pl-pill span${r.red ? ' due' : ''}" data-tip="${esc(tip)}">${lead ? `<b>${esc(lead)}</b>` : ''}${esc(rangeText(p.start, p.end))}</span>`;
   }
   /**
-   * 이름 자리에 올렸을 때의 전체 내용(2026-11-23): 이름은 한 줄만 보이고 길면 잘리므로, 올리면 이름 전체(굵게) + 메모 · 장소 · 상대가 풍선으로 뜬다.
-   * 덧붙일 것이 없고 이름도 잘리지 않았으면 풍선을 띄우지 않는다(showTip 이 그때의 폭을 재서 가른다).
+   * 이름의 설명(화면 낭독기용): 메모 · 장소 · 상대를 이름 뒤에 읽어 준다.
+   * 이름에 올리면 뜨던 풍선(이름 전체 + 메모)은 없앴다(2026-11-24 사용자 지정 "이제 필요없음. 삭제") — 자세한 내용은 줄을 눌러 뜨는 일정 창에서 본다. 다시 만들지 않는다.
    */
-  const fullAttr = (title, o = {}) => {
+  const descAttr = (o = {}) => {
     const more = [o.note || '', o.place ? `장소: ${o.place}` : '', o.who ? `상대: ${o.who}` : '', o.extra || ''].filter(Boolean).join('\n');
-    return ` data-full="${esc(title)}"${more ? ` data-tip="${esc(more)}" aria-description="${esc(more)}"` : ''}`; // aria-description = 화면 낭독기에는 이름 뒤에 메모를 읽어 준다(풍선은 마우스를 올렸을 때만 뜬다)
+    return more ? ` aria-description="${esc(more)}"` : '';
   };
-  const TIP_MAX = 400; // 풍선에 보이는 메모의 길이(넘으면 앞부분 + …) — 풍선은 스크롤할 수 없으므로 화면보다 길어지지 않게 한다
   /** 단계 한 줄(목록 · 일정 창이 같이 쓴다). 날짜는 언제나 월/일 — 고른 날의 단계는 색으로만 구별한다 */
-  const stepHtml = (r, s, off) => `<div class="pl-r step${s.cur ? ' cur' : ''}${s.over ? ' over' : ''}"><span class="no" data-tip="${s.n}번째 단계">${s.n}</span>${ck(s.done, `data-ck="${esc(r.id)}" data-step="${esc(s.id)}"`, off)}<span class="tx${s.done ? ' done' : ''}"${fullAttr(s.title)}>${esc(s.title)}</span><span class="dd" data-tip="하는 날 ${esc(longDay(s.day))}${s.day === view.today ? ' · 오늘' : ''}">${esc(md(s.day))}</span></div>`;
+  const stepHtml = (r, s, off) => `<div class="pl-r step${s.cur ? ' cur' : ''}${s.over ? ' over' : ''}"><span class="no" data-tip="${s.n}번째 단계">${s.n}</span>${ck(s.done, `data-ck="${esc(r.id)}" data-step="${esc(s.id)}"`, off)}<span class="tx${s.done ? ' done' : ''}">${esc(s.title)}</span><span class="dd" data-tip="하는 날 ${esc(longDay(s.day))}${s.day === view.today ? ' · 오늘' : ''}">${esc(md(s.day))}</span></div>`;
   function rowHtml(r) {
     const off = lock();
     const dateAttr = r.repeat ? ` data-date="${esc(r.date)}"` : '';
     const late = r.late && r.lateFrom ? `<span class="pl-pill" data-tip="${esc(longDay(r.lateFrom))}에 하려던 일">${esc(md(r.lateFrom))}</span>` : '';
     // 줄을 누르면 일정 창이 뜬다(2026-11-23 사용자 요청). 올리면 나오던 대화 · 삭제 단추와 이름 두 번 클릭은 줄에서 없애고 그 창으로 옮겼다 — 줄에서 바로 눌리는 것은 체크 상자와 단계 접기 단추뿐.
     const openAttr = ` data-open="${esc(r.id)}" data-open-date="${esc(r.date)}"`;
-    const title = `<span class="tx${r.done ? ' done' : ''}"${fullAttr(r.title, r)} role="button" tabindex="0" aria-haspopup="dialog">${esc(r.title)}</span>`;
+    const title = `<span class="tx${r.done ? ' done' : ''}"${descAttr(r)} role="button" tabindex="0" aria-haspopup="dialog">${esc(r.title)}</span>`;
     if (r.steps) {
       const isOpen = !folded.has(r.id), dn = r.steps.filter((s) => s.done).length;
       const steps = isOpen ? `<div class="pl-steps"${openAttr}>${r.steps.map((s) => stepHtml(r, s, off)).join('')}</div>` : '';
@@ -162,7 +161,7 @@ window.Planner = (() => {
       const when = p.start === view.today ? '오늘' : `${shortDay(p.start, view.today)} ${WD[wdOf(p.start)]}`;
       const tip = [p.session ? `「${p.session}」에서 올린 제안` : '아이리스의 제안', p.evidence ? `근거: ${p.evidence}` : ''].filter(Boolean).join(' · ');
       const act = p.action && p.action.kind === 'start-work' ? `<button type="button" class="pl-tb" data-work="${esc(p.id)}" data-tip="그 폴더에서 새 작업을 열고 요청문을 채워 둡니다(보내기는 직접)"${off ? ' disabled' : ''}>${I('arrow-right')}작업 시작</button>` : '';
-      return `<div class="pl-r"><span class="tx"${fullAttr(p.title, { ...p, extra: tip })}>${esc(p.title)}</span><span class="pl-pill">${esc(p.end ? rangeText(p.start, p.end) : when)}${p.time ? ` ${esc(p.time)}` : ''}</span>${act}${ib('check', '달력에 추가', 'main', `data-acc="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('chat', '말로 고치기', 'line', `data-fix="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('close', '추가 안 함', 'line', `data-dec="${esc(p.id)}"${off ? ' disabled' : ''}`)}</div>`;
+      return `<div class="pl-r"><span class="tx" data-tip="${esc(tip)}"${descAttr({ ...p, extra: tip })}>${esc(p.title)}</span><span class="pl-pill">${esc(p.end ? rangeText(p.start, p.end) : when)}${p.time ? ` ${esc(p.time)}` : ''}</span>${act}${ib('check', '달력에 추가', 'main', `data-acc="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('chat', '말로 고치기', 'line', `data-fix="${esc(p.id)}"${off ? ' disabled' : ''}`)}${ib('close', '추가 안 함', 'line', `data-dec="${esc(p.id)}"${off ? ' disabled' : ''}`)}</div>`;
     }).join('')}</div>` : '';
     return `<section class="pl-strip"><button type="button" class="pl-strip-h" data-strip aria-expanded="${strip}" data-tip="${strip ? '접기' : '눌러서 펴기'}">${I('bulb')}<b>아이리스 제안</b><em>${view.proposals.length}</em><span class="pl-sp"></span>${I(strip ? 'chev-up' : 'chev-down')}</button>${rows}</section>`;
   }
@@ -332,17 +331,9 @@ window.Planner = (() => {
   // ---- 설명 풍선 ----
   function hideTip() { if (tipEl) tipEl.hidden = true; }
   function showTip(el) {
-    const full = el.dataset.full, more = el.dataset.tip || '';
-    if (full !== undefined) {
-      // 이름 자리: 이름 전체(굵게) + 메모 등. 덧붙일 것이 없고 이름이 잘리지도 않았으면 띄우지 않는다
-      if (!more && !(el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1)) return hideTip();   // 이름은 두 줄까지 보이므로(2026-11-23) 높이로도 잘렸는지 본다
-      tipEl.textContent = '';
-      const head = document.createElement('b'); head.textContent = full; tipEl.appendChild(head);
-      if (more) { const body = document.createElement('span'); body.textContent = more.length > TIP_MAX ? `${more.slice(0, TIP_MAX)}…` : more; tipEl.appendChild(body); }
-    } else {
-      if (!more) return hideTip();
-      tipEl.textContent = more;
-    }
+    const more = el.dataset.tip || '';   // 단추 · 뱃지의 짧은 설명만(이름의 긴 풍선은 2026-11-24 에 없앰)
+    if (!more) return hideTip();
+    tipEl.textContent = more;
     tipEl.hidden = false;
     const r = el.getBoundingClientRect(), t = tipEl.getBoundingClientRect();
     const x = Math.max(8, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 8));
@@ -350,7 +341,7 @@ window.Planner = (() => {
     const y = Math.max(8, Math.min(r.top - t.height - 8 < 8 ? r.bottom + 8 : r.top - t.height - 8, window.innerHeight - t.height - 8));
     tipEl.style.left = `${x}px`; tipEl.style.top = `${y}px`;
   }
-  const overTip = (e) => { const el = e.target.closest && e.target.closest('.pl [data-tip], .pl [data-full]'); if (el) showTip(el); else hideTip(); };
+  const overTip = (e) => { const el = e.target.closest && e.target.closest('.pl [data-tip]'); if (el) showTip(el); else hideTip(); };
 
   // ---- 말풍선(한 번에 하나) ----
   /**

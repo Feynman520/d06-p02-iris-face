@@ -307,21 +307,15 @@ try {
   ok(mid.btns === 0 && mid.gapRight < 12, `줄에는 체크 · 접기 말고 단추가 없어 이름이 줄 끝까지 씀(이름 오른쪽 빈자리 ${Math.round(mid.gapRight)}px)`);
   await page.hover(tx(5)); await page.waitForTimeout(300);
   const midHover = await ev(`(() => { const e = document.querySelector(${JSON.stringify(tx(5))}); const r = e.closest('.pl-r'); return { btns: r.querySelectorAll('button:not(.pl-ck):not(.fold)').length, cur: getComputedStyle(r).cursor, cut: e.scrollHeight > e.clientHeight + 1, tip: !document.getElementById('pl-tip').hidden }; })()`);
-  ok(midHover.btns === 0 && midHover.cur === 'pointer' && midHover.tip === midHover.cut, `줄에 올려도 단추가 생기지 않음 · 누를 수 있는 손 모양 · 풍선은 이름이 잘렸을 때만(잘림 ${midHover.cut} · 풍선 ${midHover.tip})`);
+  ok(midHover.btns === 0 && midHover.cur === 'pointer' && midHover.tip === false, `줄에 올려도 단추가 생기지 않음 · 누를 수 있는 손 모양 · 풍선 없음(풍선 ${midHover.tip})`);
   await page.mouse.move(10, 10); await settle();
-  await page.hover(tx(1)); await settle();
-  const t1 = await tipOf();
-  ok(t1 && t1.head === LONG && t1.body === null && t1.w <= 300 && t1.in, '잘린 이름에 올리면 이름 전체가 풍선으로(화면 안 · 폭 300 이하)');
-  await page.hover(tx(2)); await settle();
-  const t2 = await tipOf();
-  await shot('12b-full-tip');
-  ok(t2 && t2.head === '연구회 결과 보고서 전달' && t2.body === '교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달\n장소: 교무실', '메모가 있는 일에 올리면 이름 + 메모 · 장소');
-  await page.hover(tx(3)); await settle();
-  ok((await tipOf()) === null, '짧고 메모도 없는 이름에는 풍선을 띄우지 않음');
-  // 코덱스 검토(2026-11-23) 2 · 3번: 아주 긴 메모의 풍선도 화면 안에 다 들어오고(앞부분 + …), 메모는 화면 낭독기가 읽을 수 있게 이름에 달려 있다
-  await page.hover(tx(4)); await settle();
-  const t4 = await ev(`(() => { const t = document.getElementById('pl-tip'); const r = t.getBoundingClientRect(); const s = t.querySelector('span'); return { top: r.top, bottom: r.bottom, vh: innerHeight, len: s.textContent.length, dots: s.textContent.endsWith('…'), clipped: t.scrollHeight > t.clientHeight + 1 }; })()`);
-  ok(t4.top >= 0 && t4.bottom <= t4.vh && t4.len === 401 && t4.dots && !t4.clipped, `아주 긴 메모: 풍선이 화면 안(위 ${Math.round(t4.top)} · 아래 ${Math.round(t4.bottom)}/${t4.vh}) · 앞 400자 + … · 잘린 줄 없음`);
+  // 2026-11-24 사용자 지정("등록된 일정 호버시 자세한 텍스트 … 이제 필요없음. 삭제"): 이름에 올려도 풍선이 뜨지 않는다 — 자세한 내용은 줄을 눌러 뜨는 일정 창에서 본다
+  const hovers = [];
+  for (const i of [1, 2, 3, 4]) { await page.hover(tx(i)); await settle(); hovers.push((await tipOf()) === null); }
+  await shot('12b-no-full-tip');
+  ok(hovers.every(Boolean), `이름에 올려도 풍선이 뜨지 않음(잘린 이름 · 메모 있는 일 · 짧은 이름 · 아주 긴 메모) — ${hovers.join(',')}`);
+  ok((await ev(`document.querySelectorAll('.pl [data-full]').length`)) === 0, '이름 자리에 풍선용 표시(data-full)가 남아 있지 않음');
+  // 메모는 화면 낭독기가 읽을 수 있게 이름에 달려 있다(풍선과 무관 — 코덱스 검토 2026-11-23 3번)
   ok((await ev(`document.querySelector(${JSON.stringify(tx(2))}).getAttribute('aria-description')`)) === '교무부장님께 2학기 교과 연구회 결과 보고서를 작성해서 전달\n장소: 교무실' && (await ev(`document.querySelector(${JSON.stringify(tx(3))}).hasAttribute('aria-description')`)) === false, '메모는 이름의 설명(aria-description)으로도 달림 · 메모가 없으면 달지 않음');
   await page.mouse.move(10, 10); await settle();
   await ev(`Planner.open('2026-11-23')`); await settle();
