@@ -132,8 +132,21 @@ try {
   ok((await text('.pl-pill.fold'))[0] === '2/3' && pl.store.get(big.id).steps[1].done === true, '단계 체크 → 진행 숫자 · 장부에 적힘');
   await page.click(`.pl-ck[data-step="${big.steps[2].id}"]`); await settle();
   ok((await ev(`document.querySelector('.pl-ck[data-ck="${big.id}"]:not([data-step])').classList.contains('on')`)) && pl.store.get(big.id).done === true, '단계를 다 끝내면 큰 일도 체크');
+  // 다 끝낸 일(큰 일 + 단계 전부 체크)은 접힌 채로 시작한다(2026-11-25 사용자 요청) — 단, 보는 동안 방금 다 끝낸 일은 그 자리에서 접지 않는다(잘못 누른 체크를 바로 풀 수 있게)
+  const foldOf = () => ev(`(() => { const b = document.querySelector('.pl-pill.fold[data-fold="${big.id}"]'); return b ? b.getAttribute('aria-expanded') + ':' + b.textContent + ':' + document.querySelectorAll('.pl-steps .pl-r.step').length : 'none'; })()`);
+  ok((await foldOf()) === 'true:3/3:3', `보는 동안 마지막 단계를 체크해 다 끝난 일은 펴진 채로 남음 — ${await foldOf()}`);
+  await ev(`Planner.close()`); await settle(); await ev(`Planner.open('2026-11-23')`); await settle();
+  ok((await foldOf()) === 'false:3/3:0' && (await ev(`document.querySelector('.pl-ck[data-ck="${big.id}"]:not([data-step])').classList.contains('on')`)), `판을 닫았다 열면 다 끝낸 일은 접혀 있음(큰 일 줄 · 3/3 은 보임) — ${await foldOf()}`);
+  await page.click(`.pl-pill.fold[data-fold="${big.id}"]`); await settle();
+  ok((await foldOf()) === 'true:3/3:3', '접힌 다 끝낸 일도 접기 단추로 펼 수 있음');
+  await ev(`Planner.close()`); await settle(); await ev(`Planner.open('2026-11-23')`); await settle();
+  ok((await foldOf()) === 'true:3/3:3', '손으로 편 것은 판을 닫았다 열어도 펴져 있음(고른 값이 처음 값보다 먼저)');
+  await page.click(`.pl-pill.fold[data-fold="${big.id}"]`); await settle();
+  ok((await foldOf()) === 'false:3/3:0', '다시 접기');
   await page.click(`.pl-ck[data-ck="${big.id}"]:not([data-step])`); await settle();
   ok((await text('.pl-pill.fold'))[0] === '0/3', '큰 일 체크를 풀면 단계도 풀림');
+  await page.click('.pl-pill.fold'); await settle();
+  ok((await foldOf()) === 'true:0/3:3', '덜 끝난 일은 펴서 볼 수 있음(체크를 푼 뒤)');
   await page.click('.pl-pill.fold'); await settle();
   ok((await ev(`!document.querySelector('.pl-steps')`)), '단계 접기');
   await page.click('.pl-pill.fold'); await settle();

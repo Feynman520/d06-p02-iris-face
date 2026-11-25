@@ -66,7 +66,13 @@ window.Planner = (() => {
   const dockOn = () => docked && open && canDock();
   const dockWidth = () => Math.round(Math.max(DOCK_MIN, Math.min(dockW, DOCK_MAX, stageW() - STAGE_KEEP)));
   let sel = null, month = null, view = null, count = 0, busy = false, loadSeq = 0;
-  const folded = new Set();
+  // 단계가 있는 줄의 펴짐(2026-11-25 사용자 요청 "세부일정까지 완전히 체크된 일정은 기본값이 닫히도록"):
+  //   접기 단추로 고른 값(foldPick)이 있으면 그 값 → 없으면 처음 값 = 다 끝낸 일(큰 일 + 단계 전부 체크)은 접힘 · 나머지는 펴짐.
+  //   판을 보는 동안 펴진 채로 마지막 단계를 체크한 일은 그 자리에서 접지 않는다(잘못 눌렀을 때 바로 풀 수 있게, seenOpen) — 판을 닫았다 열면 접혀 있다.
+  const foldPick = new Map(); // id → true(펴짐) · false(접힘)
+  const seenOpen = new Set(); // 이번에 판을 연 뒤, 아직 덜 끝난 채 펴져 보인 일
+  const allDone = (r) => !!r.done && r.steps.every((s) => s.done);
+  const stepsOpen = (r) => { if (foldPick.has(r.id)) return foldPick.get(r.id); const o = !allDone(r) || seenOpen.has(r.id); if (o && !allDone(r)) seenOpen.add(r.id); return o; };
   let thread = [];            // { who:'me'|'ai', text, cards?, undo?, warn?, confirm?, wait? }
   let talkCtx = null;         // 「말로 고치기」로 연 대화의 대상(제안) — 판이나 대화를 닫으면 지운다
   let cur = null;             // 떠 있는 말풍선(몇 초 뒤 사라지는 것) { group, tone, lines:[…], actions }
@@ -129,7 +135,7 @@ window.Planner = (() => {
     const openAttr = ` data-open="${esc(r.id)}" data-open-date="${esc(r.date)}"`;
     const title = `<span class="tx${r.done ? ' done' : ''}"${descAttr(r)} role="button" tabindex="0" aria-haspopup="dialog">${esc(r.title)}</span>`;
     if (r.steps) {
-      const isOpen = !folded.has(r.id), dn = r.steps.filter((s) => s.done).length;
+      const isOpen = stepsOpen(r), dn = r.steps.filter((s) => s.done).length;
       const steps = isOpen ? `<div class="pl-steps"${openAttr}>${r.steps.map((s) => stepHtml(r, s, off)).join('')}</div>` : '';
       return `<div class="pl-r"${openAttr}>${ck(r.done, `data-ck="${esc(r.id)}"`, off)}${title}<button type="button" class="pl-pill fold" data-fold="${esc(r.id)}" aria-expanded="${isOpen}" data-tip="단계 ${r.steps.length}개 가운데 ${dn}개 끝남 · 눌러서 ${isOpen ? '접기' : '펴기'}">${I(isOpen ? 'chev-up' : 'chev-down')}${dn}/${r.steps.length}</button>${badge(r)}</div>${steps}`;
     }
@@ -486,8 +492,8 @@ window.Planner = (() => {
   }
 
   // ---- 하는 일 ----
-  function openPanel(day) { open = true; fresh = true; if (day) { sel = day; month = day.slice(0, 7); } else if (!sel && view) sel = view.today; place(false); render(); load(); }
-  function closePanel() { open = false; talk = false; talkCtx = null; item = null; backTo = null; refocus = null; place(false); render(); }
+  function openPanel(day) { if (!open) seenOpen.clear(); open = true; fresh = true; if (day) { sel = day; month = day.slice(0, 7); } else if (!sel && view) sel = view.today; place(false); render(); load(); }
+  function closePanel() { seenOpen.clear(); open = false; talk = false; talkCtx = null; item = null; backTo = null; refocus = null; place(false); render(); }
   /** 닫기 옆 단추: 오른쪽 칸으로 붙이기 ↔ 작게 띄우기. 고른 모양은 이 컴퓨터에 기억해 다음에 열 때도 그대로다. */
   function toggleDock() {
     docked = !dockOn(); mem.set('iris.planner.dock', docked ? '1' : '0');
@@ -777,7 +783,7 @@ window.Planner = (() => {
     if ((el = q('[data-dec]'))) return decide(el.dataset.dec, false);
     if ((el = q('[data-fix]'))) return fixProposal(el.dataset.fix);
     if ((el = q('[data-work]'))) { const p = view.proposals.find((x) => x.id === el.dataset.work); if (p && p.action) opts.chatIn(p.action.folder, p.action.prompt || ''); return; }
-    if ((el = q('[data-fold]'))) { const id = el.dataset.fold; if (folded.has(id)) folded.delete(id); else folded.add(id); return renderPanel(); }
+    if ((el = q('[data-fold]'))) { foldPick.set(el.dataset.fold, el.getAttribute('aria-expanded') !== 'true'); return renderPanel(); } // 지금 보이는 것의 반대로 — 고른 값은 처음 값(다 끝낸 일 = 접힘)보다 먼저다
     if ((el = q('[data-ck]'))) return check(el.dataset.ck, el.dataset.step || null, el.dataset.date || null, !el.classList.contains('on'));
     if ((el = q('[data-day]'))) { sel = el.dataset.day; month = sel.slice(0, 7); return load(); }
     if (q('[data-today]')) { sel = view.today; month = sel.slice(0, 7); return load(); }
