@@ -332,7 +332,7 @@ else {
     ok(!(await p.locator('#tutorial').isVisible()), '6 다시 열어도 튜토리얼은 다시 뜨지 않는다');
     // ---------- 7) 설정: 묶음 8개 · 열쇠 카드 세 장 · 온톨로지 그래프 · 도구 · 튜토리얼 다시 보기 ----------
     const navOrder = await p.evaluate(() => [...document.querySelectorAll('#st-nav .st-nav-i')].map(b => b.dataset.pane).join(','));
-    ok(navOrder === 'design,session,ontology,tools,notify,planner,mods,account,about,feedback', `7 목차 10묶음 순서 (${navOrder})`); // v2.105: 의견 보내기 · 플래너(「알림」 다음)
+    ok(navOrder === 'design,session,ontology,tools,planner,mods,account,about,feedback', `7 목차 9묶음 순서 (${navOrder})`); // v2.105: 의견 보내기 · 플래너 · 2026-11-25: 「알림」(notify)을 「알림 · 플래너」(planner)에 합침
     await p.evaluate(() => Settings.setAuth({ available: true, info: { checkedAt: new Date().toISOString(), items: [
       { id: 'iris', group: 'iris', label: 'IRIS 창', name: 'iris', provider: 'claude', level: 'ok', daysLeft: 300, longKey: true },
       { id: 'c1', group: 'relay', label: 'claude-a', name: 'a', provider: 'claude', level: 'soon', daysLeft: 2 },
