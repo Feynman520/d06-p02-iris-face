@@ -229,6 +229,12 @@ const longCmd = ['Requesting permission for:', ...Array.from({ length: 12 }, (_,
 const cut14 = longCmd.filter((l) => l.trim()).slice(-14).join('\n'); // idleCheck 가 넘기는 만큼
 const narrow = perm.replace('  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command', '  ↑/↓\n  Navigate · tab Amend ·\n  ctrl+g edit/expand command');
 eq([S(perm2), S(cut14), S(narrow)], ['attention', 'attention', 'attention'], '권한 물음: 다른 선택지를 고른 때 · 제목이 14줄 밖 · 안내줄이 꺾인 때도 확인 필요');
+// 코덱스 재검토(2026-11-25): ① 답을 쓰는 중(입력 칸이 그대로 보임)에 답 글이 물음을 통째로 흉내 내도 일하는 중이다
+//   ② 선택지 설명이 길게 꺾여 고른 줄("> 1. …")이 14줄 밖으로 밀려도 바닥("4. No, cancel")이 보이면 확인 필요다
+const mimic = ['Example:', '  Requesting permission for:', '  > 1. Yes, run command', '  4. No, cancel', '  ↑/↓ Navigate · tab Amend', '  explaining further...', '────', '>', '────', 'esc to cancel                     auto · Gemini 3.8 Flash · low'].join('\n');
+const mimic2 = ['  Requesting permission for:', '  > 1. Yes, run command', '  4. No, cancel', '  ↑/↓ Navigate · tab Amend', '────', '>', '────', 'esc to cancel'].join('\n');
+const longOpts = ['Requesting permission for:', '   some-command', 'Run this command?', '> 1. Yes, run command', ...Array.from({ length: 15 }, (_, i) => `     설명 ${i + 1}`), '  4. No, cancel', 'esc to cancel                 plan · Gemini 3.8 Flash · low'].filter((l) => l.trim()).slice(-14).join('\n');
+eq([S(mimic), ad.screen.attention.test(mimic), ad.screen.working.test(mimic), S(mimic2), S(longOpts), ad.screen.attention.test(longOpts)], ['busy', false, true, 'busy', 'attention', true], '입력 칸이 보이면 물음이 아님(답 글이 물음을 흉내 내도 일함) · 고른 줄이 밀려도 바닥이 보이면 확인 필요');
 // 재개 · 바꾸기는 카드의 권한 값으로 다시 명령을 만든다 — 고른 모드가 이어지고, 권한 값이 없는 옛 카드는 지금까지처럼 전부 허용
 {
   const conv2 = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';

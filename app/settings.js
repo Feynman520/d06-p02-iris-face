@@ -120,10 +120,7 @@ window.Settings = (() => {
     fill($('#st-approval'), agents?.codex?.approvals || FALLBACK.approvals, cfg.approval);
     fill($('#st-sandbox'), agents?.codex?.sandboxes || FALLBACK.sandboxes, cfg.sandbox);
     // Antigravity 권한 모드(2026-11-25): 목록은 데몬만 준다(화면 쪽 사본 없음 — 데몬이 모르는 값을 고르게 하지 않는다). 저장된 값이 목록에 없으면 처음 값(전부 허용).
-    const agyPerms = agents?.antigravity?.permissions;
-    // 안티그래비티 프로그램이 없는 PC(상태 missing)에서도 숨긴다(2026-11-25 코덱스 검토 2번 — 목록은 프로그램이 없어도 온다)
-    $('#st-agy-grp').hidden = !Array.isArray(agyPerms) || !agyPerms.length || agyInfo?.state === 'missing';
-    if (!$('#st-agy-grp').hidden) fill($('#st-agy-perm'), agyPerms, agyPerms.some(o => o.id === cfg.agyPermission) ? cfg.agyPermission : '');
+    syncAgyPerm();
     renderMods();
     renderAuth();
     renderUpdate();
@@ -435,6 +432,17 @@ window.Settings = (() => {
   // 데몬이 agy 에게 물은 판정 줄은 정상이 아닐 때(또는 계정 줄이 없을 때)만 보인다. 구글 계정은 중계기가 스스로 갱신하므로 정상인 줄에는 단추가 없다 —
   // 끊긴 줄만 「대시보드에서 다시 로그인」(코드를 붙여 넣는 걸음이 있어 대시보드의 「＋ Antigravity 계정」 길을 그대로 쓴다).
   let agyInfo = null;
+  /** 세션 기본값의 Antigravity 권한 카드(2026-11-25): 목록은 데몬만 준다(화면 쪽 사본 없음 — 데몬이 모르는 값을 고르게 하지 않는다).
+   *  목록이 없거나(다시 켜기 전의 옛 데몬) 프로그램이 없는 PC(상태 missing)면 숨긴다. 저장된 값이 목록에 없으면 처음 값(전부 허용)으로 보인다.
+   *  상태를 늦게 읽어도(loadAgy) 다시 불러 보이기 · 숨기기를 맞춘다. */
+  function syncAgyPerm() {
+    const grp = $('#st-agy-grp'), sel = $('#st-agy-perm'); if (!grp || !sel) return;
+    const list = agents?.antigravity?.permissions;
+    grp.hidden = !Array.isArray(list) || !list.length || agyInfo?.state === 'missing';
+    if (grp.hidden) return;
+    sel.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
+    sel.value = list.some(o => o.id === cfg.agyPermission) ? cfg.agyPermission : '';
+  }
   function agyRow(i) {
     const cur = agyInfo?.state === 'ok' && agyInfo.account && agyInfo.account === i.label;
     const bad = i.level === 'expired' || i.level === 'soon';
@@ -462,7 +470,7 @@ window.Settings = (() => {
   async function loadAgy() { agyAt = Date.now(); try { const r = await fetch('/api/antigravity/status'); agyInfo = r.ok ? await r.json() : null; } catch { agyInfo = null; } }
   function renderAuth() {
     // 패널을 그릴 때마다 30초가 지났으면 다시 묻는다(로그인 · 로그아웃 뒤에도 따라오게 — 코덱스 코드 검토 B)
-    if (Date.now() - agyAt > 30000) { const was = JSON.stringify(agyInfo); loadAgy().then(() => { if (open && JSON.stringify(agyInfo) !== was) { renderAuth(); const g = $('#st-agy-grp'); if (g && agyInfo?.state === 'missing') g.hidden = true; } }); }
+    if (Date.now() - agyAt > 30000) { const was = JSON.stringify(agyInfo); loadAgy().then(() => { if (open && JSON.stringify(agyInfo) !== was) { renderAuth(); syncAgyPerm(); renderNav(); } }); }
     const sec = $('#st-auth-sec'), host = $('#st-auth'), head = $('#st-auth-h'), btn = $('#st-auth-act'); if (!sec) return;
     renderNav();
     // v2.97.2(2026-11-02 사용자 신고 "복구 문구만 있고 로그인 열쇠가 없다"): 도구(iris-auth)가 없는 PC 도 절을 숨기지 않고 이유를 한 줄 보인다.

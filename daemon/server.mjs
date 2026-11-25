@@ -454,7 +454,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/tools') {
       const agentIds = Object.keys(activeAgentsMap(AGENTS)).filter((a) => a !== 'antigravity' || agyStatus.current()?.state !== 'missing');
       const list = tools.annotate(listTools(WS_ROOT)); const keep = (rows) => (rows || []).filter((r) => r.agent !== 'antigravity' || agentIds.includes('antigravity'));
-      return json(res, 200, { ...list, skills: keep(list.skills), mcp: keep(list.mcp), plugins: keep(list.plugins), catalog: tools.status(), agents: agentIds });
+      const skills = keep(list.skills), mcp = keep(list.mcp), plugins = keep(list.plugins);
+      return json(res, 200, { ...list, counts: { skills: skills.length, mcp: mcp.length, plugins: plugins.length }, skills, mcp, plugins, catalog: tools.status(), agents: agentIds });
     }
     if (req.method === 'POST' && (p === '/api/tools/install' || p === '/api/tools/remove' || p === '/api/tools/cancel')) {
       if (!sameOrigin(req)) { log(`403 tools: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }

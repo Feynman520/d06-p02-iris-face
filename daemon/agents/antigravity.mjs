@@ -113,14 +113,20 @@ const ATT_RE = /(Do you trust|trust the contents|\(y\/n\)|\[Y\/n\]|Enter to sele
 // "↑/↓ Navigate · tab Amend …". 이 물음이 떠 있는 동안에도 맨 아래 상태줄은 "esc to cancel" 이라 일하는 중으로 보였다 — 물음을 먼저 본다.
 // 대화 글 속의 같은 낱말에 속지 않게(2026-11-25 코덱스 검토 1번 — "↑/↓ Navigate 는 방향키 안내입니다" 같은 답 한 줄에 확인 필요로 바뀌었다) 넷을 모두 본다:
 //   ① 입력을 기다리는 화면("? for shortcuts")이 아니다 ② 맨 아래가 상태줄 "esc to cancel" 이다(이 물음이 busy 로 잘못 보이는 바로 그 경우만 다룬다 —
-//   상태줄이 없는 물음은 아래 ATT_RE 가 지금까지처럼 본다) ③ 줄 머리에 고른 번호 선택지("> 1. Yes, run command" — 방향키로 옮기면 "> 2. …")가 있다
-//   ④ 줄 머리에 안내줄 · 제목 · "N. No, cancel" 가운데 하나가 있다(창이 좁아 안내줄이 꺾이거나 제목이 화면 끝 14줄 밖으로 밀려도 하나는 남는다).
+//   상태줄이 없는 물음은 아래 ATT_RE 가 지금까지처럼 본다) ③ **입력 칸(빈 "> " 줄)이 화면 끝에 보이지 않는다** — 물음은 입력 칸을 통째로 덮는다.
+//   답을 쓰는 중인 화면에는 입력 칸이 그대로 있어, 답 글이 물음을 통째로 흉내 내도 여기서 갈린다(코덱스 재검토 1번)
+//   ④ 줄 머리에 번호 선택지가 있다 ⑤ 화면 끝에 물음의 바닥(안내줄 "↑/↓ …" 또는 "N. No, cancel")이 있거나, 줄 머리에 제목이 있다.
+//   고른 선택지 줄("> 1. …")은 요구하지 않는다 — 선택지 설명이 길게 꺾이면 화면 끝 14줄 밖으로 밀린다(코덱스 재검토 2번).
 // idleCheck 는 화면 끝 14줄(빈 줄 제외)만 넘긴다 — 여기서도 그만큼만 본다.
 const permAsk = (s) => {
   const ls = String(s).split('\n').filter((l) => l.trim()).slice(-14);
   const b = ls.slice(-3).join('\n');
   if (/\? for shortcuts/i.test(b) || !WORK_RE.test(b)) return false;
-  return ls.some((l) => /^\s*>\s*\d\.\s+\S/.test(l)) && ls.some((l) => /^\s*↑\/↓ Navigate\b/.test(l) || /^\s*Requesting permission for:\s*$/.test(l) || /^\s*\d\.\s+No, cancel\b/.test(l));
+  if (ls.slice(-4).some((l) => /^\s*>\s*$/.test(l))) return false;
+  const option = ls.some((l) => /^\s*>?\s*\d\.\s+\S/.test(l));
+  const foot = ls.slice(-6).some((l) => /^\s*↑\/↓(\s|$)/.test(l)) || ls.slice(-3).some((l) => /^\s*>?\s*\d\.\s+No, cancel\b/.test(l));
+  const head = ls.some((l) => /^\s*Requesting permission for:\s*$/.test(l));
+  return option && (foot || head);
 };
 export const screen = {
   /** send() 의 Enter 확인용: 일하는 중인가 */
