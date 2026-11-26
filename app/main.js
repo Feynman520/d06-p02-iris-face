@@ -846,6 +846,7 @@
     if (FolderPicker.isOpen()) { FolderPicker.hide(); return; }
     if (window.Planner?.onEscape()) return; // 플래너가 펴져 있으면 Esc = 대화 → 판 순서로 한 단계만 닫기 — 앞에 떠 있는 것(녹음 · 서랍 · 폴더 고르기)보다는 뒤, 작업 중단보다는 앞
     if (setupMode === 'switch') { setupMode = 'new'; renderSetup(); return; }
+    if (window.UpdatePanel?.isOpen?.()) { window.UpdatePanel.close(); ta.focus(); return; } // 업데이트 칸이 열려 있으면 Esc = 그 칸만 닫힘(작업 중단 아님) — 앞에 떠 있는 것(설정 · 서랍 · 플래너)보다는 뒤
     // 확인 카드가 떠 있으면 Esc = 터미널과 같게 취소 키(ESC)를 그 세션에 보낸다(v2.43)
     if (mode === 'chat' && Approval.isOpen() && Approval.choose('\x1b')) { ta.focus(); return; }
     // 대화 화면에서도 터미널처럼 Esc = 진행 중인 작업 중단(작업 중인 세션에만 ESC 키를 보낸다). 터미널 화면은 xterm이 직접 보낸다.

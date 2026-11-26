@@ -61,7 +61,9 @@ window.Planner = (() => {
   const mem = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* 기억하지 못해도 화면은 그대로 */ } } };
   const stageW = () => { const s = $('#stage'); return s ? s.clientWidth : 1000; };
   /** 칸으로 붙일 자리가 있는가(좁은 창에서는 붙이지 않고 작게 띄운다) */
-  const canDock = () => stageW() >= DOCK_MIN + STAGE_KEEP;
+  /** 업데이트 칸(app/update-panel.js)이 무대 오른쪽에 붙어 있으면 그 너비 — 같은 자리라 그동안 판은 칸으로 붙지 않고 작게 뜨며, 단추 · 말풍선은 그 칸의 왼쪽으로 비켜난다 */
+  const upW = () => { const up = $('#up-panel'), s = $('#stage'); return up && !up.hidden && s && s.classList.contains('up-docked') ? up.offsetWidth : 0; };
+  const canDock = () => stageW() >= DOCK_MIN + STAGE_KEEP && !upW();
   /** 지금 실제로 칸으로 붙어 있는가 */
   const dockOn = () => docked && open && canDock();
   const dockWidth = () => Math.round(Math.max(DOCK_MIN, Math.min(dockW, DOCK_MAX, stageW() - STAGE_KEEP)));
@@ -310,7 +312,7 @@ window.Planner = (() => {
     const flipped = on !== wasOn; wasOn = on;                  // 창 크기가 바뀌어 붙일 자리가 생기거나 없어졌다 — 머리의 단추 · 모양이 달라지므로 다시 그린다
     host.classList.toggle('docked', on);
     if (stage) { stage.classList.toggle('pl-docked', on); if (on) stage.style.setProperty('--pl-dock-w', `${dw}px`); else stage.style.removeProperty('--pl-dock-w'); }
-    let shift = sub && !sub.hidden ? sub.offsetWidth : 0;
+    let shift = (sub && !sub.hidden ? sub.offsetWidth : 0) + upW();   // 보조 작업 서랍 · 업데이트 칸만큼 왼쪽으로
     if (sw - dw - 44 - shift < 300) shift = 0;                // 서랍 옆에 판이 설 자리가 없으면 비켜나지 않는다
     host.style.setProperty('--pl-shift', `${shift}px`);
     host.style.setProperty('--pl-w', `${Math.max(260, Math.min(440, sw - 44 - shift))}px`);   // 떠 있는 판의 너비(2026-11-23: 384 → 440 — 이름이 덜 잘리게)
@@ -848,6 +850,7 @@ window.Planner = (() => {
       for (const id of ['#dock', '#sub', '#stage', '#approval', '#dead-bar']) { const el = $(id); if (el) ro.observe(el); }
       for (const id of ['#approval', '#dead-bar']) { const el = $(id); if (el) new MutationObserver(() => place()).observe(el, { attributes: true, attributeFilter: ['hidden'] }); }
       const sub = $('#sub'); if (sub) new MutationObserver(() => place()).observe(sub, { attributes: true, attributeFilter: ['hidden'] });
+      const up = $('#up-panel'); if (up) new MutationObserver(() => place()).observe(up, { attributes: true, attributeFilter: ['hidden'] });
       // 설정 · 대시보드 서랍이 열리고 닫힐 때: 단추는 서랍 아래에 숨고, 말풍선만 구석에 뜬다
       for (const id of ['#settings', '#dash']) { const el = $(id); if (el) new MutationObserver(() => renderRow()).observe(el, { attributes: true, attributeFilter: ['hidden', 'class'] }); }
     } catch { /* 옛 환경: 창 크기 변화 때만 다시 잰다 */ }

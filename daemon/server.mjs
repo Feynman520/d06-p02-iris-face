@@ -332,7 +332,9 @@ const sameOrigin = (req) => {
   if (s && s !== 'same-origin' && s !== 'none') return false;
   return true;
 };
-const MODULE_ACTION_RE = new RegExp(`^/api/modules/(${NAME_RE.source.slice(1, -1)})/(remove|restart)$`);
+/** 화면에서 누른 호출인가(업데이트 칸의 받아 놓기 · 고르기 — apply-now 의 문턱과 같은 기준). 출처 표시가 없는 로컬 호출은 아니다. */
+const pageCall = (req) => { const o = req.headers.origin; return o === `http://127.0.0.1:${PORT}` || o === `http://localhost:${PORT}` || (!o && req.headers['sec-fetch-site'] === 'same-origin'); };
+const MODULE_ACTION_RE =new RegExp(`^/api/modules/(${NAME_RE.source.slice(1, -1)})/(remove|restart)$`);
 const CATALOG_INSTALL_RE = new RegExp(`^/api/catalog/(${NAME_RE.source.slice(1, -1)})/install$`);
 
 /** zip 버퍼 → 설치(zip 업로드·카탈로그 공용). 거부될 zip 이면 실행 중인 모듈을 건드리지 않고(F6), 실패하면 돌던 모듈을 되살린다. { status, body }. */
@@ -524,6 +526,16 @@ const server = http.createServer(async (req, res) => {
       if (req.headers.origin) return json(res, 403, { ok: false, text: 'forbidden' }); // 브라우저가 부르는 길이 아니다
       const r = await updateChat.handle(req.headers, await readBody(req)); return json(res, r.code, r.out);
     }
+    // 업데이트 칸(2026-11-26): 비교 자료 읽기 · 새 판 받아 놓기 · 고른 것 받기. 설치는 여기서 하지 않는다(확인 카드 → apply-now).
+    if (req.method === 'GET' && p === '/api/update/review') return json(res, 200, updateChat.review({ settings: settings.get() }));
+    if (req.method === 'POST' && (p === '/api/update/stage' || p === '/api/update/choose')) {
+      // 받아 놓기 · 고르기는 **화면에서 누른 호출만** 받는다(적용 창구 apply-now 와 같은 문턱): Origin 이 이 창의 주소이거나 Sec-Fetch-Site: same-origin.
+      // 출처 표시가 없는 로컬 호출(대화의 에이전트가 주소를 직접 부르는 경우)은 403 — 고르는 것은 사용자다. 헤더는 로컬 프로그램이 흉내 낼 수 있으니 인증이 아니라 문턱이다.
+      if (!sameOrigin(req) || !pageCall(req)) { log(`403 update ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { ok: false, why: 'forbidden', reason: '업데이트 칸은 IRIS 화면에서 사용자가 눌러야 합니다.' }); }
+      if (p === '/api/update/stage') { const r = await updateChat.stage(); return json(res, 200, { ...r, review: updateChat.review({ settings: settings.get() }) }); }
+      const r = await updateChat.choose(await readBody(req), { settings: settings.get() });
+      return json(res, 200, { ...r, info: updater.info() });
+    }
     if (p.startsWith('/api/update/') && req.method === 'POST') {
       if (!sameOrigin(req)) { log(`403 update ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       if (p === '/api/update/check') { try { const info = await updater.check(); noteUpdate(() => updateChat.noteChecked(info)); return json(res, 200, info); } catch (e) { noteUpdate(() => updateChat.note('checked', { via: 'screen', ok: false, reason: e.message })); log(`502 update check: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: e.message }); } }
@@ -551,6 +563,8 @@ const server = http.createServer(async (req, res) => {
         if (!fromPage) { log('403 update apply-now: not from the page'); return json(res, 403, { ok: false, reason: '적용은 IRIS 화면의 확인 카드에서 사용자가 눌러야 합니다.' }); }
         const r = updater.applyNow();
         if (!r.ok) return json(res, 400, r);
+        // 업데이트 칸에서 고른 "새 기능을 켤지"를 적용기에 넘기기 직전에 설정에 적는다(설정 파일은 새 판으로 옮겨 간다 — 옛 판은 모르는 키를 그냥 둔다)
+        noteUpdate(() => { const patch = updateChat.featurePatch({ consume: true }); if (Object.keys(patch).length) { settings.set(patch); log(`update features: ${Object.entries(patch).map(([k, v]) => `${k}=${v}`).join(',')}`); } });
         noteUpdate(() => updateChat.noteHandoff(updater.info()));
         json(res, 200, r); log('update apply-now: shutting down for the updater'); setTimeout(shutdown, 300); return;   // ⏻ 와 같은 경로 — 적용기가 폴더를 바꾸고 다시 띄운다
       }

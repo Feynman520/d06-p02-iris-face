@@ -14,6 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { verifyManifest } from './modsign.mjs';
+import { zipOpenFile, zipEntryDataFile } from './zip.mjs';
 
 export const BIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin');
 export const CALL_LIMIT = 40, CALL_WINDOW_MS = 10 * 60_000; // 한 세션이 10분에 부를 수 있는 횟수(되풀이에 빠진 에이전트 막기)
@@ -24,6 +25,7 @@ const PART_KO = { face: 'IRIS 창', messenger: '메신저', package: '설치 패
 const WORD = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,59}$/;
 const cut = (s, n) => String(s ?? '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').slice(0, n);
 export const BIG_FILE = 16 * 1024 * 1024;   // 이보다 큰 파일은 지문을 내지 않는다("확인하지 않음")
+export const BACKUP_FILES = 1000, BACKUP_BYTES = 256 * 1024 * 1024; // 적용 전 "내가 고친 파일" 보관의 상한(개수 · 모두 합친 크기) — 넘는 것은 "보관하지 못함"으로 알린다
 export const SCAN_FILES = 6000, SCAN_BYTES = 300 * 1024 * 1024, SCAN_MS = 5000; // 대조 한 번의 상한(파일 수 · 읽은 양 · 걸린 시간) — 넘으면 "다 보지 못함"
 /** 기록 · 답에 싣는 까닭 글: 경로처럼 보이는 것은 가린다(오류 원문에 사용자 폴더 이름이 들어 있을 수 있다) */
 // 경로가 시작되면 그 줄의 끝(또는 따옴표)까지 가린다 — 폴더 이름에 공백 · 한글이 있어도 조각이 남지 않게(뒤의 글이 함께 가려지는 것은 감수한다)
@@ -35,6 +37,7 @@ export class UpdateChat {
    */
   constructor({ updater, port, stateDir, faceRoot, session, sessions = () => [], broadcast = () => {}, log = () => {}, node = process.execPath, now = () => Date.now(), verify = verifyManifest }) {
     Object.assign(this, { updater, port, stateDir, faceRoot, session, sessions, broadcast, log, node, now, verify });
+    this.choosing = false; this.choice = null; // 업데이트 칸에서 고른 것(적용 직전에 새 기능의 선택을 설정에 적는다)
     this.downloading = null; this.offered = null; // 도는 내려받기(겹친 요청은 하나로) · 마지막으로 확인 카드를 띄운 계획(같은 것을 또 띄우지 않는다)
     this.secret = crypto.randomBytes(32);
     this.calls = new Map(); this.badKeys = [];
@@ -177,6 +180,194 @@ export class UpdateChat {
     return L.join('\n');
   }
 
+  // ---- 업데이트 칸(2026-11-26 사용자 선택 = 시안 「라」 대화 옆 칸 · 체크 단위 「나」): 비교 자료와 고른 것 받기 ----
+  // 사용자가 정한 과정: 누르면 점검 → 새 판과 비교 → 바뀔 것(수정 · 추가)을 보여 주고 → 원하는 것만 체크 → 업데이트.
+  // 고를 수 있는 것 셋: 부품 / 새 기능(켤지) / 내가 고친 파일(내 것 유지 · 새 판으로).
+  //   · 부품을 섞어 고르는 것은 안전하다(부품마다 함께 시험한 한 벌). 기능 · 파일 하나하나를 골라 코드를 부분 적용하지는 않는다.
+  //   · 새 기능 = 새 판의 update-info.json 이 알려 주는 설정 스위치(지금 판의 목록에 없는 것만 "새 기능"). 고른 값은 적용 직전에 설정에 적는다.
+  //   · 내가 고친 파일의 「내 것 유지」는 적용기가 할 줄 알 때만 고를 수 있다(canKeep). 못 하면 새 판으로 바뀌고, 고친 파일은 적용 전에 따로 보관한다.
+
+  /** 받아 둔 새 IRIS 창의 폴더(비교의 기준). 없으면 null. */
+  #stagedFace() { const it = (this.updater.info().plan?.items || []).find((i) => i.kind === 'face'); return it?.dir && fs.existsSync(it.dir) ? it.dir : null; }
+  #readInfo(dir) { try { const j = JSON.parse(fs.readFileSync(path.join(dir, 'update-info.json'), 'utf8')); return j && typeof j === 'object' ? j : null; } catch { return null; } }
+  /** 받아 둔 설치 패키지 안의 IRIS 창 묶음에서 update-info.json 만 꺼내 읽는다(묶음을 풀지 않는다 · 64KB 까지). 없으면 null.
+   *  설치 패키지는 받을 때 통째로 서명 검증을 마쳤다. 그 안의 창 묶음에는 파일 목록(manifest)이 없어 파일 비교는 하지 못하고 새 기능 목록만 읽는다. */
+  #packagedInfo() {
+    const it = (this.updater.info().plan?.items || []).find((i) => i.kind === 'package'); if (!it?.dir) return null;
+    const zip = path.join(it.dir, 'payload', 'face', 'iris-face.zip'); let z = null, val = null;
+    if (this.pkgInfo?.zip === zip) return this.pkgInfo.val; // 같은 묶음은 한 번만 연다(화면이 여러 번 묻는다)
+    try {
+      if (!fs.existsSync(zip)) return null;
+      z = zipOpenFile(zip, { maxEntryBytes: 512 * 1024 * 1024, maxTotalBytes: 2048 * 1024 * 1024, maxEntries: 60000 });
+      const e = z.entries.find((x) => x.name.replace(/^\.\//, '') === 'update-info.json');
+      if (e && e.usize <= 64 * 1024) { const j = JSON.parse(zipEntryDataFile(z.fd, e).toString('utf8')); val = j && typeof j === 'object' ? j : null; }
+    } catch { val = null; } finally { z?.close(); }
+    this.pkgInfo = { zip, val };
+    return val;
+  }
+  #features(list) { return (Array.isArray(list) ? list : []).filter((f) => f && typeof f.key === 'string' && /^[a-z][A-Za-z0-9]{1,39}$/.test(f.key)).slice(0, 20).map((f) => ({ key: f.key, title: cut(f.title, 30) || f.key, sub: cut(f.sub, 60), on: f.default !== false })); }
+
+  /** 새 판을 받아 놓는다(서명 검증까지 · 설치 아님). 메신저는 받지 않는다 — 메신저는 받는 즉시 바뀌는 부품이라 사용자가 고른 뒤에만 받는다. */
+  async stage() {
+    const u = this.updater;
+    if (u.mode !== 'package') return { ok: false, why: 'dev' };
+    if (this.downloading || u.info().applying || this.choosing) return { ok: false, why: 'busy' }; // 고른 것을 받는 중(보관 중)에는 받아 둔 계획을 바꾸지 않는다
+    const want =(u.info().applyParts || []).filter((p) => p !== 'messenger');
+    const have = new Set((u.info().plan?.items || []).map((i) => `${i.kind}@${i.version}`));
+    if (want.length && want.every((p) => have.has(`${p}@${u.info().latest?.[p]?.version}`))) return { ok: true, already: true };
+    if (!want.length) return { ok: true, nothing: true };
+    this.downloading = (async () => { try { return await u.apply({ only: want }); } catch (e) { return { ok: false, reason: e?.message }; } })();
+    let r; try { r = await this.downloading; } finally { this.downloading = null; }
+    this.noteDownload({ ...r, info: u.info() }, 'panel');
+    return r?.ok ? { ok: true } : { ok: false, why: 'failed', reason: scrub(r?.reason || '', 160) };
+  }
+
+  /** 업데이트 칸이 그릴 것. 읽기만 한다. */
+  review({ settings = {} } = {}) {
+    const u = this.updater.info(); const re = !!u.reinstall;
+    const avail = (u.available || []).filter((p) => !(re && p === 'package'));
+    const lines = (n) => (typeof n === 'string' ? n.split(/\r?\n/).map((l) => l.replace(/^[\s#*\-•·]+/, '').trim()).filter(Boolean).slice(0, 4).map((l) => cut(l, 80)) : []);
+    const parts = avail.map((p) => ({ part: p, name: PART_KO[p] || p, from: u.installed?.[p] || null, to: u.latest?.[p]?.version || null, lines: lines(u.latest?.[p]?.notes), staged: (u.plan?.items || []).some((i) => i.kind === p) }));
+    const covers = avail.includes('package') && avail.includes('face') ? { package: ['face'] } : {}; // 설치 패키지를 고르면 그 안의 IRIS 창이 함께 온다
+    const dir = this.#stagedFace(); let features = { known: false, items: [] }, compare = { known: false };
+    const lc = this.localChanges({ max: 50 });
+    const mine = { known: lc.known, why: lc.why || null, partial: !!lc.partial, count: lc.count || 0, canKeep: this.canKeep(), files: [] };
+    let newFiles = null;
+    // 새 기능 = 새 판의 목록에서 지금 판의 목록에 없는 것. 새 판의 목록은 받아 둔 IRIS 창 폴더에서, 설치 패키지를 받아 두었으면 그 안의 창 묶음에서 읽는다.
+    const newInfo = dir ? this.#readInfo(dir) : this.#packagedInfo();
+    if (dir || newInfo) {
+      const had = new Set(this.#features(this.#readInfo(this.faceRoot)?.features).map((f) => f.key));
+      const now = this.#features(newInfo?.features).filter((f) => !had.has(f.key));
+      features = { known: true, items: now.map((f) => ({ ...f, on: typeof settings[f.key] === 'boolean' ? settings[f.key] : f.on })) };
+    }
+    if (dir) {
+      // 새 판의 파일 목록(서명은 내려받을 때 이미 검증했다)과 지금 설치본의 목록을 견준다
+      const rd = (d) => { try { const j = JSON.parse(fs.readFileSync(path.join(d, 'manifest.json'), 'utf8')); return j?.files && typeof j.files === 'object' ? j.files : null; } catch { return null; } };
+      const a = rd(this.faceRoot); newFiles = rd(dir);
+      if (a && newFiles) { let added = 0, changed = 0, removed = 0; for (const k of Object.keys(newFiles)) { if (!(k in a)) added++; else if (a[k] !== newFiles[k]) changed++; } for (const k of Object.keys(a)) if (!(k in newFiles)) removed++; compare = { known: true, added, changed, removed }; }
+    }
+    if (lc.known) {
+      const oldFiles = (() => { try { return JSON.parse(fs.readFileSync(path.join(this.faceRoot, 'manifest.json'), 'utf8')).files || {}; } catch { return {}; } })();
+      const row = (f, kind) => ({ file: f, kind, clash: newFiles ? (kind === 'added' ? f in newFiles : oldFiles[f] !== newFiles[f]) : null }); // clash = 새 판에서도 바뀐(또는 새 판에 같은 이름이 생긴) 파일 · null = 아직 모름
+      mine.files = [...lc.changed.map((f) => row(f, 'changed')), ...lc.added.map((f) => row(f, 'added')), ...lc.missing.map((f) => row(f, 'missing'))].slice(0, 50);
+    }
+    const ss = this.sessions();
+    return { mode: u.mode, applying: u.applying || false, staged: !!dir || (u.plan?.items || []).length > 0, reinstall: re ? { note: cut(u.reinstall.note, 200), url: cut(u.reinstall.url, 160) } : null,
+      checkError: u.checkError ? scrub(u.checkError, 160) : null, lastCheck: u.lastCheck || null, parts, covers, features, compare, mine,
+      sessions: { open: ss.filter((s) => !['dead', 'exited', 'orphan'].includes(s.status)).length, busy: ss.filter((s) => s.status === 'busy').length } };
+  }
+  /** 적용기가 「내 것 유지」를 할 줄 아는가(적용기 옆 capabilities.json 의 keepFiles). 지금 배포된 적용기는 못 한다. */
+  canKeep() { try { return JSON.parse(fs.readFileSync(path.join(path.dirname(this.updater.updaterPath()), 'capabilities.json'), 'utf8')).keepFiles === true; } catch { return false; } }
+
+  /** 받아 둔 계획의 이름표(계획 파일 + 부품@판). 고른 것(this.choice)을 그 계획에 묶는 데 쓴다. 계획이 없으면 ''. */
+  #planKey() { const p = this.updater.info().plan; return p ? `${p.file || ''}|${(p.items || []).map((i) => `${i.kind}@${i.version}`).join(',')}` : ''; }
+
+  /**
+   * 사용자가 체크한 것을 받는다. body = { parts: ['face', …], features: { key: bool }, files: { 'app/x.js': 'keep' | 'replace' } }
+   * 하는 일: (메신저를 골랐으면) 메신저를 바꾼다 → 고른 부품의 새 판이 받아져 있는지 보고(종류와 판 번호 둘 다) 아니면 지금 받는다
+   *          → 새 기능의 선택과 파일 선택을 그 계획에 묶어 적어 둔다 → 고친 파일을 보관한다.
+   * 설치(창이 닫히는 일)는 여기서 하지 않는다 — 화면이 확인 카드를 띄우고 사용자가 「지금 적용」을 누른다.
+   * → { ok, needsApply, kept, swapped, backup, features } | { ok:false, why, reason? }
+   */
+  async choose(body = {}, { settings = {} } = {}) {
+    const u = this.updater;
+    if (u.mode !== 'package') return { ok: false, why: 'dev' };
+    if (this.downloading || u.info().applying || this.choosing) return { ok: false, why: 'busy' };
+    this.choosing = true;
+    try {
+      let rv = this.review({ settings });
+      const can = new Set(rv.parts.map((p) => p.part));
+      let parts = (Array.isArray(body.parts) ? body.parts : []).filter((p) => typeof p === 'string' && can.has(p));
+      if (parts.includes('package')) parts = parts.filter((p) => p !== 'face'); // 설치 패키지 안에 함께 들어 있다
+      if (!parts.length) return { ok: false, why: 'nothing' };
+      const out = { ok: true, swapped: [], kept: [], needsApply: false, backup: null, features: {} };
+      const download = async (only) => {
+        this.downloading = (async () => { try { return await u.apply({ only }); } catch (e) { return { ok: false, reason: e?.message }; } })();
+        let r; try { r = await this.downloading; } finally { this.downloading = null; }
+        this.noteDownload({ ...r, info: u.info() }, 'panel');
+        return r;
+      };
+      // 1) 메신저: 받는 즉시 바뀌는 부품 — 고른 지금 받는다
+      if (parts.includes('messenger')) {
+        const r = await download(['messenger']);
+        if (r?.ok) out.swapped.push('messenger'); else out.failed = [{ part: 'messenger', reason: scrub(r?.reason || '', 160) }];
+      }
+      // 2) 창이 닫히는 부품: 받아 둔 것이 "고른 부품의 지금 새 판"인지 본다(종류만이 아니라 판 번호까지).
+      //    아니면(설치 패키지를 빼고 IRIS 창만 골랐거나, 받아 둔 뒤 더 새 판이 나왔으면) 고른 것을 지금 받는다 — 받고 서명을 검증할 뿐 설치는 아니다.
+      const heavy = parts.filter((p) => p !== 'messenger');
+      if (heavy.length) {
+        const staged = () => { const i = u.info(); return heavy.every((p) => (i.plan?.items || []).some((x) => x.kind === p && String(x.version) === String(i.latest?.[p]?.version))); };
+        if (!staged()) {
+          const r = await download(heavy);
+          if (!staged()) return { ...out, ok: false, why: 'not-staged', reason: scrub(r?.reason || '', 160) };
+          rv = this.review({ settings }); // 받은 묶음이 달라졌다 — 새 기능 · 파일은 실제로 적용할 그 판으로 다시 견준다
+        }
+        out.kept = u.keepPlanItems(heavy);   // 고르지 않은 부품은 이번 계획에서 뺀다
+        out.needsApply = out.kept.length > 0;
+      }
+      if (!out.needsApply) { this.note('cli', { what: 'choose', via: 'panel', ok: true, parts: out.swapped.map((p) => ({ part: p })) }); return out; } // 메신저만: 받아 둔 다른 계획 · 앞서 고른 것은 건드리지 않는다
+      // 3) 새 기능의 선택: 새 판이 알려 준 스위치만 · 참/거짓만. 적용 직전에 설정에 적는다(featurePatch)
+      const allowed = new Set(rv.features.items.map((f) => f.key));
+      for (const [k, v] of Object.entries(body.features && typeof body.features === 'object' ? body.features : {})) if (allowed.has(k) && typeof v === 'boolean') out.features[k] = v;
+      // 4) 내가 고친 파일: 선택을 적어 두고(적용기가 읽는다), 적용 전에 따로 보관한다 — 적용기가 「내 것 유지」를 못 하는 판에서도 고친 내용이 사라지지 않게.
+      //    보관할 목록은 화면에 보이는 50줄이 아니라 대조한 전부(상한까지)다.
+      const lc = this.localChanges({ max: BACKUP_FILES }); const canKeep = this.canKeep();
+      const mine = lc.known ? [...lc.changed, ...lc.added] : [];
+      const files = {};
+      for (const f of mine) files[f] = canKeep && body.files?.[f] === 'keep' ? 'keep' : 'replace';
+      // 보관은 시간이 걸린다(비동기). 그사이 받아 둔 계획이 바뀌면(다른 화면의 「전부 업데이트」 등) 이 선택을 새 계획에 붙이지 않는다 — 보관 앞뒤로 같은 계획인지 본다.
+      const planBefore = this.#planKey(), planDir = u.info().plan?.dir || null;
+      // unread = 대조할 때 읽지 못했거나 너무 커서 고쳤는지조차 모르는 파일(보관하지 못한다). partial = 다 살피지 못했거나 목록이 상한에서 잘림.
+      // 보관할 파일이 하나도 없어도 이 둘은 답에 싣는다 — "보관하지 못한 것이 있을 수 있음"을 숨기지 않는다.
+      const unread = lc.known ? lc.unreadable.length : 0, partial = lc.known && (!!lc.partial || lc.count > mine.length + lc.missing.length + lc.unreadable.length);
+      if (mine.length) out.backup = await this.#backupMine(mine);
+      if (mine.length || unread || partial) out.backup = { dir: null, total: mine.length, copied: 0, skipped: mine.length, ...(out.backup || {}), unread, partial };
+      if (planBefore !== this.#planKey()) { this.note('cli', { what: 'choose', via: 'panel', ok: false, reason: 'plan-changed' }); return { ...out, ok: false, needsApply: false, why: 'changed' }; }
+      this.choice = { at: new Date(this.now()).toISOString(), plan: planBefore, parts: out.kept, features: out.features, files, backup: out.backup?.dir || null };
+      try { if (planDir) fs.writeFileSync(path.join(planDir, 'choices.json'), JSON.stringify({ schema: 1, ...this.choice }, null, 2)); } catch {}
+      this.note('cli', { what: 'choose', via: 'panel', ok: true, parts: [...out.swapped, ...out.kept].map((p) => ({ part: p })) });
+      return out;
+    } finally { this.choosing = false; }
+  }
+  /** 적용 직전에 설정에 적을 것(새 기능을 켤지). 고른 것이 **지금 받아 둔 바로 그 계획**(파일 + 부품@판)에 대한 것일 때만 돌려준다 —
+   *  그 뒤 다른 계획으로 바뀌었으면(다시 받음 · 「전부 업데이트」) 옛 선택은 쓰지 않고 버린다. consume = 돌려주고 지운다(적용에 한 번만 쓴다). */
+  featurePatch({ consume = false } = {}) {
+    const c = this.choice; if (!c) return {};
+    if (!c.plan || c.plan !== this.#planKey()) { this.choice = null; return {}; }
+    if (consume) this.choice = null;
+    return c.features && Object.keys(c.features).length ? { ...c.features } : {};
+  }
+  /** 고친 파일을 영혼의 보관 자리로 복사한다(원본은 그대로 · 데몬을 멈추지 않게 하나씩 비동기로).
+   *  상한: BACKUP_FILES 개 · 파일마다 16MB · 모두 합쳐 BACKUP_BYTES. 보관하지 못한 것은 skipped 로 센다. → { dir, total, copied, skipped } | null */
+  async #backupMine(files) {
+    const root = this.updater.root; if (!root) return null;
+    const stamp = new Date(this.now()).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-');
+    let dir = path.join(root, '_agent', 'setup', 'update-kept', stamp);
+    for (let k = 2; fs.existsSync(dir) && k < 100; k++) dir = path.join(root, '_agent', 'setup', 'update-kept', `${stamp}-${k}`);
+    const none = { dir, total: files.length, copied: 0, skipped: files.length };
+    if (fs.existsSync(dir)) return none;   // 빈 이름을 찾지 못했다 — 남의 보관 자리에 섞어 쓰지 않는다
+    let copied = 0, skipped = 0, bytes = 0;
+    try {
+      // 보관 자리가 실제로 영혼 안인가(중간 폴더가 다른 곳을 가리키는 연결이면 쓰지 않는다): 만들기 전에 이미 있는 가장 가까운 윗폴더로 보고, 만든 뒤 한 번 더 본다
+      const base = fs.realpathSync(root); const inside = (p) => (fs.realpathSync(p) + path.sep).toLowerCase().startsWith((base + path.sep).toLowerCase());
+      let up = dir; while (!fs.existsSync(up) && path.dirname(up) !== up) up = path.dirname(up);
+      if (!inside(up)) return none;
+      fs.mkdirSync(dir, { recursive: true });
+      if (!inside(dir)) return none;
+    } catch { return none; }
+    for (const rel of files.slice(0, BACKUP_FILES)) {
+      if (typeof rel !== 'string' || rel.split('/').includes('..') || path.isAbsolute(rel)) { skipped++; continue; }
+      try {
+        const from = path.join(this.faceRoot, ...rel.split('/')); const st = fs.lstatSync(from);
+        if (!st.isFile() || st.size > BIG_FILE || bytes + st.size > BACKUP_BYTES) { skipped++; continue; }
+        const to = path.join(dir, ...rel.split('/')); await fs.promises.mkdir(path.dirname(to), { recursive: true }); await fs.promises.copyFile(from, to);
+        bytes += st.size; copied++;
+      } catch { skipped++; }
+    }
+    skipped += Math.max(0, files.length - BACKUP_FILES);
+    return { dir, total: files.length, copied, skipped };
+  }
+
   // ---- 명령 ----
   #limit(id) { const t = this.now(); const arr = (this.calls.get(id) || []).filter((x) => t - x < CALL_WINDOW_MS); if (arr.length >= CALL_LIMIT) { this.calls.set(id, arr); return false; } arr.push(t); this.calls.set(id, arr); return true; }
   /**
@@ -201,6 +392,7 @@ export class UpdateChat {
     }
     if (cmd === 'download') {
       if (u.mode !== 'package') { this.note('cli', { what: 'download', via: 'chat', ok: false, reason: 'dev' }); return no(409, '이 PC 는 개발 폴더에서 실행 중이라 내려받기 · 적용을 하지 않습니다(git pull 로 갱신). 사용자에게 그대로 알려 주세요.', 'dev'); }
+      if (this.choosing) return no(409, '사용자가 업데이트 칸에서 고른 것을 준비하는 중입니다. 내려받지 않습니다 — 사용자에게 화면의 안내를 따르라고 알려 주세요.', 'choosing');
       if (this.downloading || u.info().applying) return no(409, '이미 내려받는 중입니다. 끝난 뒤 iris-update status 로 확인하세요(다시 부르지 않습니다).', 'busy');
       let r;
       this.downloading = (async () => { try { return await u.apply(); } catch (e) { return { ok: false, reason: e?.message }; } })();

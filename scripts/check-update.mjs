@@ -306,6 +306,27 @@ writeReceipt({ ...receipt, package: { name: 'IRIS', version: '1.3.0' } });
   ok(!fs.existsSync(path.join(dir, 'iris-messenger-v0.4.0.zip')), '곁첨부 없음: 걸린 메신저가 받아 둔 zip 만 지운다(창 것은 그대로)');
 }
 
+// 10ⓓ 고른 부품만 받기(업데이트 칸, 2026-11-26): only 로 창만 받아 놓으면 메신저는 건드리지 않고, 같은 초에 이어진 다른 받기가 실패해도 앞서 받아 둔 계획 · 폴더는 그대로다.
+{
+  nowMs += 1000; broadcasts.length = 0;
+  const before = msgInstalls.length;
+  const sel = mkUpdater();
+  await sel.check();
+  ok(sel.applyParts(['messenger']).join() === 'messenger' && sel.applyParts(['face']).join() === 'face' && sel.applyParts([]).length === 0 && sel.applyParts().join() === sel.applyParts(null).join(), '고른 부품만: applyParts(only) — 주지 않으면 지금까지와 같음');
+  const a = await sel.apply({ only: ['face'] });
+  const dirA = sel.info().plan?.dir;
+  ok(a.ok === true && sel.info().plan.items.map(i => i.kind).join() === 'face' && msgInstalls.length === before, '고른 부품만: 창만 받아 놓음(메신저는 설치하지 않음)');
+  msgNoSha = true; await sel.check();
+  const b = await sel.apply({ only: ['messenger'] });   // 같은 초 · 실패
+  msgNoSha = false; await sel.check();
+  ok(b.ok === false && msgInstalls.length === before, '고른 부품만: 메신저만 받기가 실패');
+  ok(sel.info().plan?.dir === dirA && fs.existsSync(path.join(dirA, 'plan.json')) && fs.existsSync(path.join(dirA, 'face', 'package.json')), '고른 부품만: 같은 초의 실패한 받기가 앞서 받아 둔 계획 · 폴더를 지우지 않음');
+  const c = await sel.apply({ only: ['nope'] });
+  ok(c.ok === false && /고른 부품/.test(c.reason) && sel.info().plan?.dir === dirA, '고른 부품만: 받을 것이 없으면 아무것도 하지 않음(계획 그대로)');
+  ok(sel.keepPlanItems(['face']).join() === 'face' && JSON.parse(fs.readFileSync(path.join(dirA, 'plan.json'), 'utf8')).items.length === 1, '받아 둔 계획: 고른 부품이 그대로면 계획 파일을 고치지 않음');
+  ok(sel.keepPlanItems([]).length === 0 && sel.info().plan === null, '받아 둔 계획: 고른 것이 없으면 계획을 거둠');
+}
+
 // ---- 11) 정상 적용 ⓐ 창 + 메신저: 받기 → 검증 → 메신저 설치 → face\ 풀기 → plan.json ----
 let planFile = null;
 {

@@ -380,6 +380,7 @@ window.Settings = (() => {
     else if (m.phase === 'download' && upd) upd.applying = { part: m.part, index: m.index || 1, count: m.count || 1, received: m.received, total: m.total };
     if (m.phase === 'error' || m.phase === 'ready' || m.phase === 'checked') updBusy = false;
     if (open) renderUpdate();
+    window.UpdatePanel?.onUpdate(m); // 업데이트 칸이 열려 있으면 진행 · 준비됨을 따라간다
     // 대화형 업데이트(update-chat): 대화가 "적용 확인을 띄워 달라"고 하면 받아 둔 계획이 있을 때 같은 확인 카드를 띄운다 — 누르는 것은 사용자다. 이미 떠 있으면 또 띄우지 않는다.
     if (m.phase === 'offer' && upd?.plan && upd.mode !== 'dev' && !offering) { offering = true; updAct('confirm-apply').finally(() => { offering = false; }); }
   }
@@ -393,7 +394,10 @@ window.Settings = (() => {
   }
   async function updAct(act) {
     if (act === 'check') { updBusy = true; renderUpdate(); try { const r = await fetch('/api/update/check', { method: 'POST' }); upd = r.ok ? await r.json() : upd; if (!r.ok) Dialog.error({ title: '새 판이 있는지 확인하지 못했습니다', message: '새 판 목록을 읽지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.' }); } catch (e) { Dialog.error({ title: '새 판이 있는지 확인하지 못했습니다', message: '인터넷 연결을 확인한 뒤 다시 눌러 주세요.', detail: e.message }); } finally { updBusy = false; renderUpdate(); } return; }
-    if (act === 'apply') {
+    // 업데이트 단추(2026-11-26 사용자 결정): 누르면 곧바로 받지 않고 **업데이트 칸 + 설명 대화**가 열린다 — 거기서 원하는 것만 체크해 업데이트한다.
+    // 지금까지의 길(전부 받아 확인 카드까지)은 칸의 「전부 업데이트」가 그대로 부른다(act 'apply-all'). 칸을 쓸 수 없으면(스크립트 없음) 옛 길로 간다.
+    if (act === 'apply' && window.UpdatePanel) { window.UpdatePanel.start(); return; }
+    if (act === 'apply' || act === 'apply-all') {
       updBusy = true; renderUpdate();
       let r;
       try { const res = await fetch('/api/update/apply', { method: 'POST' }); r = await res.json().catch(() => ({})); } catch (e) { r = { ok: false, reason: e.message }; }
@@ -624,7 +628,8 @@ window.Settings = (() => {
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
     // 업데이트(v2.58): 절 머리 단추 하나 + 하루 1회 스위치. 상태는 데몬이 준다(웹소켓 방송은 main.js 가 onUpdate 로 넘긴다).
     window.UpdateChatView?.init(); // 「대화로 업데이트」 단추(app/update-chat.js)
-    $('#st-update-act').addEventListener('click', (e) => { const act = e.currentTarget.dataset.act; if (act) updAct(act); });
+    // 「적용 (받아 둠)」도 업데이트 칸을 연다(단추는 하나의 흐름으로 — 칸에서 고른 것만 적용한다). 받아 둔 것이니 설명 대화는 또 열지 않는다. 칸이 없으면 지금까지처럼 확인 카드로.
+    $('#st-update-act').addEventListener('click', (e) => { const act = e.currentTarget.dataset.act; if (!act) return; if (act === 'apply-now' && window.UpdatePanel) return window.UpdatePanel.start({ chat: false }); updAct(act); });
     // 비밀 금고(v2.62): 보관된 복구 문구를 화면 창으로 보여 준다(데몬이 secrets-vault.ps1 -Action ShowRecovery 실행, 문구는 이 화면·로그에 오지 않음)
     $('#st-recovery')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget; btn.disabled = true;
@@ -652,5 +657,5 @@ window.Settings = (() => {
     fetch('/api/health').then(r => r.json()).then(async (h) => { health = h; applyMaker(); loadLimits(); await pullServer(); applyAll(); opts.onChange?.(cfg); }).catch(() => {});
     loadLimits(); setInterval(loadLimits, 60000);
   }
-  return { init, show, hide, about, showPane, pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth, applyRemote, resync };
+  return { init, show, hide, about, showPane, setUpdate, confirmApply: () => updAct('confirm-apply'), updateAll: () => updAct('apply-all'), /* 업데이트 칸이 쓴다: 받아 둔 것의 확인 카드 · 지금까지의 "전부" 길 */ pane: () => pane, isOpen: () => open, get: () => cfg, health: () => health, refreshModules: () => { if (open) renderMods(); }, installModule: (name) => modAct(name, 'install'), isInstalling: (name) => installing.has(name), onUpdate, setUpdate, showUpdateResult, setAuth, onAuth, applyRemote, resync };
 })();

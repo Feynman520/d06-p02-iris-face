@@ -206,8 +206,9 @@ export class Updater {
     return { note: REINSTALL_NOTE, url: REINSTALL_URL, version: p?.version || null, asset: p?.asset || null, download: p?.url || null };
   }
   /** 실제로 받아 적용할 부품(설계 1절: 구조판이 있으면 그 안에 최신 IRIS 창이 들어 있으므로 face 는 건너뛴다). */
-  applyParts() {
-    const nw = new Set(this.newParts());
+  applyParts(only = null) {
+    // only = 사용자가 고른 부품(업데이트 칸, 2026-11-26) — 주지 않으면 지금까지처럼 새 판이 있는 부품 전부
+    const nw = new Set(this.newParts().filter(n => !Array.isArray(only) || only.includes(n)));
     // 새로 설치가 필요한 판 차이면 구조판은 아예 빼고 IRIS 창·메신저만 간다(창을 빼는 규칙도 이때는 쓰지 않는다).
     if (this.reinstall) nw.delete('package');
     else if (nw.has('package')) nw.delete('face');
@@ -410,15 +411,20 @@ export class Updater {
    *  실패한 부품이 받아 둔 것만 지우고, 사유를 `lastResult.items` 에 부품별로 적고, 다음 부품으로 넘어간다.
    *  받은 폴더를 통째로 지우는 것은 **아무 부품도 성공하지 못했을 때**(따라서 plan.json 도 쓰지 않았을 때)뿐이다.
    *  검증 자체는 조금도 느슨해지지 않는다 — 서명·해시가 어긋난 부품은 전과 똑같이 적용되지 않는다. */
-  async apply() {
+  /** only = 받을 부품을 고른 것(업데이트 칸). 주지 않으면 지금까지처럼 전부. */
+  async apply({ only = null } = {}) {
     if (this.applying) return { ok: false, reason: '이미 내려받는 중입니다.' };
     if (this.mode !== 'package') return { ok: false, reason: DEV_REASON };
     const age = this.state.lastCheck ? this.now() - Date.parse(this.state.lastCheck) : Infinity;
     if (!(age >= 0 && age < RECHECK_MS)) await this.check();
-    const parts = this.applyParts();
+    const parts = this.applyParts(Array.isArray(only) ? only : null);
+    if (!parts.length && Array.isArray(only)) return { ok: false, reason: '고른 부품 가운데 받을 새 판이 없습니다.' };
     // 구조판만 새 판인데 그것이 1.x→2.0 이면 받지 않는다 — 화면이 "새로 설치" 글과 홈페이지 링크를 대신 보인다.
     if (!parts.length) return this.reinstall ? { ok: false, reason: REINSTALL_NOTE, reinstall: this.reinstallInfo() } : { ok: false, reason: '새 판이 없습니다.' };
-    const dir = path.join(this.downloadsDir(), `update-${stamp(this.now())}`);
+    // 받을 때마다 새 폴더(같은 초에 두 번 받아도 겹치지 않게 — 겹치면 뒤의 실패 정리가 앞서 받아 둔 계획의 폴더를 지운다). 이름 모양은 그대로(sweep 이 알아보는 update-날짜-시각).
+    let dir = path.join(this.downloadsDir(), `update-${stamp(this.now())}`);
+    for (let k = 1; fs.existsSync(dir) && k < 600; k++) dir = path.join(this.downloadsDir(), `update-${stamp(this.now() + k * 1000)}`);
+    if (fs.existsSync(dir)) return { ok: false, reason: '받을 자리를 만들지 못했습니다(받아 둔 폴더가 너무 많습니다).' }; // 빈 이름을 찾지 못했다 — 남의 폴더에 섞어 받지 않는다
     fs.mkdirSync(dir, { recursive: true });
     const items = [], installed = [], results = [];
     this.applying = { part: parts[0], index: 1, count: parts.length, received: 0, total: 0 };
@@ -444,7 +450,7 @@ export class Updater {
       const plan = { schema: 1, root: this.root, daemonPort: this.daemonPort, daemonPid: process.pid, createdAt: at, items, relaunch: true };
       writeJsonAtomic(file, plan);
       this.state.plan = { file, dir, items, createdAt: plan.createdAt };
-    } else this.state.plan = null;
+    } else if (!Array.isArray(only)) this.state.plan = null; // 부품을 골라 받은 것(예: 메신저만)이 앞서 받아 둔 계획을 지우지 않게
     // 성공한 것이 하나도 없으면 받은 폴더는 남길 이유가 없다(계획도 쓰지 않았다).
     if (!items.length && !installed.length) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
     // 부품 이름표는 요약 한 줄에만 붙인다 — 부품 행에는 이미 이름이 있으니 사유만 적는다.
@@ -482,6 +488,19 @@ export class Updater {
   }
 
   /** 적용기가 남긴 결과가 지난번 본 것보다 새로우면 한 번만 돌려준다(화면 토스트용). 돌려준 뒤에는 본 것으로 기록. */
+  /** 받아 둔 계획에서 사용자가 고른 부품만 남긴다(업데이트 칸). 남는 것이 없으면 계획을 거둔다. → 남은 부품 이름들 */
+  keepPlanItems(kinds) {
+    const plan = this.state.plan; if (!plan?.file) return [];
+    const items = (plan.items || []).filter((i) => kinds.includes(i.kind));
+    if (items.length === (plan.items || []).length) return items.map((i) => i.kind);
+    if (!items.length) { this.state.plan = null; this.persist(); this.log('update plan: dropped (nothing chosen)'); return []; }
+    const p = readJson(plan.file); if (!p) return (plan.items || []).map((i) => i.kind);
+    writeJsonAtomic(plan.file, { ...p, items });
+    this.state.plan = { ...plan, items }; this.persist();
+    this.log(`update plan: kept=[${items.map((i) => i.kind).join(',')}]`);
+    return items.map((i) => i.kind);
+  }
+
   consumeResult() {
     const r = readJson(path.join(this.root, '_agent', 'setup', 'update-result.json'));
     const at = Date.parse(r?.at || ''), seen = Date.parse(this.state.result?.at || '');
