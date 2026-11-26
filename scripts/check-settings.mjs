@@ -17,9 +17,7 @@ let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) { pass++; console.log(`PASS ${n}`); } else { fail++; console.log(`FAIL ${n}`); } };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const src = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
-const PANES = ['design', 'session', 'ontology', 'tools', 'planner', 'mods', 'account', 'doctor', 'about', 'feedback']; // 2026-11-26: IRIS Doctor 묶음 — Doctor 가 없는 PC(이 시험 데몬 포함)에서는 목차 줄이 숨는다(보이는 것은 9줄). Doctor 가 있을 때의 화면 = check-doctor.mjs
-const SHOWN = PANES.filter(p => p !== 'doctor');
-// 옛 줄: // 2026-11-25: 「알림」(notify)은 「알림 · 플래너」(planner)에 합침 // v2.90: 온톨로지·도구 묶음 추가 · v2.105: 의견 보내기 · 플래너(설계 조각 ⑧)
+const PANES = ['design', 'session', 'ontology', 'tools', 'planner', 'mods', 'account', 'about', 'feedback']; // 2026-11-25: 「알림」(notify)은 「알림 · 플래너」(planner)에 합침 // v2.90: 온톨로지·도구 묶음 추가 · v2.105: 의견 보내기 · 플래너(설계 조각 ⑧)
 
 // ---------- 1) 정적 ----------
 const html = src('app/index.html'), js = src('app/settings.js'), icons = src('app/icons.js'), main = src('app/main.js');
@@ -53,8 +51,7 @@ ok(PL_IDS.every((id) => (plPane.match(new RegExp(`id="${id}"`, 'g')) || []).leng
 ok((plPane.match(/class="sw"/g) || []).length === 10 && (plPane.match(/class="st-opt(?: child)?"/g) || []).length === 10 && (plPane.match(/class="st-opt-r"/g) || []).length === 3, '1 알림 · 플래너: 스위치 열 개 = 줄 열 개(.st-opt) · 딸린 값 셋은 같은 줄 오른쪽');
 ok(/id="st-notify"/.test(plPane) && /id="st-notify-os"/.test(plPane) && /id="st-notify-test"/.test(plPane) && !/data-pane="notify"/.test(aside) && /<h2>알림 · 플래너<\/h2>/.test(plPane), '1 알림 · 플래너: 작업 알림 카드가 이 묶음 안에 · 옛 「알림」 묶음 없음');
 ok(plPane.indexOf('id="st-notify"') > 0 && plPane.indexOf('id="st-notify-os"') < plPane.indexOf('id="st-pl-on"') && plPane.indexOf('id="st-pl-on"') < plPane.indexOf('id="st-pl-rules"'), '1 알림 · 플래너: 카드 순서 = 작업 알림 → 플래너 → 일정 알림(작업 알림은 플래너 카드 밖 — 플래너를 꺼도 잠기지 않는다)');
-ok(/const paneOf = \(p\) => \(p === 'notify' \? 'planner' : p === 'doctor' && !doctorOn\(\) \? 'design' : p\)/.test(js) && /const p = p0 === 'notify' \? 'planner' : p0;/.test(js), // 2026-11-26: IRIS Doctor 가 없는 PC 에서 그 묶음으로 가려 하면 디자인으로(같은 함수) · 기억해 둔 묶음을 읽을 때도 옛 이름을 새 이름으로
-'1 옛 묶음 이름 notify(기억해 둔 마지막 묶음 · 다른 코드의 부름)는 planner 로 읽음');
+ok(/const paneOf = \(p\) => \(p === 'notify' \? 'planner' : p\)/.test(js), '1 옛 묶음 이름 notify(기억해 둔 마지막 묶음 · 다른 코드의 부름)는 planner 로 읽음');
 const plDefSrc = (js.match(/const PL_DEF = (\{[^}]*\});/) || [])[1];
 let plDef = null; try { plDef = new Function(`return ${plDefSrc}`)(); } catch { /* 형식이 바뀜 */ }
 ok(plDef && JSON.stringify(Object.entries(plDef).sort()) === JSON.stringify(Object.entries(PLANNER_DEFAULTS).sort()), '1 플래너: 화면의 처음 값 = 데몬의 처음 값(PLANNER_DEFAULTS)과 같음');
@@ -108,8 +105,7 @@ else {
       }
       ok((await p.locator('.st-pane[data-pane="design"] canvas.stage-pv').count()) >= 5, `2 ${W}px 애니메이션 띠`);
       if (capDir) { fs.mkdirSync(capDir, { recursive: true }); await p.screenshot({ path: path.join(capDir, `설정-${W}-design.png`) }); }
-      ok(!(await p.locator('#st-nav-doctor').isVisible()) && (await p.evaluate(() => { localStorage.setItem('iris.settings.pane', 'doctor'); Settings.show('doctor'); return Settings.pane(); })) === 'design', `2 ${W}px IRIS Doctor 가 없으면 목차 줄이 숨고, 그 묶음으로 가려 하면 디자인으로`);
-      for (const k of SHOWN.slice(1)) {
+      for (const k of PANES.slice(1)) {
         await p.locator(`#st-nav .st-nav-i[data-pane="${k}"]`).click(); await sleep(400);
         ok(await p.locator(`.st-pane[data-pane="${k}"]`).isVisible() && (await vis()) === 1 && await p.locator(`#st-nav .st-nav-i[data-pane="${k}"]`).evaluate(e => e.classList.contains('cur')), `2 ${W}px ${k} 묶음만 · 목차 강조`);
         if (capDir) await p.screenshot({ path: path.join(capDir, `설정-${W}-${k}.png`) });

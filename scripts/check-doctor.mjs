@@ -140,29 +140,79 @@ const spy = (seen, how = 'ok') => (exe, args, opt) => {
   a.rm(); b.rm(); c.rm();
 }
 
+// ---------- 1b) 단위: 검진표 · 기록 ----------
+const G = [{ id: 'relay', title: '중계기' }, { id: 'programs', title: '프로그램' }, { id: 'keys', title: '열쇠' }];
+const CK = (findings, extra = {}) => ({ ok: true, at: '2026-11-26T07:24:13.057Z', recorded: true, id: '20261126-072413-9cb7eb', groups: G, findings, ...extra });
+const CK_BAD = CK([
+  { id: 'relay.accounts', group: 'relay', title: '쓸 수 있는 클로드 계정', state: 'bad', summary: '5개 가운데 4개를 쓸 수 있습니다.' },
+  { id: 'relay.owner', group: 'relay', title: '포트 주인이 중계기인가', state: 'ok', summary: '중계기 프로그램입니다(PID 19112).' },
+  { id: 'programs.codex', group: 'programs', title: '코덱스 프로그램', state: 'bad', summary: '실제 프로그램이 없습니다.' },
+  { id: 'keys.claude-longkey', group: 'keys', title: '클로드 1년 열쇠', state: 'ok', summary: '만료까지 362일 남았습니다.' },
+]);
+const CK_OK = CK([{ id: 'relay.owner', group: 'relay', title: '포트 주인이 중계기인가', state: 'ok', summary: '중계기 프로그램입니다.' }, { id: 'keys.claude-longkey', group: 'keys', title: '클로드 1년 열쇠', state: 'ok', summary: '만료까지 362일 남았습니다.' }]);
+const RECS = { v: 1, ok: true, items: [{ at: '2026-11-26T07:24:13.057Z', kind: 'checkup', from: 'window', okCount: 2, warn: 0, bad: 2, account: MAIL }, { at: '2026-11-26T06:03:45.000Z', kind: 'treat-end', outcome: 'resolved', case: 'x' }, { at: 'nope', kind: 'checkup' }, { at: '2026-11-26T05:43:33.058Z', kind: 'weird' }] };
+{
+  const dirty = CK([{ id: 'relay.owner', group: 'relay', title: 'T'.repeat(500), state: 'ok', summary: `중계기 프로그램입니다(PID 19112). ${'x'.repeat(900)}`, detail: SECRET, source: 'C:\\Users\\x' }, { id: 'BAD ID', group: 'relay', title: 'x', state: 'ok', summary: '' }, { id: 'keys.x', group: 'nogroup', title: 'x', state: 'ok', summary: '' }, { id: 'keys.y', group: 'keys', title: 'x', state: 'exploded', summary: '' }], { token: SECRET });
+  const c = D.cleanCheckup(dirty), raw = JSON.stringify(c);
+  ok(c.findings.length === 1 && c.findings[0].title.length === 120 && c.findings[0].summary.length === 300 && !raw.includes('PID') && !raw.includes(SECRET) && !raw.includes('detail') && !raw.includes('Users'), '1 검진표: 허용한 칸 · 길이만(번호 · 자세한 칸 · 경로 · 모르는 항목은 버림)');
+  ok(D.cleanCheckup({ ok: false, why: 'timeout' }) === null && D.cleanCheckup(CK([])) === null && D.cleanCheckup({ ok: true, findings: 'x', groups: [] }) === null, '1 검진표: 실패 · 빈 표 · 틀린 모양은 없음');
+  const rc = RECS.items.map(D.cleanRecord);
+  ok(rc[0] && !('account' in rc[0]) && rc[0].bad === 2 && rc[1].outcome === 'resolved' && !('case' in rc[1]) && rc[2] === null && rc[3] === null, '1 기록: 허용한 칸만 · 시각 · 종류가 틀린 줄은 버림');
+
+  const f = fakeDoctor(), logs = [];
+  const gate = (extra = {}) => new D.DoctorGate({ log: (m) => logs.push(m), place: () => P.doctorPlace({ IRIS_DOCTOR_DIR: f.dir }), env: process.env, direct: false, ...extra });
+  f.set({ checkup: { json: CK_BAD }, records: { json: RECS } });
+  let g = gate();
+  const three = await Promise.all([g.checkup(), g.checkup(), g.checkup()]);
+  ok(three.every((r) => r.ok && r.findings.length === 4 && r.recorded === true) && f.calls().length === 1 && f.calls()[0].args.join(' ') === 'checkup --from window' && f.calls()[0].env.length === 0, '1 검진: 겹친 요청 셋 = Doctor 한 번(`checkup --from window`) · 자식에 열쇠 변수 없음');
+  await g.checkup(); ok(f.calls().length === 1, '1 검진: 1분 안에는 같은 검진표를 다시 줌');
+  await g.checkup({ fresh: true }); ok(f.calls().length === 2, '1 검진: 「다시 검진」 = 새로 돈다');
+  // 코덱스 검토 지적(2바퀴): Doctor 가 "장부를 읽지 못했다"(ok:false)고 하면 "기록 없음"으로 바꾸지 않는다
+  f.set({ checkup: { json: CK_BAD }, records: { json: { v: 1, ok: false, items: [] } } });
+  ok((await g.records()).ok === false, '1 기록 읽기: 읽지 못함은 읽지 못함으로(빈 기록이 아님)');
+  f.set({ checkup: { json: CK_BAD }, records: { json: { v: 1, ok: true, items: [] } } });
+  const empty = await g.records(); ok(empty.ok === true && empty.items.length === 0, '1 기록 읽기: 아직 기록이 없음 = ok + 빈 목록');
+  f.set({ checkup: { json: CK_BAD }, records: { json: RECS } });
+  const r1 = await g.records();
+  ok(r1.ok && r1.items.length === 2 && !JSON.stringify(r1).includes(MAIL), '1 기록 읽기: 장부의 줄(계정 이름 없음)');
+  for (const [mode, name, why] of [['garbage', '깨진 글', 'failed'], ['exit', '답 없이 끝남', 'failed']]) { f.set({ checkup: { mode } }); const r = await gate().checkup(); ok(r.ok === false && r.why === why, `1 검진: ${name} = 실패(정상이라고 하지 않음)`); }
+  f.set({ checkup: { json: { ok: false, why: 'timeout' } } }); ok((await gate().checkup()).why === 'timeout', '1 검진: Doctor 쪽 시간 초과를 그대로 알림');
+  f.set({ checkup: { mode: 'slow', ms: 4000, json: CK_OK } });
+  const t1 = Date.now(), slow = await gate({ checkMs: 600 }).checkup();
+  ok(slow.ok === false && slow.why === 'timeout' && Date.now() - t1 < 3000, '1 검진: 느리면 상한에서 끊음');
+  const g2 = gate(); f.set({ checkup: { mode: 'garbage' } }); await g2.checkup(); f.set({ checkup: { json: CK_OK } });
+  ok((await g2.checkup()).ok === true, '1 검진: 실패한 검진표는 붙들어 두지 않음(다음에 새로 돈다)');
+  ok(logs.some((l) => /^doctor checkup: ok findings=4 recorded=true$/.test(l)) && !logs.join('\n').includes(f.dir), '1 로그: 결과 낱말과 수만');
+  f.rm();
+}
+
 // ---------- 2) 정적 ----------
 {
-  const html = src('app/index.html'), js = src('app/doctor.js'), st = src('app/settings.js'), dm = src('daemon/doctor.mjs'), sv = src('daemon/server.mjs'), icons = src('app/icons.js');
-  const pane = (html.match(/<div class="st-pane" data-pane="doctor" hidden>[\s\S]*?<\/div>\s*\n\s*<div class="st-pane"/) || [''])[0];
-  ok(pane.includes('id="dr-open"') && pane.includes('id="dr-accounts"') && pane.includes('id="dr-tag"') && pane.includes('복구 준비 미완료'), '2 묶음: 열기 단추 · 계정 줄 자리 · 「복구 준비 미완료」 꼬리표');
-  ok(/<button class="st-nav-i" data-pane="doctor" id="st-nav-doctor" hidden>/.test(html) && /pulse: '/.test(icons) && html.includes('<script src="/app/doctor.js"></script>'), '2 목차 줄은 처음에 숨김 · 아이콘 pulse · 스크립트');
-  const shown = pane.replace(/<!--[\s\S]*?-->/g, '') + js.replace(/^\s*\/\/.*$/gm, '');
-  ok(!/TeamClaude|데몬|중계기|PID/.test(shown) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(shown), '2 화면 글: 안쪽 이름 · 이모지 없음');
-  ok(!/\b(alert|confirm|prompt)\s*\(/.test(js.replace(/Dialog\.\w+\(/g, '')) && /Dialog\.error\(\{ title:/.test(js) && /Dialog\.notice\(/.test(js), '2 알림은 Dialog 로만(실패는 Dialog.error — 제목 · 할 일 · 자세히)');
-  ok(!/innerHTML/.test(js), '2 화면: 받은 값을 HTML 로 넣지 않음');
-  ok(/상태를 확인하지 못함/.test(js) && /known\(\)/.test(js) && !/disabled = !known/.test(js), '2 상태를 읽지 못한 것을 "연결 안 됨"으로 적지 않음 · 열기 단추를 막지 않음');
-  ok(/const doctorOn = \(\) => !!health\?\.features\?\.doctor\?\.available;/.test(st) && /p === 'doctor' && !doctorOn\(\) \? 'design'/.test(st) && /dn\.hidden = !dOn/.test(st), '2 Doctor 가 없으면 목차 줄 숨김 · 그 묶음으로 가려 하면 디자인으로');
-  ok(/id="st-doctor-hint"[^>]*hidden/.test(html) && /\$\('#st-doctor-go'\)\?\.addEventListener\('click', \(\) => window\.DoctorView\?\.open\(\)\)/.test(st), '2 끊김 안내의 바로가기 줄: 누르면 바깥 Doctor 를 바로 연다(묶음으로 보내지 않음)');
-  ok(/if \(!sameOrigin\(req\)\) \{ log\(`403 doctor open/.test(sv) && /if \(!d\.available\) return json\(res, 404/.test(sv), '2 창구: 열기는 같은 출처만 · Doctor 가 없으면 404');
+  const html = src('app/index.html'), js = src('app/doctor.js'), st = src('app/settings.js'), dm = src('daemon/doctor.mjs'), sv = src('daemon/server.mjs'), icons = src('app/icons.js'), main = src('app/main.js'), css = src('app/style.css');
+  const win = (html.match(/<div id="dr-modal"[\s\S]*?<\/div>\s*\n<\/div>/) || [''])[0];
+  ok(/<button id="rail-doctor" class="rail-doctor" type="button"[^>]*hidden>/.test(html) && html.indexOf('id="rail-doctor"') > html.indexOf('id="session-list"') && html.indexOf('id="rail-doctor"') < html.indexOf('id="rail-resize"'), '2 작업목록 바닥의 단추(처음엔 숨김 — Doctor 가 있을 때만 보임)');
+  ok(win.includes('id="dr-big"') && win.includes('id="dr-list"') && win.includes('id="dr-accounts"') && win.includes('id="dr-open"') && win.includes('id="dr-rec"') && /role="dialog" aria-modal="true"/.test(win), '2 검진표 창: 결론 · 묶음 목록 · 계정 · 치료 단추 · 기록');
+  ok(!/data-pane="doctor"/.test(html) && !/doctor/.test(st.match(/const PANES = \[[^\]]*\]/)[0]), '2 설정의 IRIS Doctor 탭은 없음(목차는 아홉 줄 그대로)');
+  const spots = [...html.matchAll(/data-doctor="([a-z]+)"/g)].map((m) => m[1]).sort().join(',');
+  ok(spots === 'account,dead,update', `2 곳곳의 단추: 계정·보안 · 끝난 대화 띠 · 업데이트 (${spots})`);
+  ok(/agentOffHelp\(b\)/.test(main) && /retryLabel: 'IRIS Doctor'/.test(main) && /sendFails >= 2 && window\.DoctorView\?\.available\?\.\(\)/.test(main), '2 곳곳의 단추: 꺼진 에이전트 단추 · 잇달아 실패한 보내기');
+  ok(/:root:not\(\.has-doctor\) \[data-doctor\], :root:not\(\.has-doctor\) \.dr-hint \{ display: none !important; \}/.test(css) && /if \(!window\.DoctorView\?\.available\?\.\(\)\) return;/.test(main), '2 Doctor 가 없는 PC: 곳곳의 단추가 보이지 않고 꺼진 에이전트 단추는 지금까지처럼 아무 일 없음');
+  ok(/if \(window\.DoctorView\?\.isOpen\?\.\(\)\) \{ window\.DoctorView\.close\(\); return; \}/.test(main), '2 Esc = Doctor 창만 닫는다(작업 중단으로 새지 않음)');
+  const shown = win.replace(/<!--[\s\S]*?-->/g, '') + js.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*\*[\s\S]*?\*\//g, '');
+  ok(!/TeamClaude|데몬|PID/.test(shown) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(shown), '2 화면 글: 안쪽 이름 · 번호 · 이모지 없음');
+  ok(!/\b(alert|confirm|prompt)\s*\(/.test(js.replace(/Dialog\.\w+\(/g, '')) && /Dialog\.error\(\{ title:/.test(js), '2 알림은 Dialog 로만');
+  ok((js.match(/innerHTML/g) || []).length === 1 && /s\.innerHTML = window\.Icons \? Icons\.svg\('pulse', 16\) : ''/.test(js), '2 받은 값은 글로만 넣는다(innerHTML 은 우리 아이콘 한 군데)');
+  ok(/pulse: '/.test(icons) && html.includes('<script src="/app/doctor.js"></script>'), '2 아이콘 pulse · 스크립트');
+  ok(/if \(!sameOrigin\(req\)\) \{ log\(`403 doctor open/.test(sv) && /if \(!sameOrigin\(req\)\) \{ log\(`403 doctor checkup/.test(sv) && /if \(!d\.available\) return json\(res, 404/.test(sv), '2 창구: 열기 · 검진은 같은 출처만 · Doctor 가 없으면 404');
   ok(!/import\([^)]*iris-doctor|from '[^']*iris-doctor/.test(dm) && !/\bexec(Sync)?\(|shell: true/.test(dm), '2 데몬은 Doctor 코드를 불러오지 않고(자식으로만) · 명령 글을 만들지 않음');
-  const openMs = Number((dm.match(/const OPEN_MS = ([\d_]+)/) || [])[1]?.replace(/_/g, ''));
-  ok(openMs > 20_000, `2 바깥 상한(${openMs}ms)이 Doctor 쪽 기다림(20초)보다 김`);
+  const num = (name) => Number((dm.match(new RegExp(`const ${name} = ([\\d_]+)`)) || [])[1]?.replace(/_/g, ''));
+  ok(num('OPEN_MS') > 20_000 && num('CHECK_MS') > 90_000, `2 바깥 상한이 Doctor 쪽 기다림보다 김(열기 ${num('OPEN_MS')} > 20초 · 검진 ${num('CHECK_MS')} > 90초)`);
 }
 
 // ---------- 3) 시험 데몬 ----------
 const PORT = 3463, P2 = 3464;
 const fake = fakeDoctor();
-fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } } });
+fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } }, checkup: { json: CK_BAD }, records: { json: RECS } });
 const mk = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `iris-face-dr-${name}-`));
 const state = mk('st'), mods = mk('mods'), st2 = mk('st2');
 for (const s of [state, st2]) { fs.writeFileSync(path.join(s, 'settings.json'), JSON.stringify({ voice: { preload: false } }), 'utf8'); fs.writeFileSync(path.join(s, 'sessions.json'), '[]', 'utf8'); fs.writeFileSync(path.join(s, 'planner-rules.json'), JSON.stringify({ intro: 'seen' }), 'utf8'); }
@@ -172,25 +222,25 @@ const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { c
 const d2 = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore', env: env2 });
 let browser = null;
 const up = async (port, pid) => { for (let i = 0; i < 80; i++) { await sleep(250); try { if ((await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()).pid === pid) return true; } catch {} } return false; };
+const called = (what) => fake.calls().filter((c) => c.args[0] === what).length;
 try {
   const A = `http://127.0.0.1:${PORT}`, B = `http://127.0.0.1:${P2}`;
   const [u1, u2] = await Promise.all([up(PORT, d.pid), up(P2, d2.pid)]);
   ok(u1 && u2, `3 시험 데몬 ${PORT}(가짜 Doctor) · ${P2}(Doctor 없음)`);
   if (u1 && u2) {
     const h = await (await fetch(`${A}/api/health`)).json(), h2 = await (await fetch(`${B}/api/health`)).json();
-    ok(h.features?.doctor?.available === true && h.features.doctor.broken === false && !JSON.stringify(h.features.doctor).includes(fake.dir.slice(3, 20)), '3 기능 표: doctor 있음(경로는 싣지 않음)');
-    ok(h2.features?.doctor?.available === false, '3 Doctor 가 없는 데몬: 기능 표에 없음');
-    ok((await fetch(`${B}/api/doctor`)).status === 404 && (await fetch(`${B}/api/doctor/open`, { method: 'POST' })).status === 404, '3 Doctor 가 없으면 창구는 404');
-    const g = await fetch(`${A}/api/doctor`), gt = await g.text(), gj = JSON.parse(gt);
-    ok(g.status === 200 && gj.link?.state === 'ok' && gj.link.claude.state === 'ready' && !/account|token|@/.test(gt), '3 GET /api/doctor: 요약(계정 이름 · 열쇠 없음)');
-    const bad = await fetch(`${A}/api/doctor/open`, { method: 'POST', headers: { Origin: 'http://evil.example' } });
-    ok(bad.status === 403 && !fake.calls().some((c) => c.args[0] === 'open'), '3 열기: 다른 출처 = 403 · Doctor 를 부르지 않음');
-    const o = await (await fetch(`${A}/api/doctor/open`, { method: 'POST', headers: { Origin: A } })).json();
-    ok(o.ok === true && fake.calls().filter((c) => c.args[0] === 'open').length === 1, '3 열기: 같은 출처 = Doctor 를 `open` 으로 한 번');
+    ok(h.features?.doctor?.available === true && h2.features?.doctor?.available === false, '3 기능 표: Doctor 있음 / 없음');
+    ok((await fetch(`${B}/api/doctor`)).status === 404 && (await fetch(`${B}/api/doctor/open`, { method: 'POST' })).status === 404 && (await fetch(`${B}/api/doctor/checkup`, { method: 'POST' })).status === 404 && (await fetch(`${B}/api/doctor/records`)).status === 404, '3 Doctor 가 없으면 창구 넷 모두 404');
+    const gt = await (await fetch(`${A}/api/doctor`)).text();
+    ok(JSON.parse(gt).link?.claude?.state === 'ready' && !/account|token|@/.test(gt), '3 GET /api/doctor: 계정 요약(계정 이름 · 열쇠 없음)');
+    for (const p of ['open', 'checkup']) { const bad = await fetch(`${A}/api/doctor/${p}`, { method: 'POST', headers: { Origin: 'http://evil.example' } }); ok(bad.status === 403 && called(p) === 0, `3 ${p}: 다른 출처 = 403 · Doctor 를 부르지 않음`); }
+    const ck = await (await fetch(`${A}/api/doctor/checkup`, { method: 'POST', headers: { Origin: A } })).json();
+    ok(ck.ok === true && ck.findings.length === 4 && !JSON.stringify(ck).includes('PID') && called('checkup') === 1, '3 검진: 검진표(번호 없음) · Doctor 한 번');
+    const rj = await (await fetch(`${A}/api/doctor/records`)).json();
+    ok(rj.ok === true && rj.items.length === 2 && rj.items[0].kind === 'checkup', '3 기록 읽기');
     const log = fs.readFileSync(path.join(state, 'daemon.log'), 'utf8');
-    ok(/doctor open: ok/.test(log) && !log.includes(fake.dir), '3 로그: 결과 낱말만');
+    ok(/doctor checkup: ok findings=4/.test(log) && !log.includes(fake.dir), '3 로그: 결과 낱말만');
 
-    // 화면(playwright 있을 때)
     const req = createRequire(import.meta.url); let pw = null;
     for (const c of ['playwright', path.join(process.env.APPDATA || '', 'npm/node_modules/playwright')]) { try { pw = req.resolve(c); break; } catch {} }
     if (!pw) console.log('SKIP 3절 화면: playwright 없음');
@@ -199,60 +249,63 @@ try {
       browser = await chromium.launch();
       const p = await browser.newPage({ viewport: { width: 1280, height: 860 } });
       const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.text()) && !/^Failed to load resource/.test(m.text())) errs.push(m.text()); });
-      await p.goto(`${A}/`); await sleep(2000);
-      await p.keyboard.press('Escape'); await sleep(200);
-      await p.locator('#btn-settings').click(); await sleep(1500);
-      ok(await p.locator('#st-nav-doctor').isVisible() && !(await p.locator('#st-badge-doctor').isVisible()), '3 화면: 목차에 IRIS Doctor 줄 · 준비된 계정이 있으면 꼬리표 없음');
-      ok(/복구 계정 1개 준비됨/.test(await p.locator('#st-sum-doctor').textContent()), '3 화면: 목차 한 줄 = 복구 계정 1개 준비됨');
-      await p.locator('#st-nav-doctor').click(); await sleep(600);
-      const rows = await p.locator('#dr-accounts .dr-row').allTextContents();
-      ok(await p.locator('.st-pane[data-pane="doctor"]').isVisible() && rows.length === 2 && /Claude.*준비됨 · 마지막 확인 성공 11\/26 · 열쇠 362일 남음/.test(rows[0]) && /Codex.*연결 안 됨/.test(rows[1]) && !(await p.locator('#dr-tag').isVisible()), `3 화면: 계정 줄 둘(${rows.join(' | ')})`);
-      const n0 = fake.calls().filter((c) => c.args[0] === 'open').length;
-      await sleep(5200); // 앞의 열기에서 5초가 지나야 새로 부른다
-      await p.locator('#dr-open').click(); await sleep(1500);
-      ok(fake.calls().filter((c) => c.args[0] === 'open').length === n0 + 1, '3 화면: 「IRIS Doctor 열기」 = Doctor 를 한 번 부름');
-      // 준비된 계정이 없음 → 꼬리표 · 목차 !
-      fake.set({ summary: { json: SUM_NONE }, open: { json: { ok: true, others: 0 } } });
-      await p.evaluate(() => DoctorView.load(true)); await sleep(900);
-      ok(await p.locator('#dr-tag').isVisible() && await p.locator('#st-badge-doctor').isVisible() && /문제가 생기기 전에 복구에 쓸 계정을 연결해 두세요/.test(await p.locator('#dr-note').textContent()), '3 화면: 준비된 계정이 없으면 「복구 준비 미완료」 꼬리표 · 목차 ! · 안내');
-      // 상태를 읽지 못함 → "확인 못함"(경고 아님) · 열기 단추는 그대로
-      fake.set({ summary: { mode: 'garbage' }, open: { json: { ok: true, others: 0 } } });
-      await p.evaluate(() => DoctorView.load(true)); await sleep(900);
-      const rows2 = await p.locator('#dr-accounts .dr-row').allTextContents();
-      ok(rows2.every((t) => /상태를 확인하지 못함/.test(t)) && !(await p.locator('#dr-tag').isVisible()) && !(await p.locator('#st-badge-doctor').isVisible()) && await p.locator('#dr-open').isEnabled(), '3 화면: 상태를 못 읽으면 "확인 못함"(연결 안 됨 · 경고가 아님) · 열기 단추는 됨');
-      // 코덱스 검토 지적: 정상 · 경고를 본 뒤 통신이 끊기거나 답이 깨지면 옛 상태를 남기지 않고 "확인 못함"으로 바꾼다
       const body = () => p.evaluate(() => document.body.innerText);
-      for (const [name, sum, handler] of [['통신 실패', SUM_OK, (route) => route.abort()], ['깨진 답', SUM_NONE, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: 'not json' })]]) {
-        fake.set({ summary: { json: sum }, open: { json: { ok: true, others: 0 } } });
-        await p.evaluate(() => DoctorView.load(true)); await sleep(900);
-        const before = (await p.locator('#dr-accounts .dr-row').allTextContents()).join(' | ');
-        await p.route('**/api/doctor*', handler);
-        await p.evaluate(() => DoctorView.load(true)); await sleep(700);
-        const after = await p.locator('#dr-accounts .dr-row').allTextContents();
-        ok(!/확인하지 못함/.test(before) && after.every((t) => /상태를 확인하지 못함/.test(t)) && !(await p.locator('#dr-tag').isVisible()) && !(await p.locator('#st-badge-doctor').isVisible()), `3 화면: ${name} = 앞서 본 상태를 지우고 "확인 못함"(꼬리표도 내림)`);
-        await p.unroute('**/api/doctor*');
-      }
-      // 코덱스 검토 지적(2바퀴): 문법은 맞는데 계정 칸이 빠졌거나 · 비었거나 · 모르는 낱말인 답 = "확인 못함"이지 "복구 준비 미완료" 경고가 아니다
-      for (const [name, link] of [['계정 칸 없음', { state: 'ok' }], ['빈 계정 칸', { state: 'ok', claude: {}, codex: {} }], ['모르는 상태 낱말', { state: 'ok', claude: { state: 'unknown', okAt: null, failAt: null }, codex: { state: 'none', okAt: null, failAt: null } }]]) {
-        await p.route('**/api/doctor*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true, broken: false, link }) }));
-        await p.evaluate(() => DoctorView.load(true)); await sleep(700);
-        ok(!(await p.locator('#dr-tag').isVisible()) && !(await p.locator('#st-badge-doctor').isVisible()) && /확인 못함/.test(await p.locator('#st-sum-doctor').textContent()) && await p.locator('#dr-open').isEnabled(), `3 화면: ${name} = 경고하지 않고 "확인 못함" · 열기 단추는 됨`);
-        await p.unroute('**/api/doctor*');
-      }
-      // 코덱스 검토 지적: 말은 확인된 만큼만 — 곧바로 띄움 · 시간 초과는 제목부터 "확인하지 못했습니다", 안쪽 낱말은 화면에 내지 않는다
-      const answer = async (json) => { await p.route('**/api/doctor/open', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(json) })); await p.locator('#dr-open').click(); await sleep(900); const t = await body(); await p.unroute('**/api/doctor/open'); return t; };
-      let txt = await answer({ ok: true, others: 0, direct: true });
-      ok(/IRIS Doctor 를 띄웠습니다 — 떴는지는 확인하지 못했습니다/.test(txt) && !/IRIS Doctor 를 열었습니다/.test(txt), '3 화면: 곧바로 띄운 것은 "열었습니다"라고 하지 않음');
-      txt = await answer({ ok: false, why: 'unconfirmed' });
-      ok(/떴는지는 확인하지 못했습니다/.test(txt) && !/열지 못했습니다/.test(txt), '3 화면: 시간 초과는 "열지 못했습니다"라고 단정하지 않음');
-      txt = await answer({ ok: false, why: 'start-file-missing' });
-      ok(/IRIS Doctor 를 열지 못했습니다/.test(txt) && /시작 파일이 없습니다/.test(txt) && !/start-file-missing|unconfirmed|no-answer|spawn/.test(txt), '3 화면: 실패 안내에 안쪽 낱말이 없음');
-      await p.keyboard.press('Escape'); await sleep(300);
-      // 기억해 둔 마지막 묶음이 doctor 여도 다시 열면 그 묶음
-      await p.reload(); await sleep(2000); await p.keyboard.press('Escape'); await p.locator('#btn-settings').click(); await sleep(1200);
-      ok(await p.locator('.st-pane[data-pane="doctor"]').isVisible(), '3 화면: 마지막으로 본 묶음(IRIS Doctor)을 기억');
+      const T = (sel) => p.locator(sel).textContent();
+      await p.goto(`${A}/`); await sleep(2200);
+      await p.keyboard.press('Escape'); await sleep(200);
+      ok(await p.locator('#rail-doctor').isVisible() && !(await p.locator('#dr-modal').isVisible()), '3 화면: 작업목록 바닥에 IRIS Doctor 단추 · 창은 닫혀 있음');
+      const n0 = called('checkup');
+      await p.locator('#rail-doctor').click(); await sleep(1300);
+      ok(await p.locator('#dr-modal').isVisible() && (await T('#dr-big')) === '고장 2건' && called('checkup') <= n0 + 1, `3 화면: 누르면 검진표 창 · 결론 한 줄(${await T('#dr-big')})`);
+      const chips = (await p.locator('#dr-chips .dr-chip').allTextContents()).join(' | ');
+      ok(chips === '고장 2 | 정상 2', `3 화면: 숫자 칩(${chips})`);
+      const rows0 = await p.locator('#dr-list .dr-row').allTextContents();
+      ok(rows0.length === 2 && rows0.every((t) => /클로드 계정|코덱스 프로그램/.test(t)) && (await p.locator('#dr-list .dr-grp').count()) === 3, '3 화면: 묶음 셋 · 처음엔 문제 항목만 보임(정상 항목은 접힘)');
+      await p.locator('#dr-list .dr-gh').first().click(); await sleep(200);
+      const rows1 = await p.locator('#dr-list .dr-row').allTextContents();
+      ok(rows1.length === 3 && rows1.some((t) => /포트 주인/.test(t)) && !rows1.join(' ').includes('PID'), '3 화면: 묶음을 누르면 정상 항목까지 펼쳐짐(번호는 보이지 않음)');
+      // 코덱스 검토 지적: 묶음을 눌러 목록이 다시 그려져도 초점이 그 묶음에 남는다 · 그 위에 안내 창이 뜨면 Tab 초점을 빼앗지 않는다
+      ok(await p.evaluate(() => document.activeElement?.classList.contains('dr-gh') && document.activeElement.dataset.group === 'relay'), '3 화면: 묶음을 누른 뒤에도 초점이 그 묶음에');
+      await p.evaluate(() => { Dialog.error({ title: '시험', message: '시험' }); }); await sleep(400);
+      await p.keyboard.press('Tab'); await sleep(150);
+      ok(await p.evaluate(() => !!document.activeElement?.closest('#dlg')), '3 화면: 안내 창이 떠 있으면 Tab 초점이 안내 창 안에 머문다');
+      await p.evaluate(() => document.querySelector('#dlg button')?.click()); await sleep(300);
+      const acc = (await p.locator('#dr-accounts .dr-acc').allTextContents()).join(' | ');
+      ok(/Claude준비됨 · 11\/26/.test(acc) && /Codex연결 안 됨/.test(acc) && (await T('#dr-open')) === '치료하기', `3 화면: 계정 두 줄(${acc}) · 치료 단추`);
+      ok((await p.evaluate(() => document.querySelector('.dr-win').innerText.length)) < 420, `3 화면: 창의 글이 짧다(${await p.evaluate(() => document.querySelector('.dr-win').innerText.length)}자)`);
+      if (process.env.IRIS_CAPTURE_DIR) { fs.mkdirSync(process.env.IRIS_CAPTURE_DIR, { recursive: true }); await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-window.png') }); }
+      // 기록
+      await p.locator('#dr-rec').click(); await sleep(700);
+      const recs = await p.locator('#dr-list .dr-rec').allTextContents();
+      ok(recs.length === 2 && /검진 — 고장 2/.test(recs[0]) && /치료 끝 — 해결/.test(recs[1]) && /이 PC 에만/.test(await T('#dr-foot-t')), `3 화면: 기록(${recs.join(' | ')}) · "이 PC 에만"`);
+      await p.locator('#dr-rec').click(); await sleep(300);
+      // 치료하기 = 바깥 Doctor 창
+      const o0 = called('open');
+      await p.locator('#dr-open').click(); await sleep(1500);
+      ok(called('open') === o0 + 1 && /IRIS Doctor 창을 열었습니다/.test(await body()), '3 화면: 「치료하기」 = 바깥 Doctor 창을 한 번 연다');
+      // 모두 정상
+      fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } }, checkup: { json: CK_OK }, records: { json: RECS } });
+      await p.locator('#dr-again').click(); await sleep(1300);
+      ok((await T('#dr-big')) === '모두 정상' && (await T('#dr-open')) === 'Doctor 창 열기' && !(await p.locator('#rail-doctor').evaluate((b) => b.classList.contains('warn'))), '3 화면: 모두 정상 = 치료 단추를 내세우지 않음 · 작업목록 단추도 평소 모양');
+      // 검진 실패 = 정상이라고 하지 않고, 치료 단추는 그대로
+      fake.set({ summary: { mode: 'garbage' }, open: { json: { ok: true, others: 0 } }, checkup: { mode: 'garbage' }, records: { json: RECS } });
+      await p.locator('#dr-again').click(); await sleep(1300);
+      ok((await T('#dr-big')) === '검진하지 못했습니다' && await p.locator('#dr-open').isEnabled() && (await T('#dr-open')) === '치료하기', '3 화면: 검진 실패 = "검진하지 못했습니다" · 치료 단추는 됨');
+      await p.evaluate(() => fetch('/api/doctor?fresh=1')); await p.locator('#dr-close').click(); await sleep(200); await p.locator('#rail-doctor').click(); await sleep(1300);
+      ok((await p.locator('#dr-accounts .dr-acc').allTextContents()).every((t) => /확인 못함/.test(t)), '3 화면: 계정 상태를 못 읽으면 "확인 못함"(연결 안 됨이 아님)');
+      // 고장이 나온 뒤 작업목록 단추의 꼬리표
+      fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } }, checkup: { json: CK_BAD }, records: { json: RECS } });
+      await p.locator('#dr-again').click(); await sleep(1300);
+      await p.keyboard.press('Escape'); await sleep(400);
+      ok(!(await p.locator('#dr-modal').isVisible()) && (await T('#rail-doctor-st')) === '고장' && await p.locator('#rail-doctor').evaluate((b) => b.classList.contains('warn')), '3 화면: Esc = 창 닫기 · 고장이 나온 뒤 작업목록 단추에 「고장」');
+      // 설정: 목차는 아홉 줄 그대로
+      await p.locator('#btn-settings').click(); await sleep(900);
+      ok((await p.locator('#st-nav .st-nav-i').count()) === 9, '3 화면: 설정 목차 아홉 줄(IRIS Doctor 탭 없음)');
       ok(errs.length === 0, `3 화면: 페이지 오류 0${errs.length ? ' — ' + errs.join(' | ') : ''}`);
-      if (process.env.IRIS_CAPTURE_DIR) { fake.set({ summary: { json: SUM_OK } }); await p.evaluate(() => DoctorView.load(true)); await sleep(900); fs.mkdirSync(process.env.IRIS_CAPTURE_DIR, { recursive: true }); await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-pane.png') }); }
+      // Doctor 가 없는 데몬: 단추가 하나도 보이지 않는다
+      const q = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+      await q.goto(`${B}/`); await sleep(2200);
+      ok(!(await q.locator('#rail-doctor').isVisible()) && (await q.evaluate(() => [...document.querySelectorAll('[data-doctor]')].every((b) => getComputedStyle(b).display === 'none'))) && !(await q.evaluate(() => DoctorView.show())), '3 화면(Doctor 없음): 작업목록 단추 · 곳곳의 단추가 보이지 않고 창도 뜨지 않음');
     }
   }
 } catch (x) { fail++; console.log(`FAIL unexpected — ${x.message}`); }

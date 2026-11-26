@@ -44,9 +44,38 @@ export function cleanSummary(j) {
   return { state: 'ok', protected: j.protected === true, claude: cleanOne(j.claude, true), codex: cleanOne(j.codex, false) };
 }
 
+const CHECK_MS = 110_000;     // Doctor 쪽 검진 상한(90초)보다 길게
+const CHECK_KEEP_MS = 60_000;
+const CHECK_CAP = 400_000;
+const F_STATES = ['ok', 'warn', 'bad', 'unknown', 'skipped'];
+const ID_RE = /^[a-z0-9][a-z0-9._-]{0,59}$/;
+// 화면에 줄 글: 길이를 자르고, 프로세스 번호는 뺀다(화면의 말에 번호를 적지 않는다)
+const text = (v, max) => (typeof v === 'string' ? v.replace(/\s*\(PID \d+\)/g, '').replace(/[\u0000-\u001f]/g, ' ').slice(0, max) : '');
+/** Doctor 의 `checkup` 답 → 화면에 줄 것(허용한 칸만). 모양이 틀리면 null. */
+export function cleanCheckup(j) {
+  if (!j || typeof j !== 'object' || j.ok !== true || !Array.isArray(j.findings) || !Array.isArray(j.groups)) return null;
+  const groups = j.groups.filter((g) => g && ID_RE.test(String(g.id))).slice(0, 30).map((g) => ({ id: g.id, title: text(g.title, 40) || g.id }));
+  const findings = j.findings.filter((f) => f && ID_RE.test(String(f.id)) && F_STATES.includes(f.state) && groups.some((g) => g.id === f.group)).slice(0, 300)
+    .map((f) => ({ id: f.id, group: f.group, title: text(f.title, 120), state: f.state, summary: text(f.summary, 300) }));
+  if (!findings.length) return null;
+  return { ok: true, at: typeof j.at === 'string' && ISO.test(j.at) ? j.at : null, recorded: j.recorded === true, groups, findings };
+}
+const R_KINDS = ['checkup', 'checkup-failed', 'open', 'close', 'link', 'probe', 'treat-start', 'treat-end'];
+const R_WORD = /^[a-z0-9][a-z0-9:._-]{0,59}$/i;
+/** 장부 한 줄 → 화면에 줄 것. */
+export function cleanRecord(r) {
+  if (!r || typeof r !== 'object' || !R_KINDS.includes(r.kind) || typeof r.at !== 'string' || !ISO.test(r.at)) return null;
+  const o = { at: r.at, kind: r.kind };
+  for (const k of ['from', 'service', 'outcome', 'why']) if (typeof r[k] === 'string' && R_WORD.test(r[k])) o[k] = r[k];
+  if (typeof r.ok === 'boolean') o.ok = r.ok;
+  for (const k of ['okCount', 'warn', 'bad', 'unknown']) if (Number.isInteger(r[k]) && r[k] >= 0 && r[k] < 100000) o[k] = r[k];
+  return o;
+}
+
 export class DoctorGate {
-  constructor({ log = () => {}, place = () => doctorPlace(), spawnFn = spawn, node = process.execPath, env = process.env, now = () => Date.now(), openMs = OPEN_MS, statusMs = STATUS_MS, systemRoot = process.env.SystemRoot || 'C:\\Windows', direct = !process.env.IRIS_FACE_STATE } = {}) {
-    Object.assign(this, { log, place, spawnFn, node, env, now, openMs, statusMs, systemRoot, direct });
+  constructor({ log = () => {}, place = () => doctorPlace(), spawnFn = spawn, node = process.execPath, env = process.env, now = () => Date.now(), openMs = OPEN_MS, statusMs = STATUS_MS, checkMs = CHECK_MS, systemRoot = process.env.SystemRoot || 'C:\\Windows', direct = !process.env.IRIS_FACE_STATE } = {}) {
+    Object.assign(this, { log, place, spawnFn, node, env, now, openMs, statusMs, checkMs, systemRoot, direct });
+    this.checking = null; this.report = null; this.reportAt = 0;
     this.opening = null; this.last = null; this.lastAt = 0; this.sum = null; this.sumAt = 0; this.reading = null;
   }
 
@@ -54,7 +83,7 @@ export class DoctorGate {
   public() { let p = null; try { p = this.place(); } catch {} return { available: !!p, broken: !!p?.broken }; }
 
   /** 자식 하나를 돌려 표준 출력의 JSON 한 줄을 받는다. → { ok:true, json } | { ok:false, why: 'spawn'|'timeout'|'bad-answer'|'too-long' } */
-  run(program, args, ms) {
+  run(program, args, ms, cap = OUT_CAP) {
     return new Promise((resolve) => {
       let child, out = '', over = false, done = false;
       const fin = (r) => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
@@ -62,7 +91,7 @@ export class DoctorGate {
       // 시간이 다 되면 이 짧은 자식만 끝낸다 — 이미 뜬 Doctor 창 · 탐색기는 건드리지 않는다
       const timer = setTimeout(() => { try { child.kill(); } catch {} fin({ ok: false, why: 'timeout' }); }, ms);
       child.on('error', () => fin({ ok: false, why: 'spawn' }));
-      child.stdout?.on('data', (d) => { if (over) return; out += d; if (out.length > OUT_CAP) { over = true; try { child.kill(); } catch {} fin({ ok: false, why: 'too-long' }); } });
+      child.stdout?.on('data', (d) => { if (over) return; out += d; if (out.length > cap) { over = true; try { child.kill(); } catch {} fin({ ok: false, why: 'too-long' }); } });
       child.on('close', () => {
         const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
         if (lines.length !== 1) return fin({ ok: false, why: 'bad-answer' });
@@ -70,6 +99,37 @@ export class DoctorGate {
         fin(j && typeof j === 'object' && !Array.isArray(j) ? { ok: true, json: j } : { ok: false, why: 'bad-answer' });
       });
     });
+  }
+
+  /**
+   * 검진(읽기만)을 돌려 검진표를 받는다 — Doctor 가 검진표를 자기 집에 기록한다(이 PC 에만).
+   * → { ok:true, at, recorded, groups, findings } | { ok:false, why: 'timeout' | 'failed' | 'broken' }
+   * 한 번에 하나만 돌고(겹친 요청은 합침), 끝난 검진표는 1분 동안 다시 준다(fresh 면 새로).
+   */
+  checkup({ fresh = false } = {}) {
+    if (this.checking) return this.checking;
+    if (!fresh && this.report?.ok && this.now() - this.reportAt < CHECK_KEEP_MS) return Promise.resolve(this.report);
+    const job = (async () => {
+      const pl = this.place();
+      if (!pl?.hasProgram) return { ok: false, why: 'broken' };
+      const r = await this.run(pl.program, ['checkup', '--from', 'window'], this.checkMs, CHECK_CAP);
+      const res = r.ok ? (cleanCheckup(r.json) || { ok: false, why: r.json?.why === 'timeout' ? 'timeout' : 'failed' }) : { ok: false, why: r.why === 'timeout' ? 'timeout' : 'failed' };
+      this.report = res; this.reportAt = this.now();
+      this.log(`doctor checkup: ${res.ok ? `ok findings=${res.findings.length} recorded=${res.recorded}` : res.why}`);
+      return res;
+    })();
+    this.checking = job;
+    const clear = () => { if (this.checking === job) this.checking = null; };
+    job.then(clear, clear);
+    return job;
+  }
+
+  /** 기록 장부의 마지막 줄들(새것이 앞). 읽지 못하면 { ok:false }. */
+  async records() {
+    const pl = this.place();
+    if (!pl?.hasProgram) return { ok: false, items: [] };
+    const r = await this.run(pl.program, ['records'], this.statusMs, CHECK_CAP);
+    return r.ok && r.json.ok === true && Array.isArray(r.json.items) ? { ok: true, items: r.json.items.map(cleanRecord).filter(Boolean).slice(0, 40) } : { ok: false, items: [] };
   }
 
   /** 복구에 쓸 계정의 상태 요약. 읽지 못하면 { state: 'unknown' }(= "상태 확인 못함" — "연결 안 됨"이 아니다). 열기를 막지 않는다. */

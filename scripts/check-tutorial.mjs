@@ -331,7 +331,7 @@ else {
     await p.reload(); await sleep(2000);
     ok(!(await p.locator('#tutorial').isVisible()), '6 다시 열어도 튜토리얼은 다시 뜨지 않는다');
     // ---------- 7) 설정: 묶음 8개 · 열쇠 카드 세 장 · 온톨로지 그래프 · 도구 · 튜토리얼 다시 보기 ----------
-    const navOrder = await p.evaluate(() => [...document.querySelectorAll('#st-nav .st-nav-i')].filter(b => !b.hidden).map(b => b.dataset.pane).join(',')); // 숨은 줄(IRIS Doctor 가 없는 PC 의 doctor)은 세지 않는다
+    const navOrder = await p.evaluate(() => [...document.querySelectorAll('#st-nav .st-nav-i')].map(b => b.dataset.pane).join(','));
     ok(navOrder === 'design,session,ontology,tools,planner,mods,account,about,feedback', `7 목차 9묶음 순서 (${navOrder})`); // v2.105: 의견 보내기 · 플래너 · 2026-11-25: 「알림」(notify)을 「알림 · 플래너」(planner)에 합침
     // 2026-11-25: 계정 · 보안을 열면 화면이 데몬에 상태를 새로 묻는다(fresh=1) — 그 답이 온 뒤에 시험용 상태를 넣는다(먼저 넣으면 데몬의 답이 덮는다)
     await p.evaluate(() => Settings.show('account')); await sleep(900);

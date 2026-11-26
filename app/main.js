@@ -32,6 +32,7 @@
   // 단추로 여는 대화(quickStart, 2026-11-26): 진행 중 잠금 · 보관한 입력창 글(여러 번이면 쌓임 — 나중 것부터 되돌린다) · 만들었지만 아직 목록에 없는 대화(목록에 나타나면 연다)
   // sending = 입력창의 보내기(submit)가 답을 기다리는 중 — 그동안은 단추로 여는 대화를 시작하지 않고, 그 반대도 같다(보내기는 답이 오면 입력창을 통째로 비우므로 둘이 겹치면 글이 엇갈린다)
   let quickBusy = false, sending = false, wantSel = null; const stashes = [];
+  let sendFails = 0; // 잇달아 실패한 보내기 수(성공하면 0) — 두 번째부터 IRIS Doctor 단추를 함께 낸다
   const sel = loadSel();             // { agent, model:{claude,codex}, effort:{claude,codex}, readOnly }
   const api = async (method, path, body) => { const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; };
   const shortPath = (p) => p.split(/[\\/]/).filter(Boolean).slice(-1)[0] || p;
@@ -102,6 +103,12 @@
   }
   // 단추로 여는 대화(quickStart)용 — 위 "모두 꺼졌으면 막지 않는다" 예외 없이 그 에이전트 하나의 실제 상태만 본다(없는 계정 · 없는 프로그램으로 대화를 만들지 않게).
   // 계정 수를 모르는 PC(영수증 없음 = accounts null)는 판단하지 않는다 = 막지 않는다.
+  /** 꺼진 에이전트 단추를 눌렀을 때: 왜 꺼졌는지(단추의 설명 글)와 IRIS Doctor 로 가는 단추. Doctor 가 없는 PC 에서는 지금까지처럼 아무 일도 없다. */
+  function agentOffHelp(b) {
+    if (!window.DoctorView?.available?.()) return;
+    const [name, ...why] = String(b.title || '').split(' · ');
+    Dialog.error({ title: `${name || '이 에이전트'}를 지금 쓸 수 없습니다`, message: why.join(' · ') || '연결 상태를 확인해 주세요.', retryLabel: 'IRIS Doctor' }).then((go) => { if (go) window.DoctorView.show(); });
+  }
   function agentBlock(k) {
     if (!AGENTS?.[k]) return 'missing';
     if ((ACCT?.missing || []).includes(k)) return 'missing';
@@ -141,7 +148,7 @@
     $('#setup-apply').hidden = setupMode !== 'switch'; $('#setup-cancel').hidden = setupMode !== 'switch';
     $('#btn-tune').hidden = !s; $('#btn-tune').classList.toggle('active', setupMode === 'switch');
   }
-  document.querySelectorAll('.seg-agent .seg-btn').forEach(b => b.onclick = () => { if (b.getAttribute('aria-disabled') === 'true') return; sel.agent = b.dataset.agent; saveSel(); renderSetup(); });
+  document.querySelectorAll('.seg-agent .seg-btn').forEach(b => b.onclick = () => { if (b.getAttribute('aria-disabled') === 'true') { agentOffHelp(b); return; } sel.agent = b.dataset.agent; saveSel(); renderSetup(); });
   $('#sel-model').onchange = (e) => { sel.model[sel.agent] = e.target.value; saveSel(); renderSetup(); };
   $('#sel-effort').onchange = (e) => { sel.effort[sel.agent] = e.target.value; saveSel(); };
   $('#btn-tune').onclick = () => {
@@ -263,6 +270,7 @@
     $('#dead-bar').hidden = !dead; $('#dead-resume').textContent = s.resumeCmd || '(재개 명령 없음)';
     // 곧바로 끝난 까닭(v2.98): 데몬이 화면 마지막 줄에서 고른 원인. 글로만 넣는다(HTML 아님).
     $('#dead-reason').hidden = !(dead && s.exitReason); $('#dead-reason').textContent = dead && s.exitReason ? `원인: ${s.exitReason}` : '';
+    $('#btn-dead-doctor').hidden = !(dead && s.exitReason); // 켜지자마자 끝난 대화(원인이 적힘)에서만 IRIS Doctor 단추 — Doctor 가 없는 PC 에서는 CSS 가 숨긴다
     $('#btn-close').title = dead ? '기록 지우기' : '이 세션 종료(PID 기준)';
     Approval.render(s); // 노란불 + prompt 있을 때만 카드가 보인다(상태가 바뀌면 함께 내려감)
   }
@@ -609,8 +617,14 @@
         select(rec.id);
         Transcript.prime(text); // 기록파일이 생기기 전에도 요청문 + "세션 여는 중"을 바로 보여 준다(멈춘 것처럼 보이지 않게)
       }
-      ta.value = ''; autoGrow(); attachments.length = 0; renderAttach();
-    } catch (e) { Dialog.error({ title: '요청을 보내지 못했습니다', message: '입력창의 글은 그대로 있습니다. 다시 보내 주세요.', detail: e.message }); }
+      ta.value = ''; autoGrow(); attachments.length = 0; renderAttach(); sendFails = 0;
+    } catch (e) {
+      // 잇달아 두 번째 실패부터는 IRIS Doctor 로 가는 단추를 함께 낸다(한 번의 실패는 다시 보내면 되는 일이 많다)
+      sendFails++;
+      const offer = sendFails >= 2 && window.DoctorView?.available?.();
+      Dialog.error({ title: '요청을 보내지 못했습니다', message: offer ? '입력창의 글은 그대로 있습니다. 계속 실패하면 IRIS Doctor 로 검진해 보세요.' : '입력창의 글은 그대로 있습니다. 다시 보내 주세요.', detail: e.message, ...(offer ? { retryLabel: 'IRIS Doctor' } : {}) })
+        .then((go) => { if (go) window.DoctorView.show(); });
+    }
     finally { sending = false; btn.disabled = false; btn.classList.remove('busy'); }
   }
   $('#btn-send').onclick = submit;
@@ -819,6 +833,7 @@
   function onEscape() {
     const now = Date.now(); if (now - lastEscAt < 300) return; lastEscAt = now;
     if (renaming) { renaming.cancel(); return; }      // 이름 고치는 중 Esc = 고치기 취소만(작업 중단 아님, v2.85)
+    if (window.DoctorView?.isOpen?.()) { window.DoctorView.close(); return; } // IRIS Doctor 창이 떠 있으면 Esc = 그 창 닫기만(작업 중단 아님)
     if (window.Planner?.editing?.()) { window.Planner.onEscape(); return; } // 플래너에서 일정 이름을 고치는 중 Esc = 그 고치기 취소만(다른 서랍 · 판을 닫지 않는다)
     if (Tutorial.isOpen()) { Tutorial.back(); return; } // 튜토리얼 위에서 Esc = 그 안의 한 단계 뒤로만(크게 보기 닫기·역할 다시 고르기) — 작업 중단으로 새지 않는다(v2.90 → v2.93)
     if (Voice.cancel()) return;                       // 🎤 녹음 중 Esc = 녹음 버림
@@ -878,6 +893,7 @@
   // 인수 안내 카드(설치 패키지 v2, Task 21): 메신저 안내 카드는 그 모듈 서랍을 함께 펼친다.
   Handoff.init({ onOpenModule: (name) => { if (!drawerOpenFor(`mod:${name}`)) openModule(name); } });
   // 첫 실행 튜토리얼(v2.90): 「첫 대화 해 보기」 = 그 폴더를 고른 새 요청 화면 + 예시 문장을 채워 두기만(보내기는 사용자).
+  window.DoctorView?.init(); // IRIS Doctor: 작업목록 바닥의 단추 · 곳곳의 단추 → 검진표 창(Doctor 가 없는 PC 에서는 아무것도 보이지 않는다)
   Tutorial.init({ onFirstChat: ({ path: p, rel, name, agent, text }) => {
     wantSel = null; if (current) goHome({ keepStash: true });
     folder = { path: p, rel, name };

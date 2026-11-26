@@ -486,9 +486,15 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/auth/renew') { const b = await readBody(req); const r = await auth.renew(String(b.id || '')); return json(res, r.ok ? 200 : 400, { ...r, auth: auth.public() }); }
     }
     // ---- IRIS Doctor 입구: 상태 요약 읽기(계정 이름 · 열쇠 없음) · 열기(같은 출처만). Doctor 가 없으면 404. 상태를 읽지 못해도 열기는 된다. ----
-    if (p === '/api/doctor' || p === '/api/doctor/open') {
+    if (p === '/api/doctor' || p === '/api/doctor/open' || p === '/api/doctor/checkup' || p === '/api/doctor/records') {
       const d = doctor.public();
       if (!d.available) return json(res, 404, { error: 'not found' });
+      // 검진(읽기만 — Doctor 가 검진표를 이 PC 의 기록에 남긴다) · 기록 읽기. 검진은 누를 때만 돈다.
+      if (req.method === 'GET' && p === '/api/doctor/records') return json(res, 200, await doctor.records());
+      if (req.method === 'POST' && p === '/api/doctor/checkup') {
+        if (!sameOrigin(req)) { log(`403 doctor checkup: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+        return json(res, 200, await doctor.checkup({ fresh: url.searchParams.get('fresh') === '1' }));
+      }
       if (req.method === 'GET' && p === '/api/doctor') return json(res, 200, { ...d, link: await doctor.status({ fresh: url.searchParams.get('fresh') === '1' }) });
       if (req.method === 'POST' && p === '/api/doctor/open') {
         if (!sameOrigin(req)) { log(`403 doctor open: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }

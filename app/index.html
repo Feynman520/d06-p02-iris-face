@@ -110,26 +110,16 @@
         <div id="st-auth-sec" class="st-keys" hidden><div class="st-keys-h"><span id="st-auth-h">인증</span><button id="st-auth-act" class="text-btn outline" type="button">다시 확인</button></div>
           <div id="st-auth" class="upd"></div>
           <!-- 끊김 안내의 바로가기 줄(D3): 재로그인이 필요한 계정이 있고 IRIS Doctor 가 있을 때만 보인다. 누르면 바깥 Doctor 창이 바로 열린다. -->
-          <p id="st-doctor-hint" class="st-hint" hidden>다시 로그인해도 연결이 돌아오지 않으면 <button id="st-doctor-go" class="text-btn accent" type="button">IRIS Doctor 열기</button></p></div>
+          <p id="st-doctor-hint" class="st-hint dr-hint" hidden>다시 로그인해도 안 되면 <button class="text-btn accent" type="button" data-doctor="account">IRIS Doctor</button></p></div>
         <section class="st-grp"><h3 class="st-h-row"><span>비밀 금고</span><button id="st-recovery" class="text-btn outline" type="button">복구 문구 보기</button></h3>
           <div class="st-opt"><span class="st-opt-text">복구 문구<small>세팅 때 창이 금고를 만들며 문구를 이 컴퓨터에 보관했습니다. USB로 옮기거나 다른 컴퓨터에서 열려면 그 전에 한 번 보고 종이에 적어 두세요(화면 창으로만 보입니다).</small></span></div></section>
-      </div>
-      <!-- IRIS Doctor(2026-11-26 — 설계 정본 = D09 「에이전트 업데이트·의사-설계」 D3): 바깥 Doctor 를 여는 손잡이. 검진 · 치료 · 계정 연결은 열린 Doctor 창에서 한다.
-           Doctor 가 없는 PC 에서는 이 묶음과 목차 줄이 보이지 않는다(settings.js doctorOn). 동작 = app/doctor.js -->
-      <div class="st-pane" data-pane="doctor" hidden>
-        <div class="st-pane-h"><h2>IRIS Doctor</h2><p>IRIS 가 이상할 때 부르는 진단 · 치료 도구입니다. IRIS 창 밖의 따로 뜬 창에서 돌아서, 이 창이 멈춰도 쓸 수 있습니다.</p></div>
-        <section class="st-grp"><h3 class="st-h-row"><span>진단과 치료</span><button id="dr-open" class="text-btn accent" type="button">IRIS Doctor 열기</button></h3>
-          <div class="st-opt auth-row"><span class="st-opt-text">하는 일<small>검진 → 원인 찾기 → 치료. 치료를 시작하기 전에 한 번만 묻고, 나머지는 끝까지 알아서 합니다. 이 창이 안 열릴 때는 바탕화면이나 시작 메뉴의 「IRIS Doctor」로 여세요.</small></span></div>
-          <p id="dr-broken" class="st-hint" hidden>IRIS Doctor 의 프로그램 파일 일부가 없습니다. 「IRIS Doctor 열기」를 누르면 복구 안내가 뜹니다 — 안 뜨면 IRIS 설치 프로그램을 다시 실행해 주세요.</p></section>
-        <section class="st-grp"><h3 class="st-h-row"><span>복구에 쓸 계정</span><span id="dr-tag" class="dr-tag" hidden>복구 준비 미완료</span></h3>
-          <div id="dr-accounts" class="upd"></div>
-          <p id="dr-note" class="st-hint"></p></section>
       </div>
       <div class="st-pane" data-pane="about" hidden>
         <div class="st-pane-h"><h2>업데이트·정보</h2></div>
         <!-- 업데이트(v2.58, 2026-09-14): 절 머리의 단추 하나로 확인 → 내려받기 → 적용까지. 부품 행은 값만 보이는 .st-opt 모양. -->
         <section class="st-grp"><h3 class="st-h-row"><span id="st-update-h">업데이트</span><button id="st-update-act" class="text-btn outline" type="button">지금 확인</button></h3>
           <div id="st-update" class="upd"></div>
+          <p id="st-doctor-upd" class="st-hint dr-hint" hidden>업데이트가 계속 실패하면 <button class="text-btn accent" type="button" data-doctor="update">IRIS Doctor</button></p>
           <label class="st-opt"><span class="st-opt-text">하루 한 번 새 판 확인<small>켜 두면 하루 한 번 새 판이 있는지만 읽습니다 — 내려받기는 위 단추를 누를 때만</small></span><input id="st-update-auto" class="sw" type="checkbox"></label></section>
         <section class="st-grp"><h3>정보</h3>
           <div class="st-opt"><span class="st-opt-text">IRIS 폴더<small><code id="st-root"></code></small></span></div>
@@ -181,7 +171,6 @@
       <button class="st-nav-i" data-pane="planner"><span class="st-nav-ic" data-icon="bell"></span><span class="st-nav-t">알림 · 플래너<small><span id="st-sum-notify"></span> · 플래너 <span id="st-sum-planner"></span></small></span></button>
       <button class="st-nav-i" data-pane="mods"><span class="st-nav-ic" data-icon="plug"></span><span class="st-nav-t">확장 모듈<small id="st-sum-mods"></small></span></button>
       <button class="st-nav-i" data-pane="account"><span class="st-nav-ic" data-icon="shield"></span><span class="st-nav-t">계정·보안<small id="st-sum-account"></small></span><span class="st-nav-b" id="st-badge-account" hidden></span></button>
-      <button class="st-nav-i" data-pane="doctor" id="st-nav-doctor" hidden><span class="st-nav-ic" data-icon="pulse"></span><span class="st-nav-t">IRIS Doctor<small id="st-sum-doctor"></small></span><span class="st-nav-b" id="st-badge-doctor" hidden>!</span></button>
       <button class="st-nav-i" data-pane="about"><span class="st-nav-ic" data-icon="refresh"></span><span class="st-nav-t">업데이트·정보<small id="st-sum-about"></small></span><span class="st-nav-b new" id="st-badge-about" hidden></span></button>
       <button class="st-nav-i" data-pane="feedback"><span class="st-nav-ic" data-icon="chat"></span><span class="st-nav-t">의견 보내기<small id="st-sum-feedback"></small></span></button>
       <span class="st-nav-gap"></span>
@@ -200,6 +189,8 @@
       <button id="btn-home" class="icon-btn" title="새 세션 (Ctrl+N)"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
     </div>
     <ul id="session-list" class="sessions"></ul>
+    <!-- IRIS Doctor 단추(2026-11-26 사용자 선택 = 시안 E 「작업목록 바닥」): 늘 여기에. 누르면 검진표 창(#dr-modal). IRIS Doctor 가 없는 PC 에서는 보이지 않는다. 동작 = app/doctor.js -->
+    <button id="rail-doctor" class="rail-doctor" type="button" title="IRIS Doctor — IRIS 가 이상할 때" hidden><span class="rail-doctor-ic" data-dr-icon></span><span class="rail-doctor-t">IRIS Doctor</span><span id="rail-doctor-st" class="rail-doctor-st"></span></button>
     <div id="rail-resize" class="rail-resize" title="끌어서 너비 조절 · 두 번 클릭 = 기본 너비"></div>
   </aside>
 
@@ -240,6 +231,7 @@
       <div id="dead-bar" class="dead-bar" hidden>
         <span>이 세션의 프로세스가 없습니다.</span>
         <button id="btn-resume" class="text-btn" title="같은 카드에서 대화를 이어 다시 엽니다">↻ 여기서 재개</button>
+        <button id="btn-dead-doctor" class="text-btn" type="button" data-doctor="dead" title="대화가 켜지자마자 끝났을 때 — 검진해 봅니다" hidden>IRIS Doctor</button>
         <code id="dead-resume" title="다른 터미널에서 잇는 명령"></code>
         <button id="btn-forget" class="text-btn">기록 지우기</button>
         <div id="dead-reason" class="dead-reason" hidden></div>
@@ -300,6 +292,23 @@
 
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/addon-fit.js"></script>
+<!-- IRIS Doctor 창(2026-11-26 사용자 선택 = 시안 「나」 검진표 창 · "텍스트는 최소한으로"): 어느 단추를 눌러도 이 창. 검진(읽기만)은 여기서, 원인 찾기 · 치료는 창 밖의 Doctor 창에서.
+     클래스는 dr- 접두로만 짓는다. 내용은 app/doctor.js 가 글(textContent)로만 채운다. -->
+<div id="dr-modal" class="dr-modal" hidden>
+  <div class="dr-win" role="dialog" aria-modal="true" aria-labelledby="dr-title">
+    <header class="dr-head"><span class="dr-ic" data-dr-icon></span><h2 id="dr-title">IRIS Doctor</h2><span class="dr-sp"></span>
+      <span id="dr-when" class="dr-when"></span><button id="dr-again" class="text-btn" type="button">다시 검진</button><button id="dr-close" class="icon-btn" type="button" title="닫기 (Esc)" aria-label="닫기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></header>
+    <div class="dr-sum"><div id="dr-big" class="dr-big"></div><div id="dr-chips" class="dr-chips"></div></div>
+    <div class="dr-body">
+      <div id="dr-list" class="dr-list"></div>
+      <aside class="dr-side">
+        <div><h3>복구에 쓸 계정</h3><div id="dr-accounts"></div><button id="dr-link" class="dr-lnk" type="button">연결 · 바꾸기</button></div>
+        <div><button id="dr-open" class="dr-cta" type="button">치료하기</button><p id="dr-cta-note" class="dr-note">창 밖의 Doctor 창에서 진행 · 시작 전 한 번 묻습니다</p></div>
+      </aside>
+    </div>
+    <footer class="dr-foot"><span id="dr-foot-t">검진은 읽기만 합니다</span><span class="dr-sp"></span><button id="dr-rec" class="dr-lnk" type="button">기록</button></footer>
+  </div>
+</div>
 <script src="/app/dialog.js"></script>
 <script src="/app/icons.js"></script>
 <script src="/app/registry.js"></script>
