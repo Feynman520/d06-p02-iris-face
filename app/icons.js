@@ -42,6 +42,7 @@
     'dock-right': '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M14.5 5v14"/>', // 플래너를 오른쪽 칸으로 붙이기
     'dock-float': '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><rect x="11.5" y="11" width="6.5" height="5.5" rx="1.2" fill="currentColor" stroke="none"/>', // 다시 작게 띄우기
     'arrow-right': '<path d="M5 12h14m0 0-5-5m5 5-5 5"/>', // 세션 열기 · 결과 보기
+    pulse: '<path d="M3 12.5h4.2l2.3-6 4 11 2.3-5H21"/>', // 설정 목차 「IRIS Doctor」(심박선)
     send: '<path d="M12 19V5m0 0-6 6m6-6 6 6"/>', // 아이리스에게 보내기
     undo: '<path d="M8 6 3.5 10.5 8 15"/><path d="M3.5 10.5H14a5.5 5.5 0 0 1 0 11h-3"/>', // 되돌리기
   };

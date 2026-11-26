@@ -37,6 +37,7 @@ import { SetupProgress } from './progress.mjs';
 import { HandoffFlow, relayReady } from './handoff.mjs';
 import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
+import { DoctorGate } from './doctor.mjs';
 import { sweepUploads, UPLOAD_KEEP_DAYS } from './uploads.mjs';
 import { ToolManager, makeRunner } from './toolinstall.mjs';
 import { childEnv } from './sessions.mjs';
@@ -187,7 +188,9 @@ async function ensureDash() {
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
 // ---- 로그인 열쇠 만료 감시(v2.84): 도구(iris-auth)가 있을 때만. 30분마다 점검 + 곧 만료면 윈도 알림(도구가 띄움) + 화면 방송 {type:'auth'}. ----
 const auth = new AuthWatch({ log: (m) => log(m), broadcast: (o) => broadcast(o), ensureDash });
-const features = () => ({ auth: auth.available, memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
+// ---- IRIS Doctor 입구(선택 기능): 바깥 Doctor 를 여는 손잡이 + 복구에 쓸 계정의 상태 요약. Doctor 가 없으면 화면이 묶음을 숨긴다. 상주시키는 것은 없다(화면이 물을 때만 읽는다). ----
+const doctor = new DoctorGate({ log: (m) => log(m) });
+const features = () => ({ doctor: doctor.public(), auth: auth.available, memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
 
 // ---- 업데이트(설계 2·3·4절, v2.58): 하루 1회 릴리스 확인 → 사용자가 누르면 받기·검증 → 메신저는 이 자리, IRIS 창·구조판은 적용기에 넘김. ----
 // 데몬은 자기 파일을 바꾸지 않는다. 화면에 줄 진행은 웹소켓 {type:'update', …} 방송.
@@ -481,6 +484,16 @@ const server = http.createServer(async (req, res) => {
       if (!sameOrigin(req)) { log(`403 auth ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       if (p === '/api/auth/refresh') { await auth.refresh(); return json(res, 200, auth.public()); }
       if (p === '/api/auth/renew') { const b = await readBody(req); const r = await auth.renew(String(b.id || '')); return json(res, r.ok ? 200 : 400, { ...r, auth: auth.public() }); }
+    }
+    // ---- IRIS Doctor 입구: 상태 요약 읽기(계정 이름 · 열쇠 없음) · 열기(같은 출처만). Doctor 가 없으면 404. 상태를 읽지 못해도 열기는 된다. ----
+    if (p === '/api/doctor' || p === '/api/doctor/open') {
+      const d = doctor.public();
+      if (!d.available) return json(res, 404, { error: 'not found' });
+      if (req.method === 'GET' && p === '/api/doctor') return json(res, 200, { ...d, link: await doctor.status({ fresh: url.searchParams.get('fresh') === '1' }) });
+      if (req.method === 'POST' && p === '/api/doctor/open') {
+        if (!sameOrigin(req)) { log(`403 doctor open: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
+        return json(res, 200, await doctor.open());
+      }
     }
     // ---- 의견 보내기(v2.105): 정보 줄 읽기는 바깥 연결 없음. 보내기는 같은 출처만 + 누를 때만 바깥(IRIS 공용 DB) 연결. ----
     if (req.method === 'GET' && p === '/api/feedback') return json(res, 200, { info: feedbackInfo(updater.installed()), fallback: FEEDBACK_FALLBACK });

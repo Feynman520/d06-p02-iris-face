@@ -69,6 +69,7 @@
     "verify:send": "node scripts/check-send.mjs",
     "verify:shortcut": "node scripts/check-shortcut.mjs",
     "verify:feedback": "node scripts/check-feedback.mjs",
+    "verify:doctor": "node scripts/check-doctor.mjs",
     "verify:agent-baseline": "node scripts/check-agent-baseline.mjs",
     "verify:antigravity": "node scripts/check-antigravity.mjs",
     "verify:agy-gate": "node scripts/check-agy-gate.mjs"

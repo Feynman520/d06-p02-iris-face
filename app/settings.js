@@ -128,10 +128,13 @@ window.Settings = (() => {
     renderNav();
   }
   // ---- 묶음과 오른쪽 목차(v2.87, 사용자 선택 = 시안 A′): 한 번에 한 묶음만. 마지막으로 본 묶음을 기억한다. ----
-  const PANES = ['design', 'session', 'ontology', 'tools', 'planner', 'mods', 'account', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js) · 플래너(설계 조각 ⑧)
+  const PANES = ['design', 'session', 'ontology', 'tools', 'planner', 'mods', 'account', 'doctor', 'about', 'feedback']; // v2.90: 온톨로지·도구 묶음(app/ontology.js·tools.js — 보일 때 읽음) · v2.105: 의견 보내기(app/feedback.js) · 플래너(설계 조각 ⑧)
   // 2026-11-25: 옛 「알림」 묶음(notify)은 「알림 · 플래너」(planner)에 합쳤다 — 기억해 둔 마지막 묶음 · 다른 코드가 부르는 옛 이름은 새 묶음으로 읽는다.
-  const paneOf = (p) => (p === 'notify' ? 'planner' : p);
-  let pane = (() => { try { const p = paneOf(localStorage.getItem('iris.settings.pane')); return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
+  // IRIS Doctor 묶음(2026-11-26)은 Doctor 가 있는 PC 에서만 보인다 — 없으면 목차 줄을 숨기고, 기억해 둔 마지막 묶음이 그것이어도 「디자인」으로 보낸다.
+  const doctorOn = () => !!health?.features?.doctor?.available;
+  const paneOf = (p) => (p === 'notify' ? 'planner' : p === 'doctor' && !doctorOn() ? 'design' : p);
+  // 기억해 둔 묶음은 그대로 읽어 둔다 — IRIS Doctor 가 있는지는 데몬의 답(health)이 온 뒤에야 알므로, 없는 묶음을 다른 곳으로 보내는 일은 보여 줄 때(showPane → paneOf) 한다.
+  let pane = (() => { try { const p0 = localStorage.getItem('iris.settings.pane'); const p = p0 === 'notify' ? 'planner' : p0; return PANES.includes(p) ? p : 'design'; } catch { return 'design'; } })();
   let modsSum = '';
   // 미리보기 캔버스는 「디자인」 묶음이 보일 때만 돌린다(다른 묶음에서 숨은 캔버스 11개가 GPU 를 쓰지 않게)
   function startPreviews() {
@@ -150,6 +153,7 @@ window.Settings = (() => {
     if (open && p === 'ontology') window.OntologyView?.show();
     if (open && p === 'tools') window.ToolsView?.show();
     if (open && p === 'feedback') window.FeedbackView?.show();
+    if (open && p === 'doctor') window.DoctorView?.show();
     if (open && p === 'planner') loadPlannerUsage();
     // 계정 · 보안을 열 때마다 사본이 1분보다 오래됐으면 데몬이 다시 읽는다(2026-11-25 신고: 재로그인 · 재시작 뒤에도 30분 가까이 「끊김」이 남았다).
     if (open && p === 'account') loadAuth(false, true);
@@ -245,6 +249,13 @@ window.Settings = (() => {
     const nCl = items.filter(i => i.group !== 'iris' && i.provider !== 'codex').length, nCx = items.filter(i => i.group !== 'iris' && i.provider === 'codex').length;
     set('#st-sum-account', !hasAuth ? '열쇠 감시 도구 없음 · 비밀 금고' : !items.length ? '열쇠 상태 확인 전' : due.length ? `갱신 필요 ${due.length}개` : `Claude ${nCl} · Codex ${nCx} · 모두 정상`);
     const ba = $('#st-badge-account'); if (ba) { ba.hidden = !due.length; ba.textContent = String(due.length); ba.classList.toggle('bad', due.some(i => i.level === 'expired')); }
+    // IRIS Doctor: 없는 PC 에서는 목차 줄을 숨긴다. 꼬리표(!) = 상태를 읽었는데 복구에 쓸 계정이 하나도 준비되지 않음(읽지 못했으면 경고하지 않는다).
+    const dOn = doctorOn(), dSum = window.DoctorView?.summary() || { text: '', warn: false };
+    const dn = $('#st-nav-doctor'); if (dn) dn.hidden = !dOn;
+    set('#st-sum-doctor', dSum.text);
+    const bd = $('#st-badge-doctor'); if (bd) bd.hidden = !(dOn && dSum.warn);
+    // 끊김 안내의 바로가기 줄: 재로그인이 필요한 계정이 있을 때만(누르면 바깥 Doctor 창이 바로 열린다)
+    const dh = $('#st-doctor-hint'); if (dh) dh.hidden = !(dOn && items.some(i => i.health === 'needs-login' || i.level === 'expired'));
     const dev = upd?.mode === 'dev', newV = !dev && upd?.headline?.version;
     set('#st-sum-about', newV ? `새 판 v${newV}` : `v${health?.version || '—'}${dev ? ' · 개발 폴더' : ''}`);
     const bu = $('#st-badge-about'); if (bu) { bu.hidden = !newV; bu.textContent = '새'; }
@@ -577,7 +588,10 @@ window.Settings = (() => {
   const koName = (s) => (String(s || '').match(/\(([^)]+)\)\s*$/) || [])[1] || s; // 'Sejun Ham (함세준)' → '함세준'
   function applyMaker() { $('#maker').textContent = `v${health?.version || '—'} · ${koName(health?.about?.author || ABOUT_DEF.author)}`; }
   /** p = 열 묶음(없으면 마지막으로 본 묶음). 예: 헤더 모듈 버튼이 멈춘 모듈을 보여 줄 때 show('mods'). */
-  function show(p) { if (!open) opts.onShow?.(); open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(paneOf(p))) pane = paneOf(p); showPane(pane); renderPanel(); }
+  function show(p) {
+    if (!open) opts.onShow?.(); open = true; $('#settings').hidden = false; $('#btn-settings').classList.add('active'); if (PANES.includes(paneOf(p))) pane = paneOf(p); showPane(pane); renderPanel();
+    if (doctorOn()) window.DoctorView?.load(); // 설정을 열 때 한 번 읽어 목차 꼬리표를 정한다(상주 감시는 없다 — 묶음에 다시 들어올 때 오래됐으면 다시 읽음)
+  }
   function hide() { open = false; $('#settings').hidden = true; $('#btn-settings').classList.remove('active'); destroyPreviews(); }
   function pick(patch) { Object.assign(cfg, patch); applyAll(); const sent = save(); renderPanel(); opts.onChange?.(cfg); sent.then(() => opts.onChange?.(cfg)); } // onChange 두 번: 화면은 바로, 데몬에 적힌 뒤 한 번 더(데몬이 준 한 장을 다시 읽는 쪽을 위해)
 
@@ -590,6 +604,8 @@ window.Settings = (() => {
     for (const el of document.querySelectorAll('#st-nav [data-icon]')) el.innerHTML = Icons.svg(el.dataset.icon, 17);
     for (const el of document.querySelectorAll('#st-nav .st-nav-i')) el.title = el.querySelector('.st-nav-t').firstChild.textContent.trim(); // 좁은 창(아이콘만)에서도 이름이 보이게
     $('#st-nav').addEventListener('click', (e) => { const b = e.target.closest('.st-nav-i[data-pane]'); if (b) showPane(b.dataset.pane); });
+    window.DoctorView?.onChange(() => { if (open) renderNav(); });
+    $('#st-doctor-go')?.addEventListener('click', () => window.DoctorView?.open());
     $('#settings').addEventListener('click', (e) => {
       const t = e.target.closest('#st-themes [data-theme]'); if (t) return pick({ theme: t.dataset.theme });
       const s = e.target.closest('#st-stages [data-stage]'); if (s) return pick({ stage: s.dataset.stage });

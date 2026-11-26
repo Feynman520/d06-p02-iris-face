@@ -40,6 +40,23 @@ export function dashDir() {
   return null;
 }
 
+/**
+ * IRIS Doctor(먹통일 때 부르는 진단 · 치료 도구)의 자리 — IRIS_DOCTOR_DIR → 공유 도구 폴더 → 이 PC 자리 순서. 없으면 null(= 설정의 IRIS Doctor 묶음 숨김).
+ * → { dir, startFile, program, broken } · broken = 폴더는 있는데 시작 파일 · 프로그램 가운데 하나가 없음(설치가 상한 것 — "없음"으로 숨기지 않는다: 고장 난 복구 도구의 입구가 사라지면 안 된다).
+ * IRIS_DOCTOR_DIR 이 정해져 있으면 그 자리만 본다(시험 폴더를 잘못 적었을 때 진짜 자리로 넘어가지 않게).
+ */
+export function doctorPlace(env = process.env) {
+  // 시험 데몬(IRIS_FACE_STATE 가 정해짐)은 자리를 따로 적어 주지 않으면 Doctor 가 없는 것으로 본다 — 시험이 진짜 Doctor(연결 카드 · 바깥 창)에 닿지 않게.
+  const candidates = env.IRIS_DOCTOR_DIR ? [env.IRIS_DOCTOR_DIR] : env.IRIS_FACE_STATE ? [] : [path.join(toolsDir(), 'iris-doctor'), path.join(soulRoot(), '_agent', 'claude', 'tools', 'iris-doctor')];
+  const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
+  for (const dir of candidates) {
+    const startFile = path.join(dir, 'IRIS Doctor.cmd'), program = path.join(dir, 'iris-doctor.mjs');
+    const a = isFile(startFile), b = isFile(program);
+    if (a || b) return { dir, startFile, program, broken: !(a && b), hasStart: a, hasProgram: b };
+  }
+  return null;
+}
+
 /** 로그인 열쇠 감시 도구(iris-auth: status.mjs·longkey.mjs) 폴더 — IRIS_AUTH_DIR → 공유 도구 폴더 → 옛 자리 순서로 첫 존재. 없으면 null(= 인증 절 숨김). */
 export function authDir() {
   const candidates = [
