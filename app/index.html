@@ -290,12 +290,13 @@
       </div>
     </footer>
     <!-- 업데이트 칸(2026-11-26 사용자 선택 = 시안 「라」 대화 옆 칸): 업데이트를 누르면 새 대화가 열리고 무대 오른쪽에 이 칸이 붙는다.
-         부품(체크) · 새 기능(스위치) · 내가 고친 파일(내 것 유지 / 새 판으로)을 고르고 「선택한 N개 업데이트」. 설치는 지금의 확인 카드에서 사용자가 누른다. 동작 = app/update-panel.js(클래스 up-) -->
+         영역 상자 셋(같은 날 밤 사용자 선택 = 시안 「가-1」 · 이름 = 수정 사항 · 신규 추가 · 나만의 IRIS): 새 판으로 바꿀 것(체크) · 새로 생기는 기능(스위치) · 내가 고친 파일(내 것 유지 / 새 판으로).
+         맨 아래 「이렇게 됩니다」 요약 → 「선택한 N개 업데이트」. 설치는 지금의 확인 카드에서 사용자가 누른다. 동작 = app/update-panel.js(클래스 up-) -->
     <aside id="up-panel" class="up-panel" hidden aria-label="업데이트">
       <header class="up-head"><h2>업데이트</h2><span id="up-ver" class="up-ver"></span><span class="up-sp"></span><button id="up-close" class="icon-btn" type="button" title="닫기" aria-label="닫기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></header>
-      <div id="up-health" class="up-health" hidden></div>
+      <div id="up-health" class="up-checks" hidden></div>
       <div id="up-list" class="up-list"></div>
-      <footer class="up-foot"><p id="up-note" class="up-note"></p><div class="up-acts"><button id="up-all" class="up-lnk" type="button" hidden>전부 업데이트</button><span class="up-sp"></span><button id="up-go" class="up-cta" type="button" disabled>선택한 0개 업데이트</button></div></footer>
+      <footer class="up-foot"><div id="up-sum" class="up-sum" hidden></div><p id="up-note" class="up-note"></p><div class="up-acts"><button id="up-all" class="up-lnk" type="button" hidden>전부 업데이트</button><span class="up-sp"></span><button id="up-go" class="up-cta" type="button" disabled>선택한 0개 업데이트</button></div></footer>
     </aside>
   </main>
 </div>
@@ -307,17 +308,17 @@
      클래스는 dr- 접두로만 짓는다. 내용은 app/doctor.js 가 글(textContent)로만 채운다. -->
 <div id="dr-modal" class="dr-modal" hidden>
   <div class="dr-win" role="dialog" aria-modal="true" aria-labelledby="dr-title">
+    <!-- 2026-11-26 사용자 선택(시안 「다」 문제만 크게 + 바닥 「다-1」 뱃지 줄): 결론 한 문장 → 확인할 것만 카드로 → "나머지 N가지는 정상" 한 줄 → 단추 하나.
+         맨 아래 = 왼쪽 Doctor 계정 뱃지(Claude · Codex) · 오른쪽 「지난 기록」 뱃지. 글은 쉬운 말로(Doctor 가 주는 name · say · more). -->
     <header class="dr-head"><span class="dr-ic" data-dr-icon></span><h2 id="dr-title">IRIS Doctor</h2><span class="dr-sp"></span>
-      <span id="dr-when" class="dr-when"></span><button id="dr-again" class="text-btn" type="button">다시 검진</button><button id="dr-close" class="icon-btn" type="button" title="닫기 (Esc)" aria-label="닫기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></header>
-    <div class="dr-sum"><div id="dr-big" class="dr-big"></div><div id="dr-chips" class="dr-chips"></div></div>
-    <div class="dr-body">
+      <span id="dr-when" class="dr-when"></span><button id="dr-again" class="dr-tb" type="button"><span data-dr-i="refresh"></span>다시 살펴보기</button><button id="dr-close" class="icon-btn" type="button" title="닫기 (Esc)" aria-label="닫기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></header>
+    <div class="dr-main">
+      <div id="dr-hero" class="dr-hero"><span id="dr-seal" class="dr-seal"></span><h3 id="dr-big" class="dr-big"></h3><p id="dr-sub" class="dr-sub"></p></div>
       <div id="dr-list" class="dr-list"></div>
-      <aside class="dr-side">
-        <div><h3>복구에 쓸 계정</h3><div id="dr-accounts"></div><button id="dr-link" class="dr-lnk" type="button">연결 · 바꾸기</button></div>
-        <div><button id="dr-open" class="dr-cta" type="button">치료하기</button><p id="dr-cta-note" class="dr-note">창 밖의 Doctor 창에서 진행 · 시작 전 한 번 묻습니다</p></div>
-      </aside>
+      <div id="dr-rest" class="dr-rest" hidden></div>
+      <div id="dr-act" class="dr-act"><button id="dr-open" class="dr-cta" type="button">치료하기</button><p id="dr-cta-note" class="dr-note"></p></div>
     </div>
-    <footer class="dr-foot"><span id="dr-foot-t">검진은 읽기만 합니다</span><span class="dr-sp"></span><button id="dr-rec" class="dr-lnk" type="button">기록</button></footer>
+    <footer class="dr-foot"><span class="dr-lab">Doctor 계정</span><span id="dr-accounts" class="dr-accs"></span><span class="dr-sp"></span><span id="dr-rec-warn" class="dr-lab" hidden>이번 결과는 기록하지 못했습니다</span><button id="dr-rec" class="dr-bdg" type="button"><span data-dr-i="clock"></span><span id="dr-rec-t">지난 기록</span><span id="dr-rec-n" class="dr-cnt" hidden></span></button></footer>
   </div>
 </div>
 <script src="/app/dialog.js"></script>

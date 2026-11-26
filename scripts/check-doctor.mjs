@@ -141,13 +141,14 @@ const spy = (seen, how = 'ok') => (exe, args, opt) => {
 }
 
 // ---------- 1b) 단위: 검진표 · 기록 ----------
-const G = [{ id: 'relay', title: '중계기' }, { id: 'programs', title: '프로그램' }, { id: 'keys', title: '열쇠' }];
+// 묶음 이름과 name · say · more = Doctor 가 함께 주는 쉬운 말(2026-11-26). 셋째 항목은 일부러 쉬운 말 없이 둔다(옛 Doctor — 화면이 원래 글로 물러나는지 본다).
+const G = [{ id: 'relay', title: 'IRIS Gate' }, { id: 'programs', title: '프로그램' }, { id: 'keys', title: '로그인' }];
 const CK = (findings, extra = {}) => ({ ok: true, at: '2026-11-26T07:24:13.057Z', recorded: true, id: '20261126-072413-9cb7eb', groups: G, findings, ...extra });
 const CK_BAD = CK([
-  { id: 'relay.accounts', group: 'relay', title: '쓸 수 있는 클로드 계정', state: 'bad', summary: '5개 가운데 4개를 쓸 수 있습니다.' },
-  { id: 'relay.owner', group: 'relay', title: '포트 주인이 중계기인가', state: 'ok', summary: '중계기 프로그램입니다(PID 19112).' },
+  { id: 'relay.listening', group: 'relay', title: '중계기가 켜져 있는가', state: 'bad', summary: '꺼져 있습니다(포트 3456 에 아무도 없음).', name: 'IRIS Gate', say: 'IRIS Gate가 응답하지 않습니다', more: 'AI 계정과 이어 주는 문입니다. 꺼져 있으면 요청을 보낼 수 없습니다.' },
+  { id: 'relay.owner', group: 'relay', title: '포트 주인이 중계기인가', state: 'ok', summary: '중계기 프로그램입니다(PID 19112).', name: 'IRIS Gate 자리', say: '제자리에 있습니다' },
   { id: 'programs.codex', group: 'programs', title: '코덱스 프로그램', state: 'bad', summary: '실제 프로그램이 없습니다.' },
-  { id: 'keys.claude-longkey', group: 'keys', title: '클로드 1년 열쇠', state: 'ok', summary: '만료까지 362일 남았습니다.' },
+  { id: 'keys.claude-longkey', group: 'keys', title: '클로드 1년 열쇠', state: 'ok', summary: '만료까지 362일 남았습니다.', name: 'Claude 로그인', say: '362일 남았습니다' },
 ]);
 const CK_OK = CK([{ id: 'relay.owner', group: 'relay', title: '포트 주인이 중계기인가', state: 'ok', summary: '중계기 프로그램입니다.' }, { id: 'keys.claude-longkey', group: 'keys', title: '클로드 1년 열쇠', state: 'ok', summary: '만료까지 362일 남았습니다.' }]);
 const RECS = { v: 1, ok: true, items: [{ at: '2026-11-26T07:24:13.057Z', kind: 'checkup', from: 'window', okCount: 2, warn: 0, bad: 2, account: MAIL }, { at: '2026-11-26T06:03:45.000Z', kind: 'treat-end', outcome: 'resolved', case: 'x' }, { at: 'nope', kind: 'checkup' }, { at: '2026-11-26T05:43:33.058Z', kind: 'weird' }] };
@@ -156,6 +157,9 @@ const RECS = { v: 1, ok: true, items: [{ at: '2026-11-26T07:24:13.057Z', kind: '
   const c = D.cleanCheckup(dirty), raw = JSON.stringify(c);
   ok(c.findings.length === 1 && c.findings[0].title.length === 120 && c.findings[0].summary.length === 300 && !raw.includes('PID') && !raw.includes(SECRET) && !raw.includes('detail') && !raw.includes('Users'), '1 검진표: 허용한 칸 · 길이만(번호 · 자세한 칸 · 경로 · 모르는 항목은 버림)');
   ok(D.cleanCheckup({ ok: false, why: 'timeout' }) === null && D.cleanCheckup(CK([])) === null && D.cleanCheckup({ ok: true, findings: 'x', groups: [] }) === null, '1 검진표: 실패 · 빈 표 · 틀린 모양은 없음');
+  // 쉬운 말(name · say · more): 글일 때만 · 길이를 잘라 · 번호는 빼고 싣는다. 없으면 싣지 않는다(화면이 원래 글로 물러난다)
+  const pl = D.cleanCheckup(CK([{ id: 'relay.owner', group: 'relay', title: 't', state: 'ok', summary: 's', name: 'N'.repeat(99), say: `제자리(PID 19112) ${'y'.repeat(300)}`, more: { evil: 1 } }, { id: 'keys.a', group: 'keys', title: 't', state: 'ok', summary: 's' }])).findings;
+  ok(pl[0].name.length === 40 && pl[0].say.length === 120 && !pl[0].say.includes('PID') && !('more' in pl[0]) && !('name' in pl[1]) && !('say' in pl[1]), '1 검진표: 쉬운 말은 글일 때만 · 길이 안에서 · 번호 없이(없으면 싣지 않음)');
   const rc = RECS.items.map(D.cleanRecord);
   ok(rc[0] && !('account' in rc[0]) && rc[0].bad === 2 && rc[1].outcome === 'resolved' && !('case' in rc[1]) && rc[2] === null && rc[3] === null, '1 기록: 허용한 칸만 · 시각 · 종류가 틀린 줄은 버림');
 
@@ -191,7 +195,8 @@ const RECS = { v: 1, ok: true, items: [{ at: '2026-11-26T07:24:13.057Z', kind: '
   const html = src('app/index.html'), js = src('app/doctor.js'), st = src('app/settings.js'), dm = src('daemon/doctor.mjs'), sv = src('daemon/server.mjs'), icons = src('app/icons.js'), main = src('app/main.js'), css = src('app/style.css');
   const win = (html.match(/<div id="dr-modal"[\s\S]*?<\/div>\s*\n<\/div>/) || [''])[0];
   ok(/<button id="rail-doctor" class="rail-doctor" type="button"[^>]*hidden>/.test(html) && html.indexOf('id="rail-doctor"') > html.indexOf('id="session-list"') && html.indexOf('id="rail-doctor"') < html.indexOf('id="rail-resize"'), '2 작업목록 바닥의 단추(처음엔 숨김 — Doctor 가 있을 때만 보임)');
-  ok(win.includes('id="dr-big"') && win.includes('id="dr-list"') && win.includes('id="dr-accounts"') && win.includes('id="dr-open"') && win.includes('id="dr-rec"') && /role="dialog" aria-modal="true"/.test(win), '2 검진표 창: 결론 · 묶음 목록 · 계정 · 치료 단추 · 기록');
+  ok(['dr-seal', 'dr-big', 'dr-sub', 'dr-list', 'dr-rest', 'dr-open', 'dr-accounts', 'dr-rec', 'dr-rec-n'].every((id) => win.includes(`id="${id}"`)) && /role="dialog" aria-modal="true"/.test(win) && !/dr-side|dr-chips|id="dr-link"/.test(win), '2 Doctor 창: 결론(도장 · 큰 글 · 한 줄) · 확인할 것 · 나머지 한 줄 · 치료 단추 · 바닥의 계정 뱃지와 기록 뱃지(옛 옆 칸 · 숫자 칩은 없음)');
+  ok(win.indexOf('id="dr-accounts"') > win.indexOf('<footer class="dr-foot">') && win.indexOf('id="dr-rec"') > win.indexOf('id="dr-accounts"') && /<span class="dr-lab">Doctor 계정<\/span>/.test(win), '2 Doctor 창 바닥: 왼쪽 계정 뱃지 · 오른쪽 기록 뱃지');
   ok(!/data-pane="doctor"/.test(html) && !/doctor/.test(st.match(/const PANES = \[[^\]]*\]/)[0]), '2 설정의 IRIS Doctor 탭은 없음(목차는 아홉 줄 그대로)');
   const spots = [...html.matchAll(/data-doctor="([a-z]+)"/g)].map((m) => m[1]).sort().join(',');
   ok(spots === 'account,dead,update', `2 곳곳의 단추: 계정·보안 · 끝난 대화 띠 · 업데이트 (${spots})`);
@@ -199,10 +204,11 @@ const RECS = { v: 1, ok: true, items: [{ at: '2026-11-26T07:24:13.057Z', kind: '
   ok(/:root:not\(\.has-doctor\) \[data-doctor\], :root:not\(\.has-doctor\) \.dr-hint \{ display: none !important; \}/.test(css) && /if \(!window\.DoctorView\?\.available\?\.\(\)\) return;/.test(main), '2 Doctor 가 없는 PC: 곳곳의 단추가 보이지 않고 꺼진 에이전트 단추는 지금까지처럼 아무 일 없음');
   ok(/if \(window\.DoctorView\?\.isOpen\?\.\(\)\) \{ window\.DoctorView\.close\(\); return; \}/.test(main), '2 Esc = Doctor 창만 닫는다(작업 중단으로 새지 않음)');
   const shown = win.replace(/<!--[\s\S]*?-->/g, '') + js.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*\*[\s\S]*?\*\//g, '');
-  ok(!/TeamClaude|데몬|PID/.test(shown) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(shown), '2 화면 글: 안쪽 이름 · 번호 · 이모지 없음');
+  ok(!/TeamClaude|데몬|PID|중계기|검진/.test(shown) && !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(shown), '2 화면 글: 안쪽 이름 · 번호 · 이모지 없음 · 쓰는 사람의 말(중계기 · 검진이라고 쓰지 않음)');
+  ok(!/치료하면 해결/.test(js) && /bad: \['치료 대상', 'fix'\]/.test(js), '2 화면 글: 될지 모르는 것을 된다고 적지 않음("치료하면 해결"이 아니라 "치료 대상")');
   ok(!/\b(alert|confirm|prompt)\s*\(/.test(js.replace(/Dialog\.\w+\(/g, '')) && /Dialog\.error\(\{ title:/.test(js), '2 알림은 Dialog 로만');
-  ok((js.match(/innerHTML/g) || []).length === 1 && /s\.innerHTML = window\.Icons \? Icons\.svg\('pulse', 16\) : ''/.test(js), '2 받은 값은 글로만 넣는다(innerHTML 은 우리 아이콘 한 군데)');
-  ok(/pulse: '/.test(icons) && html.includes('<script src="/app/doctor.js"></script>'), '2 아이콘 pulse · 스크립트');
+  ok((js.replace(/^\s*\/\/.*$/gm, '').match(/innerHTML/g) || []).length === 1 && /node\.innerHTML = window\.Icons \? Icons\.svg\(name, size\) : ''/.test(js), '2 받은 값은 글로만 넣는다(innerHTML 은 우리 아이콘을 넣는 한 군데)');
+  ok(['pulse', 'plus', 'alert', 'help', 'window', 'box', 'gate', 'coin', 'pc', 'check', 'close', 'refresh', 'clock', 'key', 'chat', 'globe'].every((n) => new RegExp(`\\n\\s+'?${n}'?: '`).test(icons)) && html.includes('<script src="/app/doctor.js"></script>'), '2 아이콘(도장 · 항목 · 뱃지에 쓰는 이름이 모두 등록돼 있음) · 스크립트');
   ok(/if \(!sameOrigin\(req\)\) \{ log\(`403 doctor open/.test(sv) && /if \(!sameOrigin\(req\)\) \{ log\(`403 doctor checkup/.test(sv) && /if \(!d\.available\) return json\(res, 404/.test(sv), '2 창구: 열기 · 검진은 같은 출처만 · Doctor 가 없으면 404');
   ok(!/import\([^)]*iris-doctor|from '[^']*iris-doctor/.test(dm) && !/\bexec(Sync)?\(|shell: true/.test(dm), '2 데몬은 Doctor 코드를 불러오지 않고(자식으로만) · 명령 글을 만들지 않음');
   const num = (name) => Number((dm.match(new RegExp(`const ${name} = ([\\d_]+)`)) || [])[1]?.replace(/_/g, ''));
@@ -256,43 +262,66 @@ try {
       ok(await p.locator('#rail-doctor').isVisible() && !(await p.locator('#dr-modal').isVisible()), '3 화면: 작업목록 바닥에 IRIS Doctor 단추 · 창은 닫혀 있음');
       const n0 = called('checkup');
       await p.locator('#rail-doctor').click(); await sleep(1300);
-      ok(await p.locator('#dr-modal').isVisible() && (await T('#dr-big')) === '고장 2건' && called('checkup') <= n0 + 1, `3 화면: 누르면 검진표 창 · 결론 한 줄(${await T('#dr-big')})`);
-      const chips = (await p.locator('#dr-chips .dr-chip').allTextContents()).join(' | ');
-      ok(chips === '고장 2 | 정상 2', `3 화면: 숫자 칩(${chips})`);
-      const rows0 = await p.locator('#dr-list .dr-row').allTextContents();
-      ok(rows0.length === 2 && rows0.every((t) => /클로드 계정|코덱스 프로그램/.test(t)) && (await p.locator('#dr-list .dr-grp').count()) === 3, '3 화면: 묶음 셋 · 처음엔 문제 항목만 보임(정상 항목은 접힘)');
-      await p.locator('#dr-list .dr-gh').first().click(); await sleep(200);
+      ok(await p.locator('#dr-modal').isVisible() && (await T('#dr-big')) === '고칠 것이 2가지 있습니다' && (await T('#dr-sub')) === 'IRIS Gate가 응답하지 않습니다 외 1가지' && await p.locator('#dr-seal').evaluate((s) => s.classList.contains('bad') && !!s.querySelector('svg')) && called('checkup') <= n0 + 1, `3 화면: 누르면 Doctor 창 · 결론 한 문장(${await T('#dr-big')} — ${await T('#dr-sub')})`);
+      // 확인할 것만 카드로: 쉬운 말(무엇이 · 그래서) + 꼬리표 · 쉬운 말이 없는 항목은 원래 글로
+      const items = await p.locator('#dr-list .dr-item').allTextContents();
+      ok(items.length === 2 && /IRIS Gate가 응답하지 않습니다AI 계정과 이어 주는 문입니다\. 꺼져 있으면 요청을 보낼 수 없습니다\.치료 대상/.test(items[0]) && /코덱스 프로그램실제 프로그램이 없습니다\.치료 대상/.test(items[1]) && (await p.locator('#dr-list .dr-item .dr-ib svg').count()) === 2 && !items.join(' ').includes('포트'), `3 화면: 확인할 것만 카드로(쉬운 말 · 꼬리표 · 아이콘) — 쉬운 말이 없으면 원래 글로(${items.join(' | ')})`);
+      ok((await T('#dr-rest')).replace(/\s+/g, ' ').includes('나머지 2가지는 정상입니다') && await p.locator('#dr-rest button[data-all]').isVisible(), '3 화면: 정상인 것은 "나머지 N가지는 정상입니다" 한 줄 + 「모두 보기」');
+      // 바닥의 뱃지: 왼쪽 계정(연결됨 = 초록 체크 · 안 됨 = 점선 「연결하기」) · 오른쪽 지난 기록(건수)
+      const acc = (await p.locator('#dr-accounts .dr-acc').allTextContents()).join(' | ');
+      ok(acc === 'Claude 연결됨 | Codex 연결하기' && await p.locator('#dr-accounts .dr-acc.ok svg').count() === 1 && await p.locator('#dr-accounts .dr-acc.add svg').count() === 1 && (await T('#dr-open')) === '치료하기', `3 화면: 계정 뱃지 둘(${acc}) · 치료 단추`);
+      ok((await T('#dr-rec-t')) === '지난 기록' && (await T('#dr-rec-n')) === '2' && await p.locator('#dr-rec-n').isVisible(), '3 화면: 지난 기록 뱃지 + 건수');
+      ok(await p.evaluate(() => { const f = document.querySelector('.dr-foot').getBoundingClientRect(), a = document.querySelector('#dr-accounts').getBoundingClientRect(), r = document.querySelector('#dr-rec').getBoundingClientRect(); return a.left < f.left + f.width / 2 && r.right > f.right - 40 && r.left > a.right; }), '3 화면: 계정 뱃지는 왼쪽 · 기록 뱃지는 오른쪽 끝');
+      ok((await p.evaluate(() => document.querySelector('.dr-win').innerText.length)) < 420, `3 화면: 창의 글이 짧다(${await p.evaluate(() => document.querySelector('.dr-win').innerText.length)}자)`);
+      if (process.env.IRIS_CAPTURE_DIR) { fs.mkdirSync(process.env.IRIS_CAPTURE_DIR, { recursive: true }); await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-window.png') }); }
+      // 모두 보기: 묶음마다 쉬운 이름 — 상태 한 문장(번호는 보이지 않음) · 초점은 「돌아가기」로
+      await p.locator('#dr-rest button[data-all]').click(); await sleep(250);
       const rows1 = await p.locator('#dr-list .dr-row').allTextContents();
-      ok(rows1.length === 3 && rows1.some((t) => /포트 주인/.test(t)) && !rows1.join(' ').includes('PID'), '3 화면: 묶음을 누르면 정상 항목까지 펼쳐짐(번호는 보이지 않음)');
-      // 코덱스 검토 지적: 묶음을 눌러 목록이 다시 그려져도 초점이 그 묶음에 남는다 · 그 위에 안내 창이 뜨면 Tab 초점을 빼앗지 않는다
-      ok(await p.evaluate(() => document.activeElement?.classList.contains('dr-gh') && document.activeElement.dataset.group === 'relay'), '3 화면: 묶음을 누른 뒤에도 초점이 그 묶음에');
+      ok(rows1.length === 4 && (await p.locator('#dr-list .dr-grp').count()) === 3 && rows1.some((t) => /IRIS Gate 자리제자리에 있습니다/.test(t)) && rows1.some((t) => /Claude 로그인362일 남았습니다/.test(t)) && !rows1.join(' ').includes('PID') && !(await p.locator('#dr-hero').isVisible()) && !(await p.locator('#dr-open').isVisible()), `3 화면: 「모두 보기」 = 묶음 셋 · 살펴본 것 모두(쉬운 이름 — 상태, 번호 없음)`);
+      ok(await p.evaluate(() => document.activeElement?.dataset.back === '1'), '3 화면: 목록으로 바뀐 뒤 초점이 「돌아가기」에');
+      // 코덱스 검토 지적: 그 위에 안내 창이 뜨면 Tab 초점을 빼앗지 않는다
       await p.evaluate(() => { Dialog.error({ title: '시험', message: '시험' }); }); await sleep(400);
       await p.keyboard.press('Tab'); await sleep(150);
       ok(await p.evaluate(() => !!document.activeElement?.closest('#dlg')), '3 화면: 안내 창이 떠 있으면 Tab 초점이 안내 창 안에 머문다');
       await p.evaluate(() => document.querySelector('#dlg button')?.click()); await sleep(300);
-      const acc = (await p.locator('#dr-accounts .dr-acc').allTextContents()).join(' | ');
-      ok(/Claude준비됨 · 11\/26/.test(acc) && /Codex연결 안 됨/.test(acc) && (await T('#dr-open')) === '치료하기', `3 화면: 계정 두 줄(${acc}) · 치료 단추`);
-      ok((await p.evaluate(() => document.querySelector('.dr-win').innerText.length)) < 420, `3 화면: 창의 글이 짧다(${await p.evaluate(() => document.querySelector('.dr-win').innerText.length)}자)`);
-      if (process.env.IRIS_CAPTURE_DIR) { fs.mkdirSync(process.env.IRIS_CAPTURE_DIR, { recursive: true }); await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-window.png') }); }
+      await p.locator('#dr-list button[data-back]').click(); await sleep(250);
+      ok(await p.locator('#dr-hero').isVisible() && (await p.locator('#dr-list .dr-item').count()) === 2, '3 화면: 「돌아가기」 = 결론 화면으로');
+      if (process.env.IRIS_CAPTURE_DIR) { await p.locator('#dr-rest button[data-all]').click(); await sleep(250); await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-window-all.png') }); await p.locator('#dr-list button[data-back]').click(); await sleep(250); }
       // 기록
       await p.locator('#dr-rec').click(); await sleep(700);
       const recs = await p.locator('#dr-list .dr-rec').allTextContents();
-      ok(recs.length === 2 && /검진 — 고장 2/.test(recs[0]) && /치료 끝 — 해결/.test(recs[1]) && /이 PC 에만/.test(await T('#dr-foot-t')), `3 화면: 기록(${recs.join(' | ')}) · "이 PC 에만"`);
+      ok(recs.length === 2 && /살펴봄 — 고장 2/.test(recs[0]) && /치료 끝 — 해결/.test(recs[1]) && /이 PC 에만/.test(await T('#dr-list')) && (await T('#dr-rec-t')) === '살펴본 결과' && !(await p.locator('#dr-rec-n').isVisible()), `3 화면: 기록(${recs.join(' | ')}) · "이 PC 에만" · 뱃지는 「살펴본 결과」로`);
+      if (process.env.IRIS_CAPTURE_DIR) await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-window-records.png') });
       await p.locator('#dr-rec').click(); await sleep(300);
       // 치료하기 = 바깥 Doctor 창
       const o0 = called('open');
       await p.locator('#dr-open').click(); await sleep(1500);
-      ok(called('open') === o0 + 1 && /IRIS Doctor 창을 열었습니다/.test(await body()), '3 화면: 「치료하기」 = 바깥 Doctor 창을 한 번 연다');
+      ok(called('open') === o0 + 1 && /IRIS Doctor 창을 열었습니다/.test(await body()), `3 화면: 「치료하기」 = 바깥 Doctor 창을 한 번 연다(열기 ${called('open') - o0}번)`);
+      // 계정 뱃지 = 같은 열기 창구(연결 · 바꾸기는 바깥 Doctor 창에서) — 방금 연 직후라 안쪽은 다시 띄우지 않고 같은 답을 준다
+      let openReqs = 0; p.on('request', (rq) => { if (rq.method() === 'POST' && rq.url().endsWith('/api/doctor/open')) openReqs++; });
+      await p.locator('#dr-accounts button[data-acc="codex"]').click(); await sleep(900);
+      ok(openReqs === 1 && called('open') === o0 + 1, `3 화면: 계정 뱃지 = 바깥 Doctor 창 열기를 부른다(요청 ${openReqs}번 · 방금 열었으면 또 띄우지 않음)`);
+      // 코덱스 검토 지적: 다시 그려져도(계정 · 살펴보기 답이 늦게 와도) 키보드 초점이 같은 뱃지에 남는다
+      // (살펴보는 도중에 뱃지로 초점을 옮긴다 → 살펴보기 답과 기록 건수 답이 늦게 와서 화면이 두 번 다시 그려진다)
+      await p.evaluate(() => { document.querySelector('#dr-again').click(); document.querySelector('#dr-accounts button[data-acc="codex"]').focus(); });
+      const midFocus = await p.evaluate(() => document.activeElement?.dataset.acc === 'codex' && document.querySelector('#dr-big').textContent === '살펴보는 중');
+      await sleep(1500);
+      ok(midFocus && await p.evaluate(() => document.activeElement?.dataset.acc === 'codex' && document.activeElement.isConnected && document.querySelector('#dr-big').textContent !== '살펴보는 중'), '3 화면: 살펴보는 도중 뱃지에 둔 초점이, 답이 와서 다시 그려진 뒤에도 같은 뱃지에');
+      // 코덱스 검토 지적: 살펴보기는 됐지만 기록하지 못했으면 그렇다고 알린다(치료 단추는 그대로)
+      fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } }, checkup: { json: { ...CK_BAD, recorded: false } }, records: { json: RECS } });
+      await p.locator('#dr-again').click(); await sleep(1300);
+      ok(await p.locator('#dr-rec-warn').isVisible() && (await T('#dr-rec-warn')) === '이번 결과는 기록하지 못했습니다' && (await T('#dr-big')) === '고칠 것이 2가지 있습니다' && await p.locator('#dr-open').isEnabled(), '3 화면: 기록하지 못했으면 "이번 결과는 기록하지 못했습니다"(결과와 치료 단추는 그대로)');
       // 모두 정상
       fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } }, checkup: { json: CK_OK }, records: { json: RECS } });
       await p.locator('#dr-again').click(); await sleep(1300);
-      ok((await T('#dr-big')) === '모두 정상' && (await T('#dr-open')) === 'Doctor 창 열기' && !(await p.locator('#rail-doctor').evaluate((b) => b.classList.contains('warn'))), '3 화면: 모두 정상 = 치료 단추를 내세우지 않음 · 작업목록 단추도 평소 모양');
+      ok((await T('#dr-big')) === '모두 정상입니다' && (await T('#dr-sub')) === '2가지를 살펴봤습니다' && await p.locator('#dr-seal').evaluate((s) => s.classList.contains('ok')) && (await p.locator('#dr-list .dr-item').count()) === 0 && (await T('#dr-rest')).trim() === '살펴본 것 보기' && (await T('#dr-open')) === '그래도 이상하면 Doctor 열기' && await p.locator('#dr-open').evaluate((b) => b.classList.contains('ghost')) && !(await p.locator('#rail-doctor').evaluate((b) => b.classList.contains('warn'))), '3 화면: 모두 정상 = 초록 도장 · 치료 단추를 내세우지 않음 · 작업목록 단추도 평소 모양');
+      if (process.env.IRIS_CAPTURE_DIR) await p.screenshot({ path: path.join(process.env.IRIS_CAPTURE_DIR, 'doctor-window-ok.png') });
       // 검진 실패 = 정상이라고 하지 않고, 치료 단추는 그대로
       fake.set({ summary: { mode: 'garbage' }, open: { json: { ok: true, others: 0 } }, checkup: { mode: 'garbage' }, records: { json: RECS } });
       await p.locator('#dr-again').click(); await sleep(1300);
-      ok((await T('#dr-big')) === '검진하지 못했습니다' && await p.locator('#dr-open').isEnabled() && (await T('#dr-open')) === '치료하기', '3 화면: 검진 실패 = "검진하지 못했습니다" · 치료 단추는 됨');
+      ok((await T('#dr-big')) === '살펴보지 못했습니다' && await p.locator('#dr-seal').evaluate((s) => s.classList.contains('warn')) && await p.locator('#dr-open').isEnabled() && (await T('#dr-open')) === '치료하기' && !(await p.locator('#dr-rest').isVisible()), '3 화면: 살펴보기 실패 = "살펴보지 못했습니다"(정상이라고 하지 않음) · 치료 단추는 됨');
       await p.evaluate(() => fetch('/api/doctor?fresh=1')); await p.locator('#dr-close').click(); await sleep(200); await p.locator('#rail-doctor').click(); await sleep(1300);
-      ok((await p.locator('#dr-accounts .dr-acc').allTextContents()).every((t) => /확인 못함/.test(t)), '3 화면: 계정 상태를 못 읽으면 "확인 못함"(연결 안 됨이 아님)');
+      ok((await p.locator('#dr-accounts .dr-acc').allTextContents()).every((t) => /확인 못 함/.test(t)) && (await p.locator('#dr-accounts .dr-acc.off').count()) === 2 && (await p.locator('#dr-accounts .dr-acc.add').count()) === 0, '3 화면: 계정 상태를 못 읽으면 "확인 못 함"(「연결하기」로 보이지 않음)');
       // 고장이 나온 뒤 작업목록 단추의 꼬리표
       fake.set({ summary: { json: SUM_OK }, open: { json: { ok: true, others: 0 } }, checkup: { json: CK_BAD }, records: { json: RECS } });
       await p.locator('#dr-again').click(); await sleep(1300);

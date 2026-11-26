@@ -324,7 +324,7 @@ const mk = (o = {}) => {
   // 업데이트 칸(2026-11-26)
   const panel = src('app/update-panel.js'), mainJs = src('app/main.js');
   const calls = [...panel.matchAll(/fetch\('(\/api\/[^']+)'/g)].map((m) => m[1]).sort().join();
-  ok(calls === '/api/doctor/checkup,/api/update/choose,/api/update/review,/api/update/stage' && !/apply-now|innerHTML|insertAdjacentHTML/.test(panel) && !/\b(alert|confirm)\s*\(/.test(panel.replace(/Dialog\.\w+\(/g, '')), `2 칸: 데몬의 세 창구(+ 검진)에만 말함 · 적용 창구를 직접 부르지 않음 · 받은 글을 HTML 로 넣지 않음(${calls})`);
+  ok(calls === '/api/doctor/checkup,/api/update/choose,/api/update/review,/api/update/stage' && !/apply-now|insertAdjacentHTML/.test(panel) && (panel.replace(/^\s*\/\/.*$/gm, '').match(/innerHTML/g) || []).length === 1 && /node\.innerHTML = window\.Icons \? Icons\.svg\(name, size\) : ''/.test(panel) && !/\b(alert|confirm)\s*\(/.test(panel.replace(/Dialog\.\w+\(/g, '')), `2 칸: 데몬의 세 창구(+ 검진)에만 말함 · 적용 창구를 직접 부르지 않음 · 받은 글을 HTML 로 넣지 않음(${calls})`);
   ok(/window\.Settings\?\.confirmApply\?\.\(\)/.test(panel) && /if \(rv\.staged\) \{[^}]*return go\(\); \}\s*\n\s*window\.Settings\?\.updateAll\?\.\(\);/.test(panel), '2 칸: 적용은 지금의 확인 카드로 · 「전부 업데이트」 = 받아 둔 것이 있으면 다시 받지 않음, 없으면 기계식 길');
   ok(/<aside id="up-panel" class="up-panel" hidden/.test(html) && html.indexOf('<main id="stage">') < html.indexOf('id="up-panel"') && html.indexOf('id="up-panel"') < html.indexOf('</main>') && /<script src="\/app\/update-panel\.js"><\/script>/.test(html), '2 칸: 무대 안의 오른쪽 칸(처음에는 숨김) · 스크립트');
   ok(/if \(act === 'apply' && window\.UpdatePanel\) \{ window\.UpdatePanel\.start\(\); return; \}/.test(st) && /if \(act === 'apply' \|\| act === 'apply-all'\) \{/.test(st) && /act === 'apply-now' && window\.UpdatePanel\) return window\.UpdatePanel\.start\(\{ chat: false \}\)/.test(st), '2 설정: 업데이트 단추 = 칸을 엶(칸이 없으면 옛 길) · 「전부」의 기계식 길은 그대로 남음');
@@ -334,6 +334,7 @@ const mk = (o = {}) => {
   // 새 기능 목록 파일: 참/거짓 설정 키만 · 처음 값이 설정의 처음 값과 같음 · 글 길이
   const ui = JSON.parse(src('update-info.json')); const plDef = (st.match(/const PL_DEF = (\{[^}]*\});/) || [])[1] || '';
   ok(ui.schema === 1 && Array.isArray(ui.features) && ui.features.length >= 1 && ui.features.every((f) => /^[a-z][A-Za-z0-9]{1,39}$/.test(f.key) && typeof PLANNER_DEFAULTS[f.key] === 'boolean' && (f.default !== false) === PLANNER_DEFAULTS[f.key] && new RegExp(`\\b${f.key}: ${PLANNER_DEFAULTS[f.key]}\\b`).test(plDef) && f.title.length <= 30 && (f.sub || '').length <= 60), '2 새 기능 목록(update-info.json): 참/거짓 설정 키만 · 처음 값이 설정의 처음 값과 같음 · 글 길이 안');
+  ok(/'수정 사항'/.test(panel) && /'신규 추가'/.test(panel) && /'나만의 IRIS'/.test(panel) && /el\('b', '', '이렇게 됩니다'\)/.test(panel) && !/설치 패키지/.test(panel.replace(/^\s*\/\/.*$/gm, '')) && ['window', 'chat', 'box', 'plus', 'heart', 'file', 'calendar', 'refresh', 'clock', 'check', 'alert', 'help'].every((n) => new RegExp(`\\n\\s+'?${n}'?: '`).test(src('app/icons.js'))), '2 칸: 영역 이름 셋(수정 사항 · 신규 추가 · 나만의 IRIS) · 「이렇게 됩니다」 · 쉬운 이름(전체 묶음) · 쓰는 아이콘이 모두 등록돼 있음');
   ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(panel + JSON.stringify(ui)) && !/TeamClaude|데몬|PID/.test(panel.replace(/^\s*\/\/.*$/gm, '').replace(/\/\/[^\n]*$/gm, '').replace(/\/\*\*[\s\S]*?\*\//g, '')), '2 칸의 글: 이모지 · 안쪽 이름 없음');
   for (const p of ['check', 'settings', 'apply', 'apply-now']) ok(new RegExp(`if \\(p === '/api/update/${p}'\\)`).test(sv), `2 기계식 길: /api/update/${p} 창구가 그대로 있음`);
 }
@@ -403,7 +404,8 @@ try {
       await p.route('**/api/update/stage', async (route) => { stageCalls++; await sleep(300); if (stageAnswer) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(stageAnswer) }); review = RV({ ...STAGED, parts: review.parts }); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, review }) }); });
       await p.route('**/api/update/choose', (route) => { chosen.push(JSON.parse(route.request().postData() || '{}')); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(chooseAnswer) }); });
       await p.route('**/api/update/apply', (route) => { applyAll++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, reason: '시험: 받지 않음' }) }); });
-      const panel = () => p.evaluate(() => { const q = (s) => document.querySelector(s); return { open: UpdatePanel.isOpen(), hidden: q('#up-panel').hidden, docked: q('#stage').classList.contains('up-docked'), text: q('#up-panel').innerText, go: q('#up-go').textContent, goOff: q('#up-go').disabled, allHidden: q('#up-all').hidden, note: q('#up-note').textContent, ver: q('#up-ver').textContent }; });
+      const panel = () => p.evaluate(() => { const q = (s) => document.querySelector(s); return { open: UpdatePanel.isOpen(), hidden: q('#up-panel').hidden, docked: q('#stage').classList.contains('up-docked'), text: q('#up-panel').innerText, go: q('#up-go').textContent, goOff: q('#up-go').disabled, allHidden: q('#up-all').hidden, note: q('#up-note').textContent, ver: q('#up-ver').textContent, sum: q('#up-sum').hidden ? '' : q('#up-sum').innerText, pills: [...document.querySelectorAll('#up-health .up-ck')].map((x) => x.textContent), areas: [...document.querySelectorAll('#up-list .up-grp')].map((g) => `${g.dataset.area}:${g.querySelector('.up-grp-h b').textContent}:${g.querySelector('.up-cnt')?.textContent ?? '-'}`) }; });
+      const area = (id) => p.evaluate((a) => document.querySelector(`#up-list .up-grp[data-area="${a}"]`)?.innerText || '', id);
       const dlgOpen = () => p.evaluate(() => Dialog.isOpen());
       await p.evaluate(() => { window.__notices = []; const say = Dialog.notice; Dialog.notice = (t, o) => { window.__notices.push(String(t)); return say(t, o); }; }); // 말풍선은 차례를 기다릴 수 있어, 알림이 불렸는지를 본다
       const body = () => p.evaluate(() => document.body.innerText);
@@ -417,15 +419,21 @@ try {
       let v = await panel();
       ok(v.open && !v.hidden && v.docked && await p.locator('#up-panel').isVisible(), '3 칸: 대화 옆(무대 오른쪽)에 붙어 열림');
       ok(stageCalls === 1, `3 칸: 설치본이면 새 판을 한 번 받아 놓음(받아 놓기 ${stageCalls}번)`);
-      ok(v.ver === '9.9.8 → 9.9.9' && /IRIS 창/.test(v.text) && /메신저/.test(v.text) && /설치 패키지/.test(v.text) && /0\.4\.3 → 0\.4\.4/.test(v.text), '3 칸: 부품마다 지금 판 → 새 판');
-      ok(await p.evaluate(() => { const f = document.querySelector('input[data-part="face"]'); return f.checked && f.disabled; }) && /설치 패키지에 함께 들어 있습니다/.test(v.text) && v.go === '선택한 2개 업데이트' && !v.goOff, '3 칸: 설치 패키지를 고르면 IRIS 창은 함께 옴(따로 세지 않음) · 「선택한 2개 업데이트」');
-      ok(/새로 3 · 바뀜 12 · 없어짐 1/.test(v.text) && /새 기능/.test(v.text) && /새 기능 하나/.test(v.text) && await p.evaluate(() => document.querySelector('input[data-feature="newThing"]').checked), '3 칸: 받아 놓은 뒤 새 판과의 비교 · 새 기능 스위치(처음 값 켬)');
-      ok(/내가 고친 파일/.test(v.text) && /app\/style\.css/.test(v.text) && /새 판에서도 바뀜/.test(v.text) && /「내 것 유지」를 아직 못 합니다/.test(v.text) && await p.evaluate(() => [...document.querySelectorAll('#up-list button[data-file]')].every((b) => b.disabled) && [...document.querySelectorAll('#up-list button[data-file].on')].every((b) => b.dataset.pick === 'replace')), '3 칸: 내가 고친 파일 — 적용기가 못 하면 「내 것 유지」는 잠기고 모두 "새 판으로"');
-      ok(/창이 잠시 닫혔다 켜집니다 · 대화 2개가 닫힙니다/.test(v.note) && !v.allHidden, '3 칸: 바닥 글(창이 닫힘 · 대화 N개) · 「전부 업데이트」');
+      // 영역 상자 셋(2026-11-26 사용자 선택 = 시안 「가-1」 · 이름 = 수정 사항 · 신규 추가 · 나만의 IRIS): 머리줄에 이름 + 개수
+      ok(v.areas.join(' | ') === 'parts:수정 사항:3 | features:신규 추가:1 | mine:나만의 IRIS:2' && v.ver === '새 판 3가지', `3 칸: 영역 상자 셋 — 이름과 개수(${v.areas.join(' | ')}) · 머리의 「새 판 N가지」`);
+      const a1 = await area('parts');
+      ok(/IRIS 창/.test(a1) && /메신저/.test(a1) && /전체 묶음/.test(a1) && !/설치 패키지/.test(v.text) && /9\.9\.8 → 9\.9\.9/.test(a1) && /0\.4\.3 → 0\.4\.4/.test(a1) && /새 판으로 바꿀 것을 고르세요/.test(a1) && (await p.locator('#up-list .up-pick .up-pi svg').count()) === 3, '3 칸 「수정 사항」: 부품마다 아이콘 · 쉬운 이름(전체 묶음) · 지금 판 → 새 판');
+      ok(await p.evaluate(() => { const f = document.querySelector('input[data-part="face"]'); return f.checked && f.disabled; }) && /전체 묶음에 포함됩니다/.test(a1) && /고르면 IRIS 창도 여기에 포함됩니다/.test(a1) && /바로 바뀝니다 · 대화는 그대로/.test(a1) && /대화 옆 칸이 생겼습니다|알림 소리 고침/.test(a1) && v.go === '선택한 2개 업데이트' && !v.goOff, '3 칸 「수정 사항」: 줄마다 "고르면 어떻게 되나" · 전체 묶음을 고르면 IRIS 창은 함께 옴(따로 세지 않음) · 「선택한 2개 업데이트」');
+      const a2 = await area('features');
+      ok(/켤 기능을 고르세요/.test(a2) && /새 기능 하나/.test(a2) && await p.evaluate(() => document.querySelector('input[data-feature="newThing"]').checked) && !/새로 3 · 바뀜 12/.test(v.text), '3 칸 「신규 추가」: 받아 놓은 뒤 새 기능 스위치(처음 값 켬) · 파일 개수 세기는 보이지 않음');
+      const a3 = await area('mine');
+      ok(/내가 고친 파일 · 따로 보관합니다/.test(a3) && /app\/style\.css/.test(a3) && /새 판에서도 바뀐 파일/.test(a3) && /내가 더한 파일/.test(a3) && await p.evaluate(() => [...document.querySelectorAll('#up-list button[data-file]')].every((b) => b.disabled) && [...document.querySelectorAll('#up-list button[data-file].on')].every((b) => b.dataset.pick === 'replace') && [...document.querySelectorAll('#up-list .up-seg')].every((s) => s.classList.contains('lock') && /새 판으로만/.test(s.title))), '3 칸 「나만의 IRIS」: 내가 고친 파일 — 적용기가 못 하면 「내 것 유지」는 잠기고 모두 "새 판으로"');
+      ok(v.pills.join(' | ') === '새 판 받아 둠' && /이렇게 됩니다/.test(v.sum) && /메신저 · 전체 묶음 — 2가지가 새 판이 됩니다/.test(v.sum) && /새 기능 하나 기능을 켭니다/.test(v.sum) && /고친 파일 2개는 따로 보관한 뒤 새 판으로 바뀝니다/.test(v.sum) && /IRIS가 잠깐 닫혔다 켜집니다 · 열린 대화 2개는 다시 이어갈 수 있습니다/.test(v.sum) && !v.allHidden, `3 칸: 알약(새 판 받아 둠) · 「이렇게 됩니다」 요약(고른 것 · 새 기능 · 고친 파일 · 창이 닫힘) · 「전부 업데이트」`);
+      ok(!/중계기|데몬|설치 프로그램은|PID/.test(v.text) && v.text.length < 900, `3 칸: 쓰는 사람의 말(안쪽 낱말 없음) · 글이 길지 않다(${v.text.length}자)`);
       // 원하는 것만: 설치 패키지 · 메신저를 빼고 IRIS 창만, 새 기능은 끔
       await p.locator('input[data-part="package"]').uncheck(); await p.locator('input[data-part="messenger"]').uncheck(); await p.locator('input[data-feature="newThing"]').uncheck(); await sleep(150);
       v = await panel();
-      ok(v.go === '선택한 1개 업데이트' && await p.evaluate(() => { const f = document.querySelector('input[data-part="face"]'); return f.checked && !f.disabled; }), '3 칸: 설치 패키지를 빼면 IRIS 창을 따로 고를 수 있음 · 「선택한 1개 업데이트」');
+      ok(v.go === '선택한 1개 업데이트' && await p.evaluate(() => { const f = document.querySelector('input[data-part="face"]'); return f.checked && !f.disabled; }) && /IRIS 창 — 1가지가 새 판이 됩니다/.test(v.sum) && /새 기능 하나 기능은 꺼 둡니다/.test(v.sum), '3 칸: 전체 묶음을 빼면 IRIS 창을 따로 고를 수 있음 · 「선택한 1개 업데이트」 · 요약도 고른 대로 바뀜');
       chooseAnswer = { ok: true, swapped: [], kept: ['face'], needsApply: true, backup: null, features: { newThing: false }, info: PLAN_INFO };
       await p.locator('#up-go').click(); await sleep(700);
       ok(chosen.length === 1 && chosen[0].parts.join() === 'face' && chosen[0].features.newThing === false && chosen[0].files['app/style.css'] === 'replace', `3 칸: 고른 것만 보냄(부품 · 새 기능 · 파일) — ${JSON.stringify(chosen[0])}`);
@@ -435,7 +443,7 @@ try {
       ok(!(await dlgOpen()) && (await panel()).open, '3 칸: 「나중에」 = 적용하지 않음 · 칸은 그대로');
       // 메신저만: 창이 닫히지 않으니 확인 카드 없이 바로 바뀜
       await p.locator('input[data-part="face"]').uncheck(); await p.locator('input[data-part="messenger"]').check(); await sleep(150);
-      ok(!/창이 잠시 닫혔다 켜집니다/.test((await panel()).note), '3 칸: 메신저만 고르면 "창이 닫힙니다"를 적지 않음');
+      v = await panel(); ok(/메신저 — 1가지가 새 판이 됩니다/.test(v.sum) && /창은 닫히지 않습니다 · 대화는 그대로입니다/.test(v.sum) && !/잠깐 닫혔다|고친 파일|기능을/.test(v.sum), '3 칸: 메신저만 고르면 "창은 닫히지 않습니다"(새 기능 · 고친 파일 줄도 없음)');
       chooseAnswer = { ok: true, swapped: ['messenger'], kept: [], needsApply: false, backup: null, features: {}, info: { ...PLAN_INFO, plan: null } };
       await p.locator('#up-go').click(); await sleep(700);
       txt = await body();
@@ -483,7 +491,10 @@ try {
       review = RV({ ...STAGED, parts: RV().parts.map((x) => (x.part === 'face' ? { ...x, to: '9.9.10' } : x)), mine: { ...STAGED.mine, canKeep: true } });
       await p.evaluate(() => UpdatePanel.show()); await sleep(700);
       ok(stageCalls === 1 && await p.evaluate(() => { const on = Object.fromEntries([...document.querySelectorAll('#up-list button[data-file].on')].map((b) => [b.dataset.file, b.dataset.pick])); return on['app/mine.js'] === 'keep' && on['app/style.css'] === 'replace' && [...document.querySelectorAll('#up-list button[data-file]')].every((b) => !b.disabled); }), '3 칸: 적용기가 할 줄 알면 파일마다 고름(새 판에서 그대로인 파일 = 내 것 유지 · 새 판에서도 바뀐 파일 = 새 판으로) · 이미 받아 두었으면 다시 받지 않음');
+      // 코덱스 검토 지적: 요약은 실제로 고른 것만 말한다 — 내 것으로 두는 파일 수는 칸에서 고른 수
+      ok(/고친 파일 2개 가운데 1개는 내 것 그대로 두고, 나머지는 새 판으로 바뀝니다/.test((await panel()).sum), '3 칸 요약: 내 것으로 두는 것은 고른 파일 수만큼(나머지는 새 판으로)');
       await p.locator('#up-list button[data-file="app/style.css"][data-pick="keep"]').click(); await sleep(150);
+      ok(/고친 파일 2개는 모두 내 것 그대로 둡니다/.test((await panel()).sum), '3 칸 요약: 파일 선택을 바꾸면 요약도 바뀜(전부 내 것으로 두면 "모두")');
       chooseAnswer = { ok: true, swapped: [], kept: ['package'], needsApply: false, backup: null, features: {}, info: { ...PLAN_INFO, plan: null } };
       await p.locator('#up-go').click(); await sleep(500);
       ok(chosen.length === sent0 + 1 && chosen.at(-1).files['app/style.css'] === 'keep' && chosen.at(-1).files['app/mine.js'] === 'keep', '3 칸: 파일마다 고른 값을 보냄');
@@ -491,7 +502,21 @@ try {
       // 고친 파일을 알 수 없는 설치본: "없음"으로 보이지 않게 한 줄
       review = RV({ ...STAGED, mine: { known: false, why: 'no-manifest', partial: false, count: 0, canKeep: false, files: [] } });
       await p.evaluate(() => UpdatePanel.show()); await sleep(600);
-      ok(/고친 파일이 있는지 확인할 수 없습니다/.test((await panel()).text), '3 칸: 고친 파일을 알 수 없는 설치본 = "확인할 수 없습니다"(없다고 하지 않음)');
+      v = await panel(); ok(/고친 파일이 있는지 확인할 수 없습니다/.test(await area('mine')) && v.areas[2] === 'mine:나만의 IRIS:-' && !/고친 파일/.test(v.sum), '3 칸 「나만의 IRIS」: 고친 파일을 알 수 없는 설치본 = "확인할 수 없습니다"(없다고 하지 않음 · 개수도 적지 않음)');
+      // 코덱스 검토 지적: 다 살피지 못했거나 칸에 다 보이지 않는 경우 — 개수는 "N개 이상", 보이지 않는 것까지 "고른 대로"라고 하지 않는다
+      review = RV({ ...STAGED, mine: { known: true, why: null, partial: true, count: 70, canKeep: true, files: [{ file: 'app/style.css', kind: 'changed', clash: true }, { file: 'app/mine.js', kind: 'added', clash: false }] } });
+      await p.evaluate(() => UpdatePanel.show()); await sleep(600);
+      v = await panel(); ok(v.areas[2] === 'mine:나만의 IRIS:70+' && /… 외 68개 이상/.test(await area('mine')) && /고친 파일 70개 이상 가운데 1개는 내 것 그대로 두고, 나머지는 새 판으로 바뀝니다/.test(v.sum), `3 칸: 다 살피지 못한 경우 = "N개 이상" · 보이지 않는 파일은 새 판으로 바뀐다고 말함(${v.areas[2]})`);
+      review = RV({ ...STAGED, mine: { known: true, why: null, partial: true, count: 70, canKeep: false, files: [{ file: 'app/style.css', kind: 'changed', clash: true }] } });
+      await p.evaluate(() => UpdatePanel.show()); await sleep(600);
+      ok(/고친 파일 70개 이상은 따로 보관한 뒤 새 판으로 바뀝니다/.test((await panel()).sum), '3 칸 요약: 「내 것 유지」를 못 하는 판에서도 "N개 이상"을 지킴');
+      // 고친 파일이 없는 PC · 새 기능이 없는 판 · 새 기능을 알 수 없는 경우: 상자는 그대로 두고 그렇다고 적는다(영역이 사라지지 않는다)
+      review = RV({ ...STAGED, features: { known: true, items: [] }, mine: { known: true, why: null, partial: false, count: 0, canKeep: false, files: [] } });
+      await p.evaluate(() => UpdatePanel.show()); await sleep(600);
+      v = await panel(); ok(v.areas.join(' | ') === 'parts:수정 사항:3 | features:신규 추가:0 | mine:나만의 IRIS:0' && /이번 판에 새로 생기는 기능은 없습니다/.test(await area('features')) && /고친 파일이 없습니다/.test(await area('mine')), '3 칸: 새 기능 · 고친 파일이 없어도 상자 셋은 그대로(없다고 적음)');
+      review = RV({ ...STAGED, features: { known: false, items: [] } });
+      await p.evaluate(() => UpdatePanel.show()); await sleep(600);
+      ok((await panel()).areas[1] === 'features:신규 추가:-' && /아직 알 수 없습니다/.test(await area('features')), '3 칸 「신규 추가」: 새 기능을 알 수 없으면 "알 수 없습니다"(0개라고 하지 않음)');
       // 받아 놓지 못함: 까닭을 보이고, 「전부 업데이트」는 지금까지의 기계식 길로 간다
       await p.evaluate(() => UpdatePanel.close()); review = RV({ parts: RV().parts.map((x) => (x.part === 'face' ? { ...x, to: '9.9.11' } : x)) }); stageAnswer = { ok: false, why: 'failed', reason: '서명이 없습니다', review };
       await p.evaluate(() => UpdatePanel.show()); await sleep(1100);
@@ -518,11 +543,21 @@ try {
       reviewStatus = 200; await p.evaluate(() => UpdatePanel.close());
       // 점검 한 줄: IRIS Doctor 가 있는 PC 에서는 칸을 열 때 검진하고 고장이 있으면 Doctor 단추를 보인다(없는 PC 에서는 줄이 없다)
       review = RV(STAGED); await p.evaluate(() => UpdatePanel.show()); await sleep(600);
-      ok(await p.evaluate(() => { const t = document.querySelector('#up-health').innerText; return !/점검|고장|정상/.test(t) && !document.querySelector('#up-health button') && /고친 파일 2개/.test(t); }), '3 칸: IRIS Doctor 가 없는 PC 에서는 점검 글 · Doctor 단추가 없음(고친 파일 수만)');
+      v = await panel(); ok(v.pills.join(' | ') === '새 판 받아 둠' && await p.evaluate(() => !document.querySelector('#up-health button')), `3 칸: IRIS Doctor 가 없는 PC 에서는 "지금 상태" 알약 · Doctor 단추가 없음(${v.pills.join(' | ')})`);
       await p.evaluate(() => UpdatePanel.close());
       await p.route('**/api/doctor/checkup', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, at: '2026-11-26T09:00:00.000Z', recorded: true, groups: [{ id: 'g', title: '묶음' }], findings: [{ id: 'a', group: 'g', title: 't', state: 'bad', summary: '' }, { id: 'b', group: 'g', title: 't', state: 'ok', summary: '' }] }) }));
       review = RV(STAGED); await p.evaluate(() => { DoctorView.available = () => true; UpdatePanel.show(); }); await sleep(700);
-      ok(await p.evaluate(() => { const h = document.querySelector('#up-health'); return !h.hidden && /고장 1건/.test(h.innerText) && /고친 파일 2개/.test(h.innerText) && !!h.querySelector('button[data-doctor]'); }), '3 칸: 점검 한 줄(고장 N건 + IRIS Doctor 단추 · 고친 파일 수)');
+      v = await panel(); ok(/^고장 1건/.test(v.pills[0]) && v.pills[1] === '새 판 받아 둠' && await p.evaluate(() => !!document.querySelector('#up-health button[data-doctor]') && document.querySelector('#up-health .up-ck').classList.contains('bad')), `3 칸: 지금 상태 알약(고장 N건 = 붉게 + IRIS Doctor 단추)(${v.pills.join(' | ')})`);
+      await p.route('**/api/doctor/checkup', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, at: '2026-11-26T09:00:00.000Z', recorded: true, groups: [{ id: 'g', title: '묶음' }], findings: [{ id: 'b', group: 'g', title: 't', state: 'ok', summary: '' }] }) }));
+      await p.evaluate(() => UpdatePanel.show()); await sleep(700);
+      // 코덱스 검토 3바퀴 지적: 고장이 0건이어도 확인할 것이 남았으면 "정상"이라고 하지 않는다
+      await p.route('**/api/doctor/checkup', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, at: '2026-11-26T09:00:00.000Z', recorded: true, groups: [{ id: 'g', title: '묶음' }], findings: [{ id: 'a', group: 'g', title: 't', state: 'warn', summary: '' }, { id: 'c', group: 'g', title: 't', state: 'unknown', summary: '' }, { id: 'b', group: 'g', title: 't', state: 'ok', summary: '' }] }) }));
+      await p.evaluate(() => UpdatePanel.show()); await sleep(700);
+      v = await panel(); ok(v.pills[0] === '고장은 없음 · 확인할 것 2가지' && !v.pills.includes('지금 상태 정상') && await p.evaluate(() => !!document.querySelector('#up-health button[data-doctor]') && !document.querySelector('#up-health .up-ck').classList.contains('ok')), `3 칸: 고장이 없어도 확인할 것이 남았으면 "정상"이 아니라 "확인할 것 N가지"(${v.pills.join(' | ')})`);
+      await p.unroute('**/api/doctor/checkup');
+      await p.route('**/api/doctor/checkup', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, at: '2026-11-26T09:00:00.000Z', recorded: true, groups: [{ id: 'g', title: '묶음' }], findings: [{ id: 'b', group: 'g', title: 't', state: 'ok', summary: '' }] }) }));
+      await p.evaluate(() => UpdatePanel.show()); await sleep(700);
+      v = await panel(); ok(v.pills.join(' | ') === '지금 상태 정상 | 새 판 받아 둠' && await p.evaluate(() => [...document.querySelectorAll('#up-health .up-ck')].every((x) => x.classList.contains('ok') && !!x.querySelector('svg'))), `3 칸: 지금 상태 알약(정상 = 초록 체크)(${v.pills.join(' | ')})`);
       await p.evaluate(() => UpdatePanel.close());
       // 머리 단추(설정의 「업데이트 vN」): 곧바로 받지 않고 칸 + 설명 대화를 연다 · 「적용 (받아 둠)」: 칸만 연다(설명 대화를 또 열지 않음 · 확인 카드는 칸에서 고른 뒤)
       await p.evaluate((i) => { Settings.setUpdate({ ...i, plan: null }); Settings.show('about'); }, PLAN_INFO); await sleep(700);

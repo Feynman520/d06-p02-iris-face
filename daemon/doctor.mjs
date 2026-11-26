@@ -56,7 +56,9 @@ export function cleanCheckup(j) {
   if (!j || typeof j !== 'object' || j.ok !== true || !Array.isArray(j.findings) || !Array.isArray(j.groups)) return null;
   const groups = j.groups.filter((g) => g && ID_RE.test(String(g.id))).slice(0, 30).map((g) => ({ id: g.id, title: text(g.title, 40) || g.id }));
   const findings = j.findings.filter((f) => f && ID_RE.test(String(f.id)) && F_STATES.includes(f.state) && groups.some((g) => g.id === f.group)).slice(0, 300)
-    .map((f) => ({ id: f.id, group: f.group, title: text(f.title, 120), state: f.state, summary: text(f.summary, 300) }));
+    // name · say · more = Doctor 가 함께 주는 쉬운 말(없으면 화면이 title · summary 로 물러난다 — 옛 Doctor 와도 돈다)
+    .map((f) => ({ id: f.id, group: f.group, title: text(f.title, 120), state: f.state, summary: text(f.summary, 300),
+      ...(typeof f.name === 'string' && f.name ? { name: text(f.name, 40) } : {}), ...(typeof f.say === 'string' && f.say ? { say: text(f.say, 120) } : {}), ...(typeof f.more === 'string' && f.more ? { more: text(f.more, 200) } : {}) }));
   if (!findings.length) return null;
   return { ok: true, at: typeof j.at === 'string' && ISO.test(j.at) ? j.at : null, recorded: j.recorded === true, groups, findings };
 }
