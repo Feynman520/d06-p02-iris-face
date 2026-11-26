@@ -119,6 +119,10 @@
         <!-- 업데이트(v2.58, 2026-09-14): 절 머리의 단추 하나로 확인 → 내려받기 → 적용까지. 부품 행은 값만 보이는 .st-opt 모양. -->
         <section class="st-grp"><h3 class="st-h-row"><span id="st-update-h">업데이트</span><button id="st-update-act" class="text-btn outline" type="button">지금 확인</button></h3>
           <div id="st-update" class="upd"></div>
+          <!-- 대화로 업데이트(2026-11-26 — 설계 정본 = D09 「에이전트 업데이트·의사-설계」 조각 ⑤⑥⑦): 누르면 새 대화가 열려 아이리스가 무엇이 바뀌는지 · 이 PC 에서 고친 파일을 알려 주고 준비한다.
+               적용은 대화가 하지 않는다 — 화면의 확인 카드에서 사용자가 누른다. 위의 머리 단추(기계식 길)는 그대로다. 동작 = app/update-chat.js -->
+          <div class="st-opt"><span class="st-opt-text">대화로 업데이트<small id="st-upchat-sub">아이리스가 달라진 점과 이 PC 에서 고친 파일을 알려 주고 준비합니다. 적용은 직접 누릅니다.</small></span><button id="st-upchat" class="text-btn outline" type="button">대화 열기</button></div>
+          <p id="st-upchat-say" class="st-hint" hidden></p>
           <p id="st-doctor-upd" class="st-hint dr-hint" hidden>업데이트가 계속 실패하면 <button class="text-btn accent" type="button" data-doctor="update">IRIS Doctor</button></p>
           <label class="st-opt"><span class="st-opt-text">하루 한 번 새 판 확인<small>켜 두면 하루 한 번 새 판이 있는지만 읽습니다 — 내려받기는 위 단추를 누를 때만</small></span><input id="st-update-auto" class="sw" type="checkbox"></label></section>
         <section class="st-grp"><h3>정보</h3>
@@ -322,6 +326,7 @@
 <script src="/app/settings.js"></script>
 <script src="/app/feedback.js"></script>
 <script src="/app/doctor.js"></script>
+<script src="/app/update-chat.js"></script>
 <script src="/app/voice.js"></script>
 <script src="/app/planner.js"></script>
 <script src="/app/notify.js"></script>

@@ -1,0 +1,5 @@
+#!/bin/sh
+# iris-update (Git Bash) - IRIS update command for sessions started by IRIS
+dir=$(dirname "$0")
+if [ -n "$IRIS_UPDATE_NODE" ]; then exec "$IRIS_UPDATE_NODE" "$dir/../iris-update.mjs" "$@"; fi
+exec node "$dir/../iris-update.mjs" "$@"

@@ -38,6 +38,7 @@ import { HandoffFlow, relayReady } from './handoff.mjs';
 import { planStructure, createStructure, runOntology, ontologyPython, ontologyGraph, listTools, listExisting } from './tutorial.mjs';
 import { AuthWatch } from './auth.mjs';
 import { DoctorGate } from './doctor.mjs';
+import { UpdateChat } from './update-chat.mjs';
 import { sweepUploads, UPLOAD_KEEP_DAYS } from './uploads.mjs';
 import { ToolManager, makeRunner } from './toolinstall.mjs';
 import { childEnv } from './sessions.mjs';
@@ -72,7 +73,7 @@ const sm = new SessionManager(STATE, {
   onPrompt: (id, prompt) => broadcast({ type: 'prompt', id, prompt }), // 확인 카드(v2.43): 노란불의 질문·선택지, null = 카드 내림. 세션 목록(publicList)에도 rec.prompt 로 실린다.
   onList: () => broadcast({ type: 'sessions', list: publicList() }),
   onLog: (msg) => log(msg),
-  sessionEnv: (env, { id }) => plannerCli.applyEnv(env, id), // 세션용 플래너 명령의 열쇠 · 명령 폴더(planner-cli.mjs, 플래너가 꺼져 있으면 아무것도 안 함)
+  sessionEnv: (env, { id }) => { try { updateChat.applyEnv(env, id); } catch {} return plannerCli.applyEnv(env, id); }, // + 대화형 업데이트 명령(iris-update)의 열쇠 — 플래너가 꺼져 있어도 준다(update-chat.mjs) // 세션용 플래너 명령의 열쇠 · 명령 폴더(planner-cli.mjs, 플래너가 꺼져 있으면 아무것도 안 함)
   noteExtra: () => plannerCli.note(),
   // v2.73: 대화 기록의 차례가 열려 있는가(transcript.mjs turnState) — 화면 글자 판정의 교차 확인(sessions.mjs idleCheck). 기록이 없으면 null.
   turnOpen: (id) => { const tl = tails.get(id); if (!tl) return null; const s = tl.turnState(); return s == null ? null : s === 'open'; },
@@ -203,6 +204,9 @@ const updater = new Updater({
 // 많이 차지하는 것의 세션 묶음에는 살아 있는 세션만 넘긴다 — 끝난 세션의 PID 는 윈도가 다른 프로그램에 다시 쓴다.
 const memory = new MemoryMonitor({ log, broadcast, sessions: () => sm.list().filter(r => sm.live.has(r.id)).map(r => ({ id: r.id, title: r.title, pid: r.pid })), sweeper: sweeperPath(), python: () => pythonExe() });
 let updateResult = null; // 적용기가 남긴 결과(첫 화면에 한 번만 토스트)
+// ---- 대화형 업데이트(update-chat.mjs): 「대화로 업데이트」 대화의 명령(iris-update) 창구 + 업데이트 기록장 + 손댄 파일 대조. 기계식 길(위 updater 의 창구)은 그대로다. ----
+const updateChat = new UpdateChat({ updater, port: PORT, stateDir: STATE, faceRoot: ROOT, session: (id) => sm.get(id) || null, sessions: () => sm.list(), broadcast: (o) => broadcast(o), log: (m) => log(m) });
+const noteUpdate = (fn) => { try { fn(); } catch {} }; // 기록을 남기지 못해도 확인 · 내려받기 · 적용을 막지 않는다
 
 // ---- transcript tails (기록파일 읽기 전용, 폴링) ----
 // 폴링 간격은 두 단계(2026-09-10): 작업 중·확인 필요·요청을 보낸 직후 15초 = 0.3초(터미널처럼 바로 반영), 그 밖(대기·종료) = 1.5초.
@@ -515,11 +519,16 @@ const server = http.createServer(async (req, res) => {
     }
     // ---- 업데이트(v2.58): 확인·설정·내려받기·적용. 전부 같은 출처만(화면에서만 부른다). ----
     if (req.method === 'GET' && p === '/api/update') return json(res, 200, updater.info());
+    // 대화형 업데이트의 명령 창구: 세션에만 준 열쇠로 가린다(웹 쪽은 못 부른다). 적용은 이 창구에 없다 — 사용자가 화면의 확인 카드에서 누른다.
+    if (req.method === 'POST' && p === '/api/update/cli') {
+      if (req.headers.origin) return json(res, 403, { ok: false, text: 'forbidden' }); // 브라우저가 부르는 길이 아니다
+      const r = await updateChat.handle(req.headers, await readBody(req)); return json(res, r.code, r.out);
+    }
     if (p.startsWith('/api/update/') && req.method === 'POST') {
       if (!sameOrigin(req)) { log(`403 update ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
-      if (p === '/api/update/check') { try { return json(res, 200, await updater.check()); } catch (e) { log(`502 update check: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: e.message }); } }
+      if (p === '/api/update/check') { try { const info = await updater.check(); noteUpdate(() => updateChat.noteChecked(info)); return json(res, 200, info); } catch (e) { noteUpdate(() => updateChat.note('checked', { via: 'screen', ok: false, reason: e.message })); log(`502 update check: ${String(e.message).slice(0, 200)}`); return json(res, 502, { error: e.message }); } }
       if (p === '/api/update/settings') { const b = await readBody(req); return json(res, 200, updater.setEnabled(b.enabled !== false)); }
-      if (p === '/api/update/apply') { const r = await updater.apply(); return json(res, r.ok ? 200 : 400, { ...r, info: updater.info() }); }
+      if (p === '/api/update/apply') { const r = await updater.apply(); const out = { ...r, info: updater.info() }; noteUpdate(() => updateChat.noteDownload(out)); return json(res, r.ok ? 200 : 400, out); }
       // 비밀 금고(v2.62): 보관된 복구 문구를 엔진의 화면 창으로만 보여 준다. 문구는 데몬·응답·로그를 거치지 않는다(STA PowerShell 5.1 필요).
       if (p === '/api/vault/reveal') {
         if (!sameOrigin(req)) return json(res, 403, { error: 'forbidden origin' });
@@ -535,8 +544,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, r.code === 0 ? 200 : 400, r.code === 0 ? { ok: true } : { error: (r.err.split(/\r?\n/).find((l) => /복구문구|봉투|STA|error/i.test(l)) || r.err.trim().split(/\r?\n/).pop() || `exit ${r.code}`).slice(0, 300) });
       }
       if (p === '/api/update/apply-now') {
+        // 적용은 **화면에서 사용자가 누른 것**만 받는다(2026-11-26 — 대화형 업데이트를 넣으며 조임). 지금까지는 출처 표시가 없는 로컬 호출도 받았다 —
+        // 이 창구를 부르는 것은 화면의 확인 카드 하나뿐이고(브라우저는 같은 출처의 POST 에 Origin · Sec-Fetch-Site 를 늘 싣는다), 대화의 에이전트가 주소를 직접 불러 사용자 확인을 건너뛰는 길을 막는다.
+        // 같은 PC 의 프로그램이 마음먹고 표시를 흉내 내는 것까지 막는 장치는 아니다(적용기를 직접 실행할 수도 있다) — 실수와 "다른 방법으로 적용"을 막는 문턱이다.
+        const o = req.headers.origin, fromPage = o === `http://127.0.0.1:${PORT}` || o === `http://localhost:${PORT}` || (!o && req.headers['sec-fetch-site'] === 'same-origin');
+        if (!fromPage) { log('403 update apply-now: not from the page'); return json(res, 403, { ok: false, reason: '적용은 IRIS 화면의 확인 카드에서 사용자가 눌러야 합니다.' }); }
         const r = updater.applyNow();
         if (!r.ok) return json(res, 400, r);
+        noteUpdate(() => updateChat.noteHandoff(updater.info()));
         json(res, 200, r); log('update apply-now: shutting down for the updater'); setTimeout(shutdown, 300); return;   // ⏻ 와 같은 경로 — 적용기가 폴더를 바꾸고 다시 띄운다
       }
     }
@@ -755,7 +770,7 @@ server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(proce
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
   try { const ar = autoResumeState(settings.get()); const waitGate = ar.enabled && agyConnection === 'gate' && sm.lost().some((r) => r.agent === 'antigravity'); const ids = waitGate ? sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent !== 'antigravity' }) : sm.resumeLost({ enabled: ar.enabled }); if (waitGate) { const agyLost = () => sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent === 'antigravity' }); agyGateFirst.then(agyLost, agyLost); ids.push(...sm.lost().filter((r) => r.agent === 'antigravity').map((r) => r.id)); } if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
-  try { updateResult = updater.consumeResult(); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
+  try { updateResult = updater.consumeResult(); if (updateResult) noteUpdate(() => updateChat.noteResult(updateResult, updater.installed())); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).
   const sweepUp = () => { try { const r = sweepUploads(path.join(STATE, 'uploads')); if (r.removed) log(`uploads: removed ${r.removed} file(s) older than ${UPLOAD_KEEP_DAYS} days (${Math.round(r.bytes / 1024)}KB), kept ${r.kept}`); } catch (e) { log(`uploads sweep error: ${e?.message || e}`); } };
   sweepUp(); setInterval(sweepUp, 24 * 60 * 60 * 1000).unref();

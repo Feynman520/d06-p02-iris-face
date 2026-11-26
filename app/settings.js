@@ -374,11 +374,14 @@ window.Settings = (() => {
     Notify.push({ title: '업데이트 확인', sub: '하루 한 번 새 판을 확인합니다 — 설정에서 끌 수 있습니다', status: 'idle', force: true });
   }
   /** 데몬의 {type:'update', …} 방송. info 가 실려 오면 그대로 갈아 끼우고, 내려받기 진행은 단추 글만 바꾼다. */
+  let offering = false; // 대화가 띄운 적용 확인이 떠 있는 동안
   function onUpdate(m) {
     if (m.info) { upd = m.info; updBusy = false; }
     else if (m.phase === 'download' && upd) upd.applying = { part: m.part, index: m.index || 1, count: m.count || 1, received: m.received, total: m.total };
     if (m.phase === 'error' || m.phase === 'ready' || m.phase === 'checked') updBusy = false;
     if (open) renderUpdate();
+    // 대화형 업데이트(update-chat): 대화가 "적용 확인을 띄워 달라"고 하면 받아 둔 계획이 있을 때 같은 확인 카드를 띄운다 — 누르는 것은 사용자다. 이미 떠 있으면 또 띄우지 않는다.
+    if (m.phase === 'offer' && upd?.plan && upd.mode !== 'dev' && !offering) { offering = true; updAct('confirm-apply').finally(() => { offering = false; }); }
   }
   const setUpdate = (info) => { if (info) { upd = info; notice(); if (open) renderUpdate(); } };
   /** 적용기가 남긴 결과(데몬 hello 의 updateResult) → 토스트 한 개. */
@@ -405,7 +408,8 @@ window.Settings = (() => {
     if (act === 'apply-now' || act === 'confirm-apply') {
       const n = opts.sessionCount?.() ?? 0;
       const kinds = (upd?.plan?.items || []).map(i => `${(UPD_PART[i.kind] || [i.kind])[0]} v${i.version}`).join(' · ');
-      const msg = `대화 ${n}개가 끝났다가 적용 뒤 자동으로 다시 열립니다. IRIS 창도 잠시 닫혔다 스스로 다시 켜집니다.`;
+      // 사실대로(2026-11-26): 전부 종료로 닫힌 대화는 자동으로 다시 열리지 않는다(v2.97 — 「종료됨」 카드의 「여기서 재개」로 잇는다). 옛 문구 "자동으로 다시 열립니다"는 그 전의 동작이었다.
+      const msg = `${n ? `대화 ${n}개가 닫힙니다 — 적용 뒤 「여기서 재개」로 이어 갈 수 있습니다. ` : ''}IRIS 창이 잠시 닫혔다 스스로 다시 켜집니다.`;
       if (!(await Dialog.confirm(msg, { title: '받아 둔 새 판을 지금 적용할까요?', tag: kinds, icon: 'download', okLabel: '지금 적용', cancelLabel: '나중에' }))) { renderUpdate(); return; }
       try {
         const res = await fetch('/api/update/apply-now', { method: 'POST' }); const d = await res.json().catch(() => ({}));
@@ -619,6 +623,7 @@ window.Settings = (() => {
     fetch('/api/agents').then(r => r.json()).then((a) => { agents = a; if (open) renderPanel(); }).catch(() => {});
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
     // 업데이트(v2.58): 절 머리 단추 하나 + 하루 1회 스위치. 상태는 데몬이 준다(웹소켓 방송은 main.js 가 onUpdate 로 넘긴다).
+    window.UpdateChatView?.init(); // 「대화로 업데이트」 단추(app/update-chat.js)
     $('#st-update-act').addEventListener('click', (e) => { const act = e.currentTarget.dataset.act; if (act) updAct(act); });
     // 비밀 금고(v2.62): 보관된 복구 문구를 화면 창으로 보여 준다(데몬이 secrets-vault.ps1 -Action ShowRecovery 실행, 문구는 이 화면·로그에 오지 않음)
     $('#st-recovery')?.addEventListener('click', async (e) => {
