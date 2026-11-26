@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyLongKey, longKeyFile, scrub, AuthWatch, DASH_LOGIN } from '../daemon/auth.mjs';
+import { applyLongKey, longKeyFile, scrub, AuthWatch, DASH_LOGIN, healthFileOf, healthSignature } from '../daemon/auth.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let pass = 0, fail = 0;
@@ -54,6 +54,53 @@ ok(info?.worst === 'soon' && info.items.length === 2, '3 status.mjs --json 결�
 ok(sent.length === 1 && sent[0].type === 'auth', '3 상태가 바뀌면 방송 1번');
 await w.refresh();
 ok(sent.length === 1, '3 같은 상태면 다시 방송하지 않음');
+// ---- 3b절 사본이 바로 따라오는가(2026-11-25 사용자 신고 "재로그인 · 재시작 뒤에도 설정에는 계속 끊김" — 사본을 30분에 한 번만 다시 읽었다) ----
+{
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-auth-fresh-'));
+  const countFile = path.join(dir2, 'runs.txt'), stateFile = path.join(dir2, 'state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ health: 'needs-login', level: 'expired' }));
+  // 가짜 판정 도구: 불릴 때마다 횟수를 적고, state.json 의 값으로 구글 계정 한 줄을 낸다
+  fs.writeFileSync(path.join(dir2, 'status.mjs'), [
+    "import fs from 'node:fs';",
+    `const c = ${JSON.stringify(countFile)}, s = JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}, 'utf8'));`,
+    "fs.appendFileSync(c, 'x');",
+    "await new Promise((r) => setTimeout(r, 150));",
+    "const items = [{ id: 'tc:google:google-1', group: 'teamclaude', provider: 'google', name: 'google-1', label: 'google-1', longKey: false, expiresAt: null, daysLeft: null, level: s.level, renew: 'teamclaude-login', optional: false, health: s.health }];",
+    "process.stdout.write(JSON.stringify({ items, worst: s.level === 'expired' ? 'expired' : 'ok', due: s.level === 'expired' ? ['tc:google:google-1'] : [], nextExpiry: null }) + '\\n');",
+  ].join('\n'));
+  const runs = () => { try { return fs.readFileSync(countFile, 'utf8').length; } catch { return 0; } };
+  const hf = path.join(dir2, 'teamclaude.auth-health.json');
+  const writeHealth = (state) => fs.writeFileSync(hf, JSON.stringify({ updatedAt: new Date().toISOString(), accounts: [{ name: 'google-1', provider: 'google', state }] }));
+  writeHealth('needs-login');
+  const sent2 = [];
+  const w2 = new AuthWatch({ dir: dir2, healthFile: hf, watchMs: 0, broadcast: (o) => sent2.push(JSON.parse(JSON.stringify(o))) });
+  const [a, b] = await Promise.all([w2.refresh(), w2.refresh()]);
+  ok(runs() === 1 && a === b, `3b 겹친 두 번의 다시 읽기는 도구를 한 번만 돌림 (${runs()}회)`);
+  ok(w2.info.items[0].health === 'needs-login' && sent2.length === 1, '3b 처음 읽기 → 방송 1번');
+  await w2.refreshIfStale(60_000);
+  ok(runs() === 1, '3b 사본이 1분 안이면 다시 읽지 않음(fresh)');
+  w2.info.checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  await w2.refreshIfStale(60_000);
+  ok(runs() === 2, '3b 사본이 1분보다 오래됐으면 다시 읽음(fresh)');
+  // 재로그인 뒤: 중계기 상태 파일이 바뀌면 감시가 알아채 다시 읽고 방송한다
+  w2.healthSig = healthSignature(hf);
+  ok((await w2.watchTick()) === false && runs() === 2, '3b 중계기 상태가 그대로면 도구를 돌리지 않음');
+  fs.writeFileSync(stateFile, JSON.stringify({ health: 'ok', level: 'ok' })); writeHealth('ok');
+  ok((await w2.watchTick()) === true && runs() === 3, '3b 중계기 상태가 바뀌면(재로그인 필요 → 정상) 바로 다시 읽음');
+  ok(w2.info.items[0].level === 'ok' && sent2.length === 2, '3b 바뀐 사본을 방송 → 화면 · 톱니 점이 따라옴');
+  // 급한 정도가 같은 변화(정상 ↔ 확인 중)도 방송된다
+  fs.writeFileSync(stateFile, JSON.stringify({ health: 'checking', level: 'ok' })); writeHealth('checking');
+  ok((await w2.watchTick()) === true && sent2.length === 3 && w2.info.items[0].health === 'checking', '3b 정상 → 확인 중(급한 정도는 같음)도 방송');
+  // 도구가 실패하면 지난 사본을 그대로 둔다
+  fs.writeFileSync(path.join(dir2, 'status.mjs'), "process.stdout.write('not json\\n');");
+  const before = JSON.stringify(w2.info);
+  await w2.refresh();
+  ok(JSON.stringify(w2.info) === before, '3b 다시 읽기가 실패하면 지난 사본 유지');
+  ok(healthSignature(path.join(dir2, 'nope.json')) === null && healthSignature(null) === null, '3b 상태 파일이 없으면 지문 없음(감시는 아무것도 하지 않음)');
+  ok(healthFileOf({ TEAMCLAUDE_CONFIG: path.join(dir2, 'teamclaude.auth-health.json').replace('.auth-health', '') }, dir2) === null
+    && (() => { const cfg = path.join(dir2, 'teamclaude.json'); fs.writeFileSync(cfg, '{}'); return healthFileOf({ TEAMCLAUDE_CONFIG: cfg }, dir2) === hf; })(), '3b 상태 파일 자리 = 중계기 설정 파일 옆');
+  w2.stop();
+}
 ok(!new AuthWatch({ dir: null }).available, '3 도구 없음 → 기능 끔');
 ok((await new AuthWatch({ dir: null }).renew('x')).ok === false, '3 도구 없으면 갱신 거절');
 

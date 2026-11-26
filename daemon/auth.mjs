@@ -45,12 +45,36 @@ function postJson(port, p, body, timeoutMs = 8000) {
 /** 대시보드의 login 동작이 아는 공급자(대시보드 server.mjs 의 op:'login' — 클로드 · 코덱스). 여기 없는 공급자는 갱신을 시작하지 않는다. */
 export const DASH_LOGIN = Object.freeze({ __proto__: null, anthropic: 'anthropic', claude: 'anthropic', codex: 'codex' });
 
+/**
+ * 중계기가 계정마다의 로그인 상태를 적어 두는 파일(설정 파일 옆 `….auth-health.json`). 자리 찾기는 판정 도구(iris-auth status.mjs)와 같은 차례.
+ * 없으면 null — 그때는 30분 주기만 돈다.
+ */
+export function healthFileOf(env = process.env, home = os.homedir()) {
+  const cands = [
+    env.TEAMCLAUDE_CONFIG,
+    path.join(home, '.config', 'teamclaude.json'),
+    env.CLAUDE_CONFIG_DIR ? path.join(path.dirname(env.CLAUDE_CONFIG_DIR), 'shared', 'portable-state', 'teamclaude', 'teamclaude.json') : null,
+  ].filter(Boolean);
+  for (const c of cands) { try { if (fs.existsSync(c)) return c.replace(/\.json$/i, '.auth-health.json'); } catch {} }
+  return null;
+}
+/** 그 파일의 (계정 = 상태) 지문. 읽지 못하면 null. 이름 · 상태 낱말만 본다(열쇠는 그 파일에 없다). */
+export function healthSignature(file) {
+  if (!file) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return (Array.isArray(j?.accounts) ? j.accounts : []).map((a) => `${a?.provider || 'anthropic'}:${a?.name}=${a?.state}`).sort().join('|');
+  } catch { return null; }
+}
+
 export class AuthWatch {
-  /** opts: { log, broadcast, node, dir, everyMs, ensureDash, post } — dir 를 주면 시험용 가짜 도구 폴더, post 는 시험용 가짜 대시보드 호출 */
-  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson } = {}) {
-    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post });
+  /** opts: { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs } — dir 를 주면 시험용 가짜 도구 폴더, post 는 시험용 가짜 대시보드 호출 */
+  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson, healthFile = healthFileOf(), watchMs = 30_000 } = {}) {
+    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs });
     this.available = !!dir;
     this.info = null; this.job = null; this.timer = null; this.lastKey = '';
+    // 2026-11-25 사용자 신고 "재로그인하고 재시작까지 했는데 설정에는 계속 끊김": 사본을 30분에 한 번만 다시 읽었다.
+    this.refreshing = null; this.healthSig = null; this.watchTimer = null;
   }
   run(script, args = [], { timeoutMs = 15_000, onLine } = {}) {
     return new Promise((resolve) => {
@@ -63,14 +87,43 @@ export class AuthWatch {
       child.on('error', () => finish(-1)); child.on('exit', finish);
     });
   }
-  async refresh({ notify = false } = {}) {
+  /** 판정 도구를 한 번 돌려 사본을 갈아 끼운다. 도는 중에 또 부르면 그 결과를 함께 기다린다(화면 열기와 감시가 겹쳐도 도구는 한 번). 실패하면 지난 사본을 그대로 둔다. */
+  refresh({ notify = false } = {}) {
+    if (!this.available) return Promise.resolve(null);
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      try {
+        const r = await this.run('status.mjs', notify ? ['--json', '--notify'] : ['--json']);
+        try { this.info = { ...JSON.parse(r.out.trim().split(/\r?\n/).pop()), checkedAt: new Date().toISOString() }; }
+        catch { this.log(`auth: status 읽기 실패(code ${r.code})`); return this.info; }
+        // 방송 조건 = 급한 정도 · 급한 항목 + 항목마다의 단계와 중계기 판정(health). 「정상 ↔ 확인 중」처럼 급한 정도가 같은 변화도 화면에 가야 한다.
+        const key = `${this.info.worst}|${(this.info.due || []).join(',')}|${(this.info.items || []).map((i) => `${i.id}:${i.level}:${i.health || ''}`).join(',')}`;
+        if (key !== this.lastKey) { this.lastKey = key; this.broadcast({ type: 'auth', info: this.public() }); }
+        return this.info;
+      } finally { this.refreshing = null; }
+    })();
+    return this.refreshing;
+  }
+  /** 사본이 maxAgeMs 보다 오래됐으면(또는 없으면) 다시 읽는다 — 설정의 계정 · 보안을 열 때. */
+  async refreshIfStale(maxAgeMs = 60_000) {
     if (!this.available) return null;
-    const r = await this.run('status.mjs', notify ? ['--json', '--notify'] : ['--json']);
-    try { this.info = { ...JSON.parse(r.out.trim().split(/\r?\n/).pop()), checkedAt: new Date().toISOString() }; }
-    catch { this.log(`auth: status 읽기 실패(code ${r.code})`); return this.info; }
-    const key = `${this.info.worst}|${(this.info.due || []).join(',')}`;
-    if (key !== this.lastKey) { this.lastKey = key; this.broadcast({ type: 'auth', info: this.public() }); }
+    const at = Date.parse(this.info?.checkedAt || '');
+    if (!this.info || !Number.isFinite(at) || Date.now() - at > maxAgeMs) return this.refresh();
     return this.info;
+  }
+  /** 중계기의 계정 상태가 바뀌었는가(파일의 (계정 = 상태) 지문만 본다 — 도구는 바뀐 때만 돌린다). 바뀌었으면 다시 읽고 true. */
+  async watchTick() {
+    const sig = healthSignature(this.healthFile);
+    if (sig === null) return false;
+    if (this.healthSig === null) { this.healthSig = sig; return false; }
+    if (sig === this.healthSig) return false;
+    // 지문은 **새로 읽기에 성공한 뒤에** 확정한다(코덱스 검토): 먼저 확정하면 그 읽기가 실패하거나, 변화보다 먼저 시작한 읽기에 합쳐졌을 때
+    // 다음 감시가 "변화 없음"으로 보고 화면이 다시 30분 낡는다. 도는 중인 읽기는 끝나기를 기다린 뒤 새로 한 번 읽는다.
+    if (this.refreshing) await this.refreshing.catch(() => {});
+    const before = this.info?.checkedAt || null;
+    await this.refresh().catch(() => {});
+    if (this.info && this.info.checkedAt !== before) this.healthSig = sig;
+    return true;
   }
   public() { return { available: this.available, info: this.info, job: this.job ? { ...this.job, lines: this.job.lines.slice(-6) } : null }; }
   start() {
@@ -78,8 +131,13 @@ export class AuthWatch {
     setTimeout(() => this.refresh({ notify: true }).catch(() => {}), 20_000);
     this.timer = setInterval(() => this.refresh({ notify: true }).catch(() => {}), this.everyMs);
     this.timer.unref?.();
+    if (this.healthFile && this.watchMs > 0) {
+      this.healthSig = healthSignature(this.healthFile);
+      this.watchTimer = setInterval(() => { this.watchTick().catch(() => {}); }, this.watchMs);
+      this.watchTimer.unref?.();
+    }
   }
-  stop() { clearInterval(this.timer); }
+  stop() { clearInterval(this.timer); clearInterval(this.watchTimer); this.watchTimer = null; }
 
   /** 한 항목 갱신. iris:* = 1년 열쇠 발급(브라우저 승인 1회), tc:anthropic:* / tc:codex:* = 대시보드 로그인 흐름. */
   async renew(id) {

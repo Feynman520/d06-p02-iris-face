@@ -333,11 +333,13 @@ else {
     // ---------- 7) 설정: 묶음 8개 · 열쇠 카드 세 장 · 온톨로지 그래프 · 도구 · 튜토리얼 다시 보기 ----------
     const navOrder = await p.evaluate(() => [...document.querySelectorAll('#st-nav .st-nav-i')].map(b => b.dataset.pane).join(','));
     ok(navOrder === 'design,session,ontology,tools,planner,mods,account,about,feedback', `7 목차 9묶음 순서 (${navOrder})`); // v2.105: 의견 보내기 · 플래너 · 2026-11-25: 「알림」(notify)을 「알림 · 플래너」(planner)에 합침
+    // 2026-11-25: 계정 · 보안을 열면 화면이 데몬에 상태를 새로 묻는다(fresh=1) — 그 답이 온 뒤에 시험용 상태를 넣는다(먼저 넣으면 데몬의 답이 덮는다)
+    await p.evaluate(() => Settings.show('account')); await sleep(900);
     await p.evaluate(() => Settings.setAuth({ available: true, info: { checkedAt: new Date().toISOString(), items: [
       { id: 'iris', group: 'iris', label: 'IRIS 창', name: 'iris', provider: 'claude', level: 'ok', daysLeft: 300, longKey: true },
       { id: 'c1', group: 'relay', label: 'claude-a', name: 'a', provider: 'claude', level: 'soon', daysLeft: 2 },
       { id: 'c2', group: 'relay', label: 'claude-b', name: 'b', provider: 'claude', level: 'ok', daysLeft: 20 }] } }));
-    await p.evaluate(() => Settings.show('account')); await sleep(300);
+    await sleep(300);
     const cards = await p.evaluate(() => [...document.querySelectorAll('#st-auth .auth-card')].map(c => `${c.dataset.kind}:${c.querySelectorAll('.auth-row').length}:${c.querySelector('.auth-empty') ? 'empty' : ''}`).join(','));
     // 2026-11-23: 이 PC 에 agy 가 있으면 넷째 카드 「Antigravity 로그인」(줄 하나)이 맨 뒤에 붙는다 — 그 밖의 세 장은 그대로여야 한다
     ok(cards.replace(/,antigravity:1:$/, '') === 'iris:1:,claude:2:,codex:0:empty', `7 계정·보안 = 열쇠 카드 세 장(+ 안티그래비티 카드), 빈 카드는 안내 (${cards})`);

@@ -241,6 +241,38 @@ else {
         ok(ac.claude === 'tc:anthropic:a@example.com+renew' && ac.codex === 'tc:codex:codex-1+renew', `2 계정: Claude 칸에는 Claude 계정만 · Codex 칸에는 Codex 계정만 — ${JSON.stringify(ac)}`);
         ok(ac.agy === 'tc:google:google-2+dash tc:google:google-1' && ac.n === '2개', '2 계정: 구글 계정은 Antigravity 칸(급한 줄이 위) · 정상인 줄에는 단추 없음 · 끊긴 줄만 「대시보드에서 다시 로그인」');
         ok(ac.other === 'tc:newco:n-1', '2 계정: 모르는 공급자는 Claude 칸이 아니라 단추 없는 「다른 계정」 칸');
+        // IRIS 열쇠 칸: 쓰지 않는 예비 열쇠(optional = 1년 열쇠가 살아 있을 때의 터미널 로그인)는 줄을 내놓지 않는다 · 1년 열쇠가 없으면(optional 아님) 로그인 줄이 그대로 보인다(2026-11-25 사용자 요청)
+        const irisRows = async (withLong) => p.evaluate((withLong) => {
+          const longKey = { id: 'iris:longkey', group: 'iris', provider: 'anthropic', name: 'me', label: 'IRIS 1년 열쇠', longKey: true, expiresAt: Date.now() + 300 * 86400e3, daysLeft: 300, level: 'ok', renew: 'iris-longkey', optional: false };
+          const login = { id: 'iris:login', group: 'iris', provider: 'anthropic', name: 'me', label: withLong ? 'IRIS 터미널 로그인' : 'IRIS 로그인', longKey: false, expiresAt: null, daysLeft: null, level: 'expired', renew: 'claude-login', optional: withLong };
+          if (!withLong) delete login.optional; // 옛 도구는 optional 칸을 주지 않는다 — 칸이 없다고 숨기면 안 된다(코덱스 검토)
+          window.Settings.setAuth({ available: true, job: null, info: { worst: withLong ? 'ok' : 'expired', due: withLong ? [] : ['iris:login'], checkedAt: '2026-11-25T00:00:00.000Z', items: withLong ? [longKey, login] : [login] } });
+          const card = document.querySelector('#st-auth [data-kind="iris"]');
+          return { ids: [...card.querySelectorAll('[data-auth]')].map((e) => e.dataset.auth).join(' '), n: card.querySelector('.auth-n')?.textContent || '', text: card.textContent };
+        }, withLong);
+        const ir1 = await irisRows(true);
+        ok(ir1.ids === 'iris:longkey' && ir1.n === '1개' && !/터미널 로그인/.test(ir1.text), `2 계정: 1년 열쇠가 살아 있으면 쓰지 않는 터미널 로그인 줄은 보이지 않음 — ${JSON.stringify({ ids: ir1.ids, n: ir1.n })}`);
+        const ir2 = await irisRows(false);
+        ok(ir2.ids === 'iris:login' && ir2.n === '1개' && /IRIS 로그인/.test(ir2.text), `2 계정: 1년 열쇠가 없으면 「IRIS 로그인」 줄은 그대로 보임 — ${JSON.stringify({ ids: ir2.ids, n: ir2.n })}`);
+        // 낱말은 대시보드와 같게(2026-11-25): 중계기 판정(health)이 있으면 「확인 중」 · 「재로그인 필요」. 확인 중인 구글 줄에는 단추가 없다(스스로 돌아올 수 있다).
+        const words = await p.evaluate(() => {
+          const it = (id, provider, label, level, health) => ({ id, group: 'teamclaude', provider, name: label, label, longKey: false, expiresAt: null, daysLeft: null, level, renew: 'teamclaude-login', optional: false, health });
+          window.Settings.setAuth({ available: true, job: null, info: { worst: 'expired', due: ['tc:anthropic:a@example.com'], checkedAt: '2026-11-25T00:00:00.000Z', items: [
+            it('tc:anthropic:a@example.com', 'anthropic', 'a', 'expired', 'needs-login'), it('tc:codex:codex-1', 'codex', 'codex-1', 'ok', 'checking'),
+            it('tc:google:google-1', 'google', 'google-1', 'ok', 'checking'), it('tc:google:google-2', 'google', 'google-2', 'expired', 'needs-login'), it('tc:google:google-3', 'google', 'google-3', 'ok', 'ok')] } });
+          const word = (id) => { const e = document.querySelector(`#st-auth [data-auth="${id}"]`); return `${e?.querySelector('.auth-d')?.textContent || ''}${e?.querySelector('[data-dash]') ? '+dash' : ''}`; };
+          return { a: word('tc:anthropic:a@example.com'), c: word('tc:codex:codex-1'), g1: word('tc:google:google-1'), g2: word('tc:google:google-2'), g3: word('tc:google:google-3'), all: document.querySelector('#st-auth').textContent };
+        });
+        ok(words.a === '재로그인 필요' && words.c === '확인 중', `2 계정: 클로드 · 코덱스 줄의 낱말 = 중계기 판정 그대로 — ${JSON.stringify({ a: words.a, c: words.c })}`);
+        ok(words.g1 === '확인 중' && words.g2 === '재로그인 필요+dash' && words.g3 === '정상', `2 계정: 구글 줄 = 확인 중(단추 없음) · 재로그인 필요(대시보드 단추) · 정상 — ${JSON.stringify({ g1: words.g1, g2: words.g2, g3: words.g3 })}`);
+        ok(!/끊김/.test(words.all), '2 계정: 옛 낱말 「끊김」이 남지 않음');
+        // 계정 · 보안을 열 때 데몬에 "오래됐으면 다시 읽어" 표시(fresh=1)를 붙여 묻는다
+        const freshCalls = []; const onReq = (r) => { if (/\/api\/auth\?fresh=1/.test(r.url())) freshCalls.push(1); }; p.on('request', onReq);
+        await p.locator('#st-nav .st-nav-i[data-pane="session"]').click(); await sleep(200);
+        await p.locator('#st-nav .st-nav-i[data-pane="account"]').click(); await sleep(500);
+        p.off('request', onReq);
+        ok(freshCalls.length === 1, `2 계정: 묶음을 열 때 /api/auth?fresh=1 한 번 (${freshCalls.length}회)`);
+        await accRows();
         await p.locator('#st-auth [data-kind="antigravity"] [data-dash]').click(); await sleep(400);
         ok(renewCalls === 0 && await p.evaluate(() => !document.querySelector('#dlg') || document.querySelector('#dlg').hidden), '2 계정: 구글 계정의 단추는 갱신(로그인) 요청을 보내지 않음 · 확인 창도 뜨지 않음');
         // 세션 기본값: Antigravity 권한 모드(2026-11-25) — 데몬이 목록을 줄 때만 카드가 보인다. 처음 값 = 전부 허용(저장된 키 없음)

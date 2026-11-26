@@ -471,7 +471,12 @@ const server = http.createServer(async (req, res) => {
       return json(res, r.ok ? 200 : 400, r);
     }
     // ---- 인증(v2.84): 열쇠 만료 상태·다시 확인·갱신. 쓰기는 같은 출처만. ----
-    if (req.method === 'GET' && p === '/api/auth') { if (auth.available && !auth.info) await auth.refresh(); return json(res, 200, auth.public()); }
+    // ?fresh=1(2026-11-25) = 설정의 계정 · 보안을 열 때: 사본이 1분보다 오래됐으면 다시 읽고 답한다(30분 주기만 기다리지 않게). 읽기만 — 바깥에 묻지 않는다.
+    if (req.method === 'GET' && p === '/api/auth') {
+      if (auth.available && !auth.info) await auth.refresh();
+      else if (auth.available && url.searchParams.get('fresh') === '1') await auth.refreshIfStale(60_000).catch(() => {});
+      return json(res, 200, auth.public());
+    }
     if (p.startsWith('/api/auth/') && req.method === 'POST') {
       if (!sameOrigin(req)) { log(`403 auth ${p}: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
       if (p === '/api/auth/refresh') { await auth.refresh(); return json(res, 200, auth.public()); }

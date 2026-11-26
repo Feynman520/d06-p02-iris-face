@@ -151,6 +151,8 @@ window.Settings = (() => {
     if (open && p === 'tools') window.ToolsView?.show();
     if (open && p === 'feedback') window.FeedbackView?.show();
     if (open && p === 'planner') loadPlannerUsage();
+    // 계정 · 보안을 열 때마다 사본이 1분보다 오래됐으면 데몬이 다시 읽는다(2026-11-25 신고: 재로그인 · 재시작 뒤에도 30분 가까이 「끊김」이 남았다).
+    if (open && p === 'account') loadAuth(false, true);
   }
   // ---- 플래너(설계 조각 ⑧, 2026-11-23): 스위치 여덟 줄 + 딸린 값 · 잠시 조용히 · 사용량 한 줄 · 수첩 폴더 ----
   // 처음 값은 데몬 daemon/planner.mjs PLANNER_DEFAULTS 와 같아야 한다(verify:settings 가 대조). DEF 에 넣지 않는다 —
@@ -445,10 +447,12 @@ window.Settings = (() => {
   }
   function agyRow(i) {
     const cur = agyInfo?.state === 'ok' && agyInfo.account && agyInfo.account === i.label;
-    const bad = i.level === 'expired' || i.level === 'soon';
-    const desc = [bad ? '다시 로그인해야 합니다' : '중계기가 스스로 갱신', cur ? '지금 쓰는 계정' : ''].filter(Boolean).join(' · ');
-    return `<div class="st-opt auth-row ${esc(i.level)}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small><span class="auth-kind">구글 로그인</span>${esc(desc)}</small></span>`
-      + `<span class="auth-right"><span class="auth-d">${esc(bad ? '끊김' : (AUTH_WORD[i.level] || '모름'))}</span>${bad ? '<button class="text-btn accent" type="button" data-dash="1" title="사용량 대시보드를 엽니다 — 거기서 Antigravity 계정으로 다시 로그인합니다">대시보드에서 다시 로그인</button>' : ''}</span></div>`;
+    // 낱말은 대시보드와 같게(2026-11-25): 정상 / 확인 중 / 재로그인 필요. 확인 중 = 갱신이 한 번 실패해 중계기가 다시 확인하는 동안 — 단추 없음(스스로 돌아올 수 있다).
+    const checking = i.health === 'checking';
+    const bad = !checking && (i.level === 'expired' || i.level === 'soon');
+    const desc = [checking ? '갱신이 실패해 다시 확인하는 중 — 스스로 돌아올 수 있습니다' : bad ? '다시 로그인해야 합니다' : '중계기가 스스로 갱신', cur ? '지금 쓰는 계정' : ''].filter(Boolean).join(' · ');
+    return `<div class="st-opt auth-row ${esc(checking ? 'soon' : i.level)}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small><span class="auth-kind">구글 로그인</span>${esc(desc)}</small></span>`
+      + `<span class="auth-right"><span class="auth-d">${esc(checking ? '확인 중' : bad ? '재로그인 필요' : (AUTH_WORD[i.level] || '모름'))}</span>${bad ? '<button class="text-btn accent" type="button" data-dash="1" title="사용량 대시보드를 엽니다 — 거기서 Antigravity 계정으로 다시 로그인합니다">대시보드에서 다시 로그인</button>' : ''}</span></div>`;
   }
   function agyCard(list = []) {
     const known = agyInfo && agyInfo.state !== 'missing';
@@ -491,7 +495,8 @@ window.Settings = (() => {
       const when = i.expiresAt ? fmtWhen(new Date(i.expiresAt).toISOString()) : '';
       const [kind, kcls] = i.longKey ? ['1년 열쇠', 'long'] : i.provider === 'codex' ? ['ChatGPT 로그인', ''] : ['30일 로그인', 'short'];
       const desc = [when ? `만료 ${when}` : '만료일 모름', i.optional ? 'IRIS 창은 1년 열쇠 사용 중' : ''].filter(Boolean).join(' · ');
-      const d = i.level === 'expired' ? '만료' : i.daysLeft != null ? `D-${i.daysLeft}` : AUTH_WORD[i.level];
+      // 중계기 판정(health)이 있으면 그 낱말이 먼저다(대시보드와 같은 말): 재로그인 필요 / 확인 중. 없으면(옛 도구 · IRIS 열쇠) 지금까지처럼 만료일로.
+      const d = i.health === 'needs-login' ? '재로그인 필요' : i.health === 'checking' ? '확인 중' : i.level === 'expired' ? '만료' : i.daysLeft != null ? `D-${i.daysLeft}` : AUTH_WORD[i.level];
       const label = !i.longKey && !i.optional && (i.group === 'iris' || i.renew === 'teamclaude-longkey') ? '1년 열쇠 받기' : '갱신';
       const running = job?.running && job.id === i.id;
       return `<div class="st-opt auth-row ${esc(i.level)}${i.optional ? ' optional' : ''}" data-auth="${esc(i.id)}"><span class="st-opt-text">${esc(i.label)}<small><span class="auth-kind ${kcls}">${esc(kind)}</span>${esc(desc)}</small></span>`
@@ -503,7 +508,9 @@ window.Settings = (() => {
       + (list.length ? list.map(row).join('') : `<div class="upd-line st-sub auth-empty">${empty}</div>`) + '</section>';
     // 계정은 공급자 이름으로 가른다 — "코덱스가 아니면 클로드"로 나누지 않는다(2026-11-25 사용자 신고: 구글 계정 2개가 Claude 칸에 들어가 「갱신」이 Claude 로그인을 열었다).
     // 모르는 공급자는 어느 칸에도 넣지 않고 단추 없는 「다른 계정」 칸에 둔다.
-    const iris = items.filter(i => i.group === 'iris'), acc = items.filter(i => i.group !== 'iris');
+    // 쓰지 않는 예비 열쇠(optional — 1년 열쇠가 살아 있을 때의 「IRIS 터미널 로그인」)는 줄을 내놓지 않는다(2026-11-25 사용자 요청 "필요없으면 설정에서 지우자":
+    // IRIS 창은 1년 열쇠로 도는데 이 줄의 「만료」가 고장처럼 읽혔다). 1년 열쇠가 없거나 죽은 PC 에서는 도구가 optional 을 주지 않으므로 「IRIS 로그인」 줄이 그대로 보인다.
+    const iris = items.filter(i => i.group === 'iris' && !i.optional), acc = items.filter(i => i.group !== 'iris');
     // Claude = 'anthropic'(지금 도구가 적는 값) · 값이 없거나 'claude'(옛 도구 · 옛 자료)도 Claude 로 본다 — 구글 계정이 생기기 전의 자료는 지금까지처럼.
     const isClaude = (i) => !i.provider || i.provider === 'anthropic' || i.provider === 'claude';
     const cl = acc.filter(isClaude), cx = acc.filter(i => i.provider === 'codex'), gg = acc.filter(i => i.provider === 'google');
@@ -527,8 +534,9 @@ window.Settings = (() => {
     setAuth(m.info);
     if (m.done && m.info?.job?.result) { const r = m.info.job.result; Notify.push({ title: r.ok ? '로그인 갱신 완료' : '로그인 갱신 실패', sub: r.ok ? (r.email ? `${r.email} — 새 세션부터 적용` : (r.message || '')) : (r.error || r.message || ''), status: r.ok ? 'idle' : 'attention', force: true }); }
   }
-  async function loadAuth(refresh = false) {
-    try { const r = await fetch(refresh ? '/api/auth/refresh' : '/api/auth', refresh ? { method: 'POST' } : undefined); if (r.ok) setAuth(await r.json()); } catch {}
+  /** refresh = 「다시 확인」 단추(무조건 다시 읽음) · fresh = 화면을 열 때(사본이 1분보다 오래됐을 때만 다시 읽음, 옛 데몬은 이 표시를 모르고 사본을 그대로 준다) */
+  async function loadAuth(refresh = false, fresh = false) {
+    try { const r = await fetch(refresh ? '/api/auth/refresh' : fresh ? '/api/auth?fresh=1' : '/api/auth', refresh ? { method: 'POST' } : undefined); if (r.ok) setAuth(await r.json()); } catch {}
   }
   async function renewAuth(id) {
     const it = (auth?.info?.items || []).find(i => i.id === id); if (!it) return;
