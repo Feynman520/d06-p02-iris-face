@@ -29,6 +29,9 @@
   let folder = null;                 // 새 요청 모드에서 고른 폴더
   let setupMode = 'new';             // 'new' = 새 세션 조합 / 'switch' = 열린 세션의 조합 바꾸기
   let renaming = null;               // 이름 바꾸는 중 { id, cancel } — 그동안 render()가 목록·머리 제목을 다시 그리지 않는다(v2.85)
+  // 단추로 여는 대화(quickStart, 2026-11-26): 진행 중 잠금 · 보관한 입력창 글(여러 번이면 쌓임 — 나중 것부터 되돌린다) · 만들었지만 아직 목록에 없는 대화(목록에 나타나면 연다)
+  // sending = 입력창의 보내기(submit)가 답을 기다리는 중 — 그동안은 단추로 여는 대화를 시작하지 않고, 그 반대도 같다(보내기는 답이 오면 입력창을 통째로 비우므로 둘이 겹치면 글이 엇갈린다)
+  let quickBusy = false, sending = false, wantSel = null; const stashes = [];
   const sel = loadSel();             // { agent, model:{claude,codex}, effort:{claude,codex}, readOnly }
   const api = async (method, path, body) => { const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; };
   const shortPath = (p) => p.split(/[\\/]/).filter(Boolean).slice(-1)[0] || p;
@@ -96,6 +99,14 @@
     // 안티그래비티(중계기 밖)는 위 상태 객체에 없다 — 데몬이 따로 보내는 판정(AGY)으로만 끈다. 모름(unknown)이면 끄지 않는다.
     if (AGENTS.antigravity) { if (AGY?.state === 'missing') return { ...base, antigravity: 'missing' }; if (AGY?.state === 'auth') return { ...base, antigravity: 'account' }; if (AGY?.state === 'gate') return { ...base, antigravity: 'gate' }; }
     return base;
+  }
+  // 단추로 여는 대화(quickStart)용 — 위 "모두 꺼졌으면 막지 않는다" 예외 없이 그 에이전트 하나의 실제 상태만 본다(없는 계정 · 없는 프로그램으로 대화를 만들지 않게).
+  // 계정 수를 모르는 PC(영수증 없음 = accounts null)는 판단하지 않는다 = 막지 않는다.
+  function agentBlock(k) {
+    if (!AGENTS?.[k]) return 'missing';
+    if ((ACCT?.missing || []).includes(k)) return 'missing';
+    if (k === 'antigravity') return AGY?.state === 'missing' ? 'missing' : AGY?.state === 'auth' ? 'account' : AGY?.state === 'gate' ? 'gate' : '';
+    return ACCT?.accounts && ACCT.accounts[k] === 0 ? 'account' : '';
   }
   function renderSetup() {
     if (!AGENTS) return;
@@ -182,7 +193,7 @@
       else if (m.type === 'subagents') SubPanel.setList(m.id, m.list);        // 보조 작업 목록(칩·⁺N·서랍 탭, 2026-09-11)
       else if (m.type === 'subtranscript') SubPanel.onTranscript(m);          // 서랍이 보고 있는 보조의 기록
       else if (m.type === 'bg') { bgMap.set(m.id, Array.isArray(m.list) ? m.list : []); render(); Notify.onSubs(m.id, liveN(m.id), SubPanel.list(m.id).length, sessions.find(x => x.id === m.id)); } // 배경 작업(v2.80)
-      else if (m.type === 'sessions') { sessions = m.list; render(); renderQuitting(); }
+      else if (m.type === 'sessions') { sessions = m.list; render(); renderQuitting(); adoptWanted(); }
       else if (m.type === 'status') { const s = sessions.find(x => x.id === m.id); if (s) { s.status = m.status; render(); renderQuitting(); if (m.id === current) Transcript.setBusy(m.status === 'busy'); Notify.onStatus(m, s, liveN(m.id)); } }
       else if (m.type === 'replay') { if (m.id === current && term) { term.reset(); term.write(m.data); } }
       else if (m.type === 'output') { if (m.id === current && term) term.write(m.data); }
@@ -235,7 +246,7 @@
       list.appendChild(li);
     }); }
     $('#rail-count').textContent = sessions.length ? `${sessions.length}` : '';
-    if (current && current !== 'preview' && !cur()) current = null;
+    if (current && current !== 'preview' && !cur()) { current = null; if (!wantSel) restoreStash(); } // 보던 대화가 목록에서 사라져 홈이 됨 — 보관한 글도 돌려준다(방금 만든 대화를 기다리는 중이면 아직)
     $('#view').hidden = !current;
     IrisStars.setDim(!!current);
     IrisStars.setEnergy(sessions.some(s => s.status === 'busy' || viewStatus(s) === 'delegated') ? 0.7 : 0);
@@ -314,8 +325,9 @@
   }
 
   // ---------- 세션 선택 / 새 요청 모드 ----------
-  function select(id) { current = id; setupMode = 'new'; ensureTerm(); render(); attach(id); SubPanel.onSession(id); if (mode === 'term') term.focus(); else $('#composer-text').focus(); }
-  function goHome() { current = null; setupMode = 'new'; send({ type: 'detach' }); SubPanel.onSession(null); Transcript.clear(); Approval.render(null); render(); $('#composer-text').focus(); }
+  function select(id) { if (wantSel && wantSel.id !== id) wantSel = null; /* 다른 대화를 열었다 = 방금 만든 대화를 기다렸다 여는 일을 접는다 */ current = id; setupMode = 'new'; ensureTerm(); render(); attach(id); SubPanel.onSession(id); if (mode === 'term') term.focus(); else $('#composer-text').focus(); }
+  // o.keepStash = 홈으로 온 바로 뒤에 입력창을 다른 글로 채우는 길(플래너 「대화 이어가기」 · 튜토리얼 「첫 대화」)이 준다 — 보관한 글을 꺼냈다가 덮어쓰지 않게. 단추의 onclick 은 사건 객체를 넘기므로 true 일 때만 본다.
+  function goHome(o) { wantSel = null; /* 사용자가 스스로 홈으로 갔다 — 늦게 온 목록이 인터뷰 대화로 끌고 가지 않게 */ current = null; setupMode = 'new'; send({ type: 'detach' }); SubPanel.onSession(null); Transcript.clear(); Approval.render(null); if (o?.keepStash !== true) restoreStash(); render(); $('#composer-text').focus(); }
   function attach(id) { send({ type: 'attach', id }); setTimeout(doFit, 50); loadTranscript(id); }
   async function loadTranscript(id) {
     Transcript.clear(); $('#vh-usage').textContent = ''; $('#vh-mwarn').hidden = true; $('#activity').hidden = true;
@@ -370,7 +382,7 @@
   $('#btn-mode-chat').onclick = () => setMode('chat'); $('#btn-mode-term').onclick = () => setMode('term');
 
   // ---------- 폴더 ----------
-  FolderPicker.init({ onPick: (f) => { folder = { path: f.path, rel: f.rel, name: f.name }; if (current) { current = null; setupMode = 'new'; send({ type: 'detach' }); Transcript.clear(); } render(); $('#composer-text').focus(); } });
+  FolderPicker.init({ onPick: (f) => { wantSel = null; folder = { path: f.path, rel: f.rel, name: f.name }; if (current) { current = null; setupMode = 'new'; send({ type: 'detach' }); Transcript.clear(); } restoreStash(); render(); $('#composer-text').focus(); } });
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const relOf = (p) => {
     const root = Settings.health()?.root;
@@ -582,9 +594,10 @@
     const typed = ta.value.replace(/\r\n/g, '\n').trim();
     const text = withAttachments(typed); if (!text.trim()) return;
     const btn = $('#btn-send'); if (btn.disabled) return;
+    if (quickBusy) return; // 단추로 여는 대화가 만들어지는 중(1초 안팎) — 글은 입력창에 그대로 있다
     const s = cur();
     try {
-      btn.disabled = true; btn.classList.add('busy');
+      sending = true; btn.disabled = true; btn.classList.add('busy');
       History.push(typed);
       if (s) {
         await api('POST', `/api/sessions/${s.id}/send`, { text });
@@ -598,9 +611,68 @@
       }
       ta.value = ''; autoGrow(); attachments.length = 0; renderAttach();
     } catch (e) { Dialog.error({ title: '요청을 보내지 못했습니다', message: '입력창의 글은 그대로 있습니다. 다시 보내 주세요.', detail: e.message }); }
-    finally { btn.disabled = false; btn.classList.remove('busy'); }
+    finally { sending = false; btn.disabled = false; btn.classList.remove('busy'); }
   }
   $('#btn-send').onclick = submit;
+  // ---------- 단추로 여는 대화(공용 통로, 2026-11-26 — 설계 = D09 「에이전트 업데이트·의사-설계」 조각 ①②) ----------
+  // 단추 → 정해진 폴더(기본 = IRIS 루트)에서 새 대화를 만들고 요청문을 보낸다. submit() 의 "새 대화 만들기"만 떼어 낸 것 — 데몬 무변경.
+  //   · 에이전트 · 모델 · 권한 = 누른 순간 입력창에 골라 둔 값 그대로(권한을 높이지 않는다 · 쓸 수 없으면 다른 에이전트로 바꾸지 않고 돌려준다)
+  //   · 잠금은 여기 한 곳(단추가 여럿이거나 화면이 다시 그려져도 한 번만 만든다)
+  //   · 입력창에 쓰던 글 · 첨부는 대화가 만들어진 뒤에만 보관하고(실패하면 그대로 둔다) 홈으로 돌아오면 되돌린다(restoreStash)
+  //   · POST 가 성공했다 = 대화가 만들어졌다(요청문은 CLI 가 처음 대기 상태가 될 때 데몬이 보낸다)
+  //   · POST 의 답이 목록 방송보다 먼저 오면 select() 가 그 대화를 못 찾아 홈으로 돌아간다 — wantSel 에 적어 두었다가 목록에 나타나면 연다(adoptWanted)
+  const WANT_MS = 8000; // 만든 대화가 목록에 나타나기를 기다리는 시간
+  const planOnly = (c) => (c.agent === 'codex' ? c.sandbox === 'read-only' : c.permission === 'plan');
+  function restoreStash() {
+    if (!stashes.length) return;
+    const box = $('#composer-text');
+    if (box.value.trim() || attachments.length) return; // 그사이 새로 쓴 글이 있으면 덮지 않는다 — 다음에 홈으로 올 때 다시 본다
+    const s = stashes.pop(); // 나중에 보관한 것부터. 남은 것은 입력창이 다시 비었을 때 홈으로 오면 나온다
+    box.value = s.text; attachments.push(...s.files); renderAttach(); box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function adoptWanted() {
+    if (!wantSel) return;
+    const w = wantSel;
+    if (Date.now() > w.until) { wantSel = null; if (!current) restoreStash(); return; } // 끝내 목록에 안 나타남 — 기다림을 접고 보관한 글을 돌려준다
+    if (!sessions.some((s) => s.id === w.id)) return;
+    wantSel = null;
+    if (current) return; // 그사이 사용자가 다른 대화를 열었으면 끼어들지 않는다
+    select(w.id); Transcript.prime(w.text);
+  }
+  async function quickStart({ prompt, cwd } = {}) {
+    if (quickBusy) return { ok: false, reason: 'busy' };
+    if (sending) return { ok: false, reason: 'sending' };
+    quickBusy = true;
+    try {
+      const text = String(prompt || '').replace(/\r\n/g, '\n').trim();
+      if (!text) return { ok: false, reason: 'error', message: '보낼 요청문이 없습니다' };
+      if (!AGENTS) return { ok: false, reason: 'no-root' };
+      const c = currentSel(); // 누른 순간의 값 — 아래에서 renderSetup() 을 부르지 않는다(고른 에이전트가 스스로 옮겨지지 않게)
+      const where = cwd || Settings.health()?.root;
+      if (!where) return { ok: false, reason: 'no-root' };
+      const why = agentBlock(c.agent);
+      if (why) return { ok: false, reason: 'agent-off', agent: AGENT_NAME[c.agent] || c.agent, why: why === 'missing' ? '프로그램 없음' : why === 'gate' ? '중계기를 쓸 수 없음' : '계정 연결 안 됨' };
+      let rec;
+      try { rec = await api('POST', '/api/sessions', { cwd: where, agent: c.agent, model: c.model, expectModel: expectOf(c), effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox, prompt: text }); }
+      catch (e) { return { ok: false, reason: 'error', message: e?.message || String(e) }; }
+      const box = $('#composer-text');
+      let kept = false;
+      if (box.value.trim() || attachments.length) { // 인터뷰 대화의 입력창에 남아 잘못 보내지지 않게 — 이미 보관한 글이 있으면 그 위에 쌓는다
+        stashes.push({ text: box.value, files: attachments.slice() }); kept = true;
+        box.value = ''; attachments.length = 0; renderAttach(); box.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (Settings.isOpen()) Settings.hide();
+      if (mode !== 'chat') setMode('chat'); // 터미널 보기였으면 요청문 · "세션 여는 중"이 보이지 않는다
+      wantSel = { id: rec.id, text, until: Date.now() + WANT_MS }; // select() 보다 먼저 — 목록에 아직 없어 홈이 되더라도 보관한 글을 그 틈에 꺼내지 않게
+      select(rec.id); Transcript.prime(text);
+      if (current === rec.id) wantSel = null; // 목록에 이미 있었다(보통의 순서)
+      else setTimeout(() => { if (wantSel?.id === rec.id) { wantSel = null; if (!current) restoreStash(); } }, WANT_MS + 200); // 목록 방송이 끝내 안 와도 기다림을 접는다(방송에 기대지 않는다)
+      if (kept) Dialog.notice('입력창에 쓰던 글은 보관했습니다.', { sub: '홈(새 세션)으로 돌아오면 입력창에 되돌립니다.', tone: 'info' });
+      return { ok: true, id: rec.id, kept, planOnly: planOnly(c) };
+    } finally { quickBusy = false; }
+  }
+  const PLAN_LABEL = { claude: '계획만', antigravity: '계획만', codex: '읽기 전용' };
+  window.QuickChat = { start: quickStart, hint: () => { const c = currentSel(); return { planOnly: planOnly(c), label: PLAN_LABEL[c.agent] || '계획만' }; } };
   function interrupt() { const s = cur(); if (!s || s.status !== 'busy') return; send({ type: 'input', id: s.id, data: '\x1b' }); }
   document.addEventListener('click', (e) => { if (e.target.closest('.stop-btn')) interrupt(); });
 
@@ -787,7 +859,7 @@
         if (!(await Dialog.confirm('입력창에 쓰던 요청이 있습니다. 이 폴더에서 새 작업을 시작하면 그 글은 지워집니다.', { title: '쓰던 요청을 지우고 시작할까요?', kind: 'warn', okLabel: '지우고 시작' }))) return;
         draftBox.value = ''; attachments.length = 0; renderAttach(); draftBox.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      if (current) goHome();
+      wantSel = null; if (current) goHome({ keepStash: true });
       folder = { path: p, rel: p, name: String(p).split(/[\\/]/).filter(Boolean).pop() || p };
       render(); const box = $('#composer-text'); if (text) { box.value = text; box.dispatchEvent(new Event('input', { bubbles: true })); } box.focus(); box.setSelectionRange(box.value.length, box.value.length);
     },
@@ -807,7 +879,7 @@
   Handoff.init({ onOpenModule: (name) => { if (!drawerOpenFor(`mod:${name}`)) openModule(name); } });
   // 첫 실행 튜토리얼(v2.90): 「첫 대화 해 보기」 = 그 폴더를 고른 새 요청 화면 + 예시 문장을 채워 두기만(보내기는 사용자).
   Tutorial.init({ onFirstChat: ({ path: p, rel, name, agent, text }) => {
-    if (current) goHome();
+    wantSel = null; if (current) goHome({ keepStash: true });
     folder = { path: p, rel, name };
     if (AGENTS[agent] && sel.agent !== agent) { sel.agent = agent; saveSel(); renderSetup(); }
     render(); const ta2 = $('#composer-text'); ta2.value = text; ta2.dispatchEvent(new Event('input', { bubbles: true })); ta2.focus(); ta2.setSelectionRange(ta2.value.length, ta2.value.length);

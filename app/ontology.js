@@ -59,8 +59,10 @@ window.OntologyView = (() => {
     return `<button class="ps-fig${n.lifecycle && n.lifecycle !== 'active' ? ' dim' : ''}" type="button" data-role="${esc(n.id)}" title="${esc(n.name)}">${Persona.pic(short(n, 10), { index: i, sub: `영역 ${d} · 프로젝트 ${p}`, label: `${short(n)} — 영역 ${d}, 프로젝트 ${p}` })}<span class="ps-tag">${esc(codeOf(n))}${n.lifecycle && n.lifecycle !== 'active' ? ` · ${esc(LIFE[n.lifecycle] || n.lifecycle)}` : ''}</span></button>`;
   }
   const genderSw = () => `<span class="on-gsw">모습 ${[['m', '남성'], ['f', '여성']].map(([k, t]) => `<button type="button" class="text-btn${(Persona.gender() || 'm') === k ? ' accent' : ' outline'}" data-gender="${k}" aria-pressed="${(Persona.gender() || 'm') === k}">${t}</button>`).join('')}</span>`;
-  // ---------- 폴더 구조 인터뷰 프롬프트(v2.102, 2026-11-10 사용자 요청) ----------
-  // 아직 R/D/P 를 잡지 않은 사용자가 복사 아이콘 → IRIS 루트 세션에 붙여 넣으면 에이전트가 인터뷰로 폴더를 만든다.
+  // ---------- 폴더 구조 인터뷰(v2.102, 2026-11-10 사용자 요청 · 2026-11-26 "누르면 새 대화가 열리고 요청문이 들어가게") ----------
+  // 「인터뷰 시작」(빈 카드) · 「폴더 인터뷰」(머리줄) = IRIS 루트에서 새 대화를 열고 아래 글을 보낸다(본체 QuickChat.start — 잠금 · 선택값 · 쓰던 글 보관은 거기서).
+  // 에이전트를 쓸 수 없을 때의 길 = 탭 아래 접힌 「직접 붙여 넣기(복사)」 한 곳(예전의 복사 → 루트에서 새 대화 → 붙여넣기).
+  // 다시 누르면 새 인터뷰 대화다 — 살아 있는 인터뷰 대화를 찾아 그리로 보내지 않는다(인터뷰가 끝나도 대화는 살아 있어, 새로 하려면 옛 대화를 닫아야 하게 된다).
   // 설치 패키지 PC 에는 대본(_agent/setup/interview.md)이 있어 그것을 따르고, 없으면 2~9번만으로 돈다. 클로드·코덱스 공용 글.
   // 공개 저장소 — 개인·학교 낱말을 넣지 않는다(verify:ontology-interview).
   const IV_PROMPT = [
@@ -90,12 +92,55 @@ window.OntologyView = (() => {
     clearTimeout(btn._t); btn._t = setTimeout(() => { btn.classList.remove('copied'); if (t) t.textContent = was; if (ic) ic.innerHTML = Icons.svg('copy', 15); }, 1500);
   }
   const copyBtn = (label, cls = '') => `<button type="button" class="iv-copy ${cls}" data-on="iv-copy" title="인터뷰 프롬프트를 복사합니다"><span class="iv-ic">${Icons.svg('copy', 15)}</span><span class="iv-t">${label}</span></button>`;
+  const START_TIP = '맨 위(IRIS 루트) 폴더에서 새 대화를 열고 인터뷰 요청을 보냅니다';
+  let ivRunning = false; // 여는 중 — 그사이 화면이 다시 그려져도 새 단추가 「여는 중…」 · 잠긴 채로 나온다
+  const goBtn = (label, cls = '') => `<button type="button" class="iv-go ${cls}" data-on="iv-start" title="${START_TIP}"${ivRunning ? ` disabled data-was="${label}"` : ''}><span class="iv-ic">${Icons.svg('chat', 15)}</span><span class="iv-t">${ivRunning ? '여는 중…' : label}</span></button>`;
   function interviewCard() {
-    return `<section class="iv-card" id="iv-card"><div class="iv-head"><b>폴더 구조 인터뷰로 시작하기</b>${copyBtn('프롬프트 복사', 'accent')}</div>
+    const hint = hintText();
+    return `<section class="iv-card" id="iv-card"><div class="iv-head"><b>폴더 구조 인터뷰로 시작하기</b>${goBtn('인터뷰 시작', 'accent')}</div>
       <p>아직 역할(R)·영역(D)·프로젝트(P) 폴더가 없습니다. 에이전트가 질문을 하나씩 하며 내 일에 맞는 폴더 구조를 함께 잡아 줍니다.</p>
-      <ol class="iv-steps"><li>복사 아이콘을 누릅니다.</li><li>폴더 선택에서 <b>맨 위(IRIS 루트)</b>를 고르고 새 대화를 엽니다.</li><li>입력창에 붙여 넣고(Ctrl+V) 보냅니다.</li></ol>
-      <details class="iv-more"><summary>복사되는 글 보기</summary><pre class="iv-pre">${esc(IV_PROMPT)}</pre></details>
-      <p class="iv-alt">다른 방법: 설정 → 업데이트·정보 → 「튜토리얼 다시 보기」의 「내 폴더 만들기」</p></section>`;
+      <p>단추를 누르면 맨 위(IRIS 루트) 폴더에서 새 대화를 열고 인터뷰 요청을 보냅니다. 지금 입력창에 골라 둔 에이전트·모델·권한을 그대로 씁니다.</p>
+      <p class="iv-hint" id="iv-hint"${hint ? '' : ' hidden'}>${esc(hint)}</p>
+      <p class="iv-msg" id="iv-msg" role="status" hidden></p>
+      <p class="iv-alt">다른 방법: 아래 「직접 붙여 넣기(복사)」 · 설정 → 업데이트·정보 → 「튜토리얼 다시 보기」의 「내 폴더 만들기」</p></section>`;
+  }
+  /** 탭 공통 접힘 영역 — 폴더가 있든 없든 한 곳. 에이전트를 쓸 수 없을 때 사람이 직접 붙여 넣는 길. */
+  const manualHtml = () => `<details class="iv-more iv-manual" id="on-manual"><summary>직접 붙여 넣기(복사)</summary>
+      <ol class="iv-steps"><li>「프롬프트 복사」를 누릅니다.</li><li>폴더 선택에서 <b>맨 위(IRIS 루트)</b>를 고르고 새 대화를 엽니다.</li><li>입력창에 붙여 넣고(Ctrl+V) 보냅니다.</li></ol>
+      ${copyBtn('프롬프트 복사', 'small')}<pre class="iv-pre">${esc(IV_PROMPT)}</pre></details>`;
+  /** 「계획만」(코덱스는 읽기 전용) 권한일 때만 미리 한 줄 — 권한을 바꾸지는 않는다. 설정을 다시 열 때마다 지금 값으로 맞춘다. */
+  const hintText = () => { const h = window.QuickChat?.hint?.(); return h?.planOnly ? `지금 권한(${h.label})으로는 인터뷰와 폴더 설계까지만 진행될 수 있습니다 — 폴더를 만들려면 권한을 바꿔야 할 수 있습니다.` : ''; };
+  function syncHint() {
+    if (!host) return;
+    const t = hintText(), el = $('#iv-hint', host);
+    if (el) { el.textContent = t; el.hidden = !t; }
+    const small = $('#on-iv .iv-go', host); if (small) small.title = t ? `${START_TIP}\n${t}` : START_TIP;
+  }
+  function ivSay(text) { // 큰 카드가 있으면 그 안에, 없으면(역할이 이미 있는 화면) 말풍선으로
+    const el = host && $('#iv-msg', host);
+    if (el) { el.textContent = text; el.hidden = !text; } else if (text) Dialog.notice(text);
+  }
+  async function startInterview() {
+    if (ivRunning) return;
+    ivRunning = true;
+    const lock = (on) => host.querySelectorAll('[data-on="iv-start"]').forEach((b) => { // 화면이 그사이 다시 그려져도 지금 있는 단추를 다룬다
+      const t = b.querySelector('.iv-t');
+      if (on) { b.dataset.was = b.dataset.was || t?.textContent || ''; if (t) t.textContent = '여는 중…'; } else if (b.dataset.was) { if (t) t.textContent = b.dataset.was; delete b.dataset.was; }
+      b.disabled = on;
+    });
+    lock(true); ivSay('');
+    let r;
+    try { r = window.QuickChat ? await window.QuickChat.start({ prompt: IV_PROMPT }) : { ok: false, reason: 'no-root' }; }
+    catch (e) { r = { ok: false, reason: 'error', message: e?.message || String(e) }; }
+    finally { lock(false); ivRunning = false; }
+    if (r.ok) { if (r.planOnly && !$('#iv-card', host)) Dialog.notice(hintText() || '지금 권한으로는 폴더를 만들지 못할 수 있습니다.'); return; }
+    if (r.reason === 'busy') return;
+    if (r.reason === 'sending') return ivSay('앞서 보낸 요청을 전달하는 중입니다 — 잠시 뒤 다시 눌러 주세요.');
+    const manual = $('#on-manual', host); if (manual) manual.open = true;
+    if (r.reason === 'agent-off') return ivSay(`지금 고른 ${r.agent}는 쓸 수 없습니다(${r.why}) — 입력창에서 다른 에이전트를 고르거나 아래 「직접 붙여 넣기(복사)」를 쓰세요.`);
+    if (r.reason === 'no-root') return ivSay('IRIS 맨 위 폴더를 아직 확인하지 못했습니다 — 잠시 뒤 다시 누르거나 아래 「직접 붙여 넣기(복사)」를 쓰세요.');
+    // 응답만 잃은 통신 오류면 대화가 이미 만들어졌을 수 있다 — 먼저 작업목록을 보게 한다
+    Dialog.error({ title: '인터뷰 대화를 열지 못했습니다', message: '작업목록에 새 대화가 생겼는지 먼저 확인해 주세요. 없으면 다시 누르거나, 온톨로지 탭 아래 「직접 붙여 넣기(복사)」로 직접 시작할 수 있습니다.', detail: r.message || '' });
   }
   function gridHtml() {
     const list = roles();
@@ -221,7 +266,7 @@ window.OntologyView = (() => {
     ivBar(roles().length > 0);
     if (mode === 'relation' && data.nodes.length) paintRelation(); else paintStructure();
   }
-  /** 역할이 이미 있으면 위 줄에 작은 복사 단추(역할을 더 늘리거나 다시 정리할 때), 없으면 본문의 큰 카드만. */
+  /** 역할이 이미 있으면 위 줄에 작은 「폴더 인터뷰」 단추(역할을 더 늘리거나 다시 정리할 때), 없으면 본문의 큰 카드만. */
   function ivBar(show) { const b = $('#on-iv', host); if (b) b.hidden = !show; }
 
   // 검색: 구조 화면 = 일치 목록(최대 30줄) → 누르거나 Enter = 그 자리로 · 관계 화면 = 카드 거르기
@@ -297,6 +342,7 @@ window.OntologyView = (() => {
       if (b === 'back') return back();
       if (b === 'rel-all') { relFocus = null; return paintRelation(); }
       if (b === 'iv-copy') { e.stopPropagation(); return copyInterview(t.closest('[data-on="iv-copy"]')); }
+      if (b === 'iv-start') { e.stopPropagation(); return startInterview(); }
       if (t.closest('#on-rebuild')) return rebuild();
       const gs = t.closest('[data-gender]'); if (gs) { Persona.setGender(gs.dataset.gender).then(() => paintStructure()); return; }
       const fig = t.closest('.ps-fig[data-role]');
@@ -338,14 +384,16 @@ window.OntologyView = (() => {
       host = $('#st-onto'); if (!host) return;
       host.innerHTML = `<div class="on-bar"><div class="on-seg" role="group" aria-label="보기"><button type="button" data-mode="structure" aria-pressed="true">구조</button><button type="button" data-mode="relation" aria-pressed="false">관계</button></div>
         <label class="on-search">${Icons.svg('search', 14)}<input id="on-q" type="search" placeholder="폴더 이름 찾기 (Enter = 그 자리로)" spellcheck="false" autocomplete="off"><span id="on-hits" class="on-dim"></span></label>
-        <span id="on-iv" hidden>${copyBtn('인터뷰 프롬프트', 'small')}</span>
+        <span id="on-iv" hidden>${goBtn('폴더 인터뷰', 'small')}</span>
         <button id="on-rebuild" class="text-btn outline" type="button" title="폴더를 다시 읽어 그래프를 새로 만듭니다">다시 그리기</button>
         <div class="on-res" id="on-res" hidden></div></div>
         <div class="on-sum"><span id="on-sum"></span><span id="on-status" class="on-dim"></span></div>
-        <div id="on-body" class="on-body"></div>`;
+        <div id="on-body" class="on-body"></div>
+        ${manualHtml()}`;
       bind();
       window.addEventListener('iris:persona-gender', () => { if (loaded && data?.ok && mode === 'structure') paintStructure(); }); // 튜토리얼에서 바꿔도 같은 그림
     }
+    syncHint(); // 권한을 바꾸고 다시 열었을 때 「계획만」 안내를 지금 값으로
     load();
   }
   return { show, back, reload: () => load(true), _short: short, _jo: jo };
