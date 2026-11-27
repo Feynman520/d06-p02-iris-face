@@ -405,7 +405,7 @@ async function parent() {
     ok(words, '4 꼬리표 글은 어디서나 「곧 열립니다」 하나');
     // 데몬(소스): 둘째 문턱 · 타이머 묶음 · 자동 재개
     const gateReady = srv.slice(srv.indexOf('const agyGateReady = async (agent) => {'), srv.indexOf('if (!AGY_LOCKED) {'));
-    ok(/const agyGateReady = async \(agent\) => \{\n\s*if \(agent === 'antigravity'\) agyLock\.assertOpen\(\);/.test(srv) && gateReady.indexOf('agyLock.assertOpen()') < gateReady.indexOf('agyGate.refresh()'), '4 데몬: agyGateReady 맨 앞에서 거절(중계기에 묻기 전)');
+    ok(/const agyGateReady = async \(agent\) => \{\r?\n\s*if \(agent === 'antigravity'\) agyLock\.assertOpen\(\);/.test(srv) && gateReady.indexOf('agyLock.assertOpen()') < gateReady.indexOf('agyGate.refresh()'), '4 데몬: agyGateReady 맨 앞에서 거절(중계기에 묻기 전)');
     const block = srv.slice(srv.indexOf('if (!AGY_LOCKED) {'), srv.indexOf('const sleepWatcher = new SleepWatcher'));
     ok(/^const AGY_LOCKED = agyLock\.isLocked\(\);$/m.test(srv) && ['setTimeout(tickAgy, 3000)', 'setInterval(tickAgy, 60_000)', 'agyGateFirst = agyGate.refresh()', 'const loop = () => setTimeout('].every((x) => block.includes(x)) && (srv.match(/tickAgy/g) || []).length === (block.match(/tickAgy/g) || []).length && (srv.match(/agyGate\.refresh\(\)/g) || []).length - (block.match(/agyGate\.refresh\(\)/g) || []).length === 1, '4 데몬: 잠금은 켜질 때 한 번 정하고, 안티그래비티 타이머 넷(3초 뒤 · 매분 · 중계기 첫 판정 · 5초/15초)은 잠금이 아닐 때만 건다 — 그 묶음 밖의 중계기 조회는 문턱 뒤의 한 곳뿐');
     ok(/skipProviders: AGY_LOCKED \? \['google'\] : \[\]/.test(srv) && /locked: AGY_LOCKED \? \['antigravity'\] : \[\]/.test(srv) && /sm\.lost\(\)\.some\(\(r\) => r\.agent === 'antigravity'\) && !AGY_LOCKED;/.test(srv), '4 데몬: 로그인 감시에서 구글만 뺌 · 도구 목록에 잠금 표시 · 자동 재개에서 잠긴 카드를 기다리지 않음');

@@ -45,7 +45,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const APP_JS = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../app/transcript.js'), 'utf8');
-const seg = APP_JS.match(/\/\/ paste-strip-begin\n([\s\S]*?)\/\/ paste-strip-end/);
+const seg = APP_JS.match(/\/\/ paste-strip-begin\r?\n([\s\S]*?)\/\/ paste-strip-end/);
 if (!seg) { fail++; console.log('FAIL app-paste-strip-present -> app/transcript.js 에 paste-strip-begin/end 구간이 없다'); }
 else {
   console.log('PASS app-paste-strip-present');

@@ -136,8 +136,10 @@ try {
   const cmdBytes = fs.readFileSync(path.join(BIN_DIR, 'iris-planner.cmd')); const shBytes = fs.readFileSync(path.join(BIN_DIR, 'sh', 'iris-planner'));
   ok(cmdBytes.every((c) => c < 128) && cmdBytes.includes(Buffer.from('\r\n')) && shBytes.every((c) => c < 128) && !shBytes.includes(13) && shBytes.subarray(0, 10).toString() === '#!/bin/sh\n', '껍데기: .cmd = ASCII · CRLF / sh = ASCII · LF');
   ok(!fs.existsSync(path.join(BIN_DIR, 'iris-planner')), 'bin 에는 확장자 없는 파일을 두지 않음(PowerShell 이 그것을 "열기"로 띄우지 않게 — sh 것은 bin\\sh 에만)');
-  const ga = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8');
-  ok(ga.includes('bin/sh/iris-planner text eol=lf') && ga.includes('bin/iris-planner.cmd text eol=crlf'), '.gitattributes: 줄끝 고정');
+  // 줄끝 규칙(2026-11-27 — 파일 이름 두 줄에서 종류별 규칙으로): 뒤에 오는 줄이 이기므로 기본 줄(`*`)이 먼저 와야 한다
+  const ga = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8').split(/\r?\n/).map((l) => l.trim().replace(/\s+/g, ' ')).filter((l) => l && !l.startsWith('#'));
+  const gaAt = (l) => ga.indexOf(l);
+  ok(gaAt('* text=auto eol=lf') !== -1 && gaAt('*.cmd text eol=crlf') > gaAt('* text=auto eol=lf') && gaAt('bin/sh/* text eol=lf') > gaAt('* text=auto eol=lf'), '.gitattributes: 줄끝 고정(글 = LF · *.cmd = CRLF · bin/sh/* = LF)');
   const viaCmd = spawnSync('cmd.exe', ['/d', '/s', '/c', 'iris-planner help'], { env: e1, encoding: 'utf8', windowsHide: true });
   ok(viaCmd.status === 0 && viaCmd.stdout.includes('iris-planner list'), `cmd 에서 이름만으로 찾아 실행됨(PATH) — ${String(viaCmd.stderr || '').slice(0, 80)}`);
   const cmdList = await new Promise((resolve) => { const p = spawn('cmd.exe', ['/d', '/s', '/c', 'iris-planner list --from 2027-03-01 --to 2027-03-05'], { env: e1, windowsHide: true }); let o = ''; p.stdout.on('data', (d) => { o += d; }); p.on('exit', (code) => resolve({ code, o })); });

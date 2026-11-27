@@ -1,3 +1,47 @@
-# shell wrapper must keep LF (a CR after #!/bin/sh breaks it), cmd wrapper must keep CRLF
-bin/sh/iris-planner text eol=lf
-bin/iris-planner.cmd text eol=crlf
+# Line endings are decided here, not by each machine's core.autocrlf.
+# The release bundle ships working-tree bytes as they are, so a checkout must give
+# the same bytes on every PC and under every git setting. When you add a new kind
+# of file (a new script type or a new binary format), add its rule here.
+
+# Default: git decides text vs binary; text is checked out with LF.
+* text=auto eol=lf
+
+# Windows-run script files keep CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.vbs text eol=crlf
+*.ps1 text eol=crlf
+
+# Extensionless shell wrappers must keep LF (a CR after #!/bin/sh breaks them).
+bin/sh/* text eol=lf
+
+# Not text: never converted.
+# -- in this repository today
+*.png -text
+*.webp -text
+*.ico -text
+*.mp4 -text
+*.ttf -text
+*.woff2 -text
+# -- common ones, for later
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.avif -text
+*.bmp -text
+*.woff -text
+*.otf -text
+*.eot -text
+*.webm -text
+*.mov -text
+*.mp3 -text
+*.wav -text
+*.ogg -text
+*.pdf -text
+*.zip -text
+*.gz -text
+*.tgz -text
+*.7z -text
+*.exe -text
+*.dll -text
+*.node -text
