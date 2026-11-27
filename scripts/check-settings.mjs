@@ -76,12 +76,21 @@ else {
   // 열린 시험 데몬이 진짜 중계기 · agy · ~/.gemini 에 닿지 않게 자리를 가짜로 준다(중계기에 닿지 않음 = 판정 gate → 권한 카드는 보인다). 잠긴 화면은 verify:agy-lock 이 본다.
   fs.writeFileSync(path.join(state, 'iris-keys.json'), JSON.stringify({ antigravity: 'open' }), 'utf8');
   const AGY_OPEN = { IRIS_AGY_GATE_URL: 'http://127.0.0.1:9', IRIS_AGY_EXE: path.join(state, 'no-agy.exe'), IRIS_GEMINI_DIR: path.join(state, 'gemini'), IRIS_AGY_STATUS_FILE: path.join(state, 'agy-status.json') };
+  // 전체 서비스 격리(2026-11-27 코덱스 코드 검토): 위는 안티그래비티 조회만 막는다. 시험 데몬이 진짜 영혼 폴더를 루트로 삼으면 그 안의 로그인 도구(iris-auth —
+  // 20초 뒤 윈도 알림과 함께 돈다) · 대시보드 뷰어(구글 줄의 「대시보드에서 다시 로그인」을 누르면 켜지고 진짜 중계기를 묻는다) · 한도 읽기를 그대로 쓴다.
+  // → 빈 임시 폴더를 영혼 루트로 준다(로그인 도구 · 대시보드가 없는 PC 의 모습). 이 절의 항목은 그 둘이 있고 없음에 기대지 않는다:
+  //   계정 줄은 화면에 넣은 자료(setAuth)로 보고, 대시보드 단추는 "갱신 요청을 보내지 않음 · 확인 창이 뜨지 않음"만 본다.
+  // 남는 것(읽기만): 설정 폴더 환경 변수(CLAUDE_CONFIG_DIR · CODEX_HOME)가 가리키는 자리의 도구 목록 · 모델 목록 읽기.
+  const soul = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-settings-soul-'));
+  fs.mkdirSync(path.join(soul, '_agent'), { recursive: true });
+  const ISOLATED = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(IRIS_AUTH_DIR|IRIS_DOCTOR_DIR|TEAMCLAUDE_DASH_DIR|TEAMCLAUDE_CONFIG)$/i.test(k)));
+  ISOLATED.IRIS_ROOT = soul;
   const mods = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-settings-mods-'));
   fs.writeFileSync(path.join(state, 'settings.json'), JSON.stringify({ voice: { preload: false } }), 'utf8');
   fs.writeFileSync(path.join(state, 'sessions.json'), '[]', 'utf8');
   fs.writeFileSync(path.join(state, 'planner-rules.json'), JSON.stringify({ intro: 'seen' }), 'utf8'); // 처음 한 번 소개 말풍선은 이미 본 사람으로(이 검사는 설정 화면을 본다)
   const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore',
-    env: { ...process.env, ...AGY_OPEN, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' } });
+    env: { ...ISOLATED, ...AGY_OPEN, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' } });
   let browser;
   try {
     let up = false; for (let i = 0; i < 60 && !up; i++) { await sleep(250); try { up = (await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok; } catch {} }
@@ -302,7 +311,7 @@ else {
     try { await browser?.close(); } catch {}
     try { d.kill(); } catch {}
     await sleep(400);
-    try { fs.rmSync(state, { recursive: true, force: true }); fs.rmSync(mods, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(state, { recursive: true, force: true }); fs.rmSync(mods, { recursive: true, force: true }); fs.rmSync(soul, { recursive: true, force: true }); } catch {}
   }
 }
 console.log(`\n${pass} PASS / ${fail} FAIL`);

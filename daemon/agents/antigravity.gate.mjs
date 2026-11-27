@@ -7,7 +7,7 @@
 //   옛 중계기(구글을 모름)는 모르는 경로를 앤트로픽으로 넘기므로(11/23 실측) 'supported' 가 없으면 반드시 막는다.
 import { isLocked, LOCKED_MESSAGE } from './antigravity.lock.mjs';
 
-export const GATE_URL =(process.env.IRIS_AGY_GATE_URL || 'http://127.0.0.1:3456').replace(/\/+$/, '');
+export const GATE_URL = (process.env.IRIS_AGY_GATE_URL || 'http://127.0.0.1:3456').replace(/\/+$/, '');
 const FRESH_MS = 60_000;
 const TIMEOUT_MS = 3_000;
 let last = null; // { ok, why, at, accounts: [{ name, status }] }

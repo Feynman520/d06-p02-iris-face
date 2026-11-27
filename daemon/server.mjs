@@ -196,9 +196,9 @@ async function ensureDash() {
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
 // ---- 로그인 열쇠 만료 감시(v2.84): 도구(iris-auth)가 있을 때만. 30분마다 점검 + 곧 만료면 윈도 알림(도구가 띄움) + 화면 방송 {type:'auth'}. ----
-// 화면 잠금(2026-11-27): 잠겨 있으면 감시 결과에서 구글(Antigravity) 계정 항목만 뺀다 — 화면의 계정 줄 · 톱니 점 · 알림에 나오지 않게. 클로드 · 코덱스 항목과 감시 주기는 그대로다.
-// (바깥 도구 iris-auth 가 스스로 띄우는 윈도 알림 풍선에는 손대지 못한다 — 그 도구는 이 저장소 밖이다.)
-const auth = new AuthWatch({ log: (m) => log(m), broadcast: (o) => broadcast(o), ensureDash, hide: AGY_LOCKED ? (i) => i?.provider === 'google' : null });
+// 화면 잠금(2026-11-27): 잠겨 있으면 감시에서 구글(Antigravity) 계정만 처음부터 뺀다 — 판정 도구에 `--skip-provider=google` 을 넘겨 윈도 알림 · 상태 파일 · 출력에서 빠지고,
+// 받은 결과에서도 한 겹 더 뺀다(옛 도구 대비). 화면의 계정 줄 · 톱니 점 · 알림에 나오지 않는다. 클로드 · 코덱스 항목과 감시 주기는 그대로다.
+const auth = new AuthWatch({ log: (m) => log(m), broadcast: (o) => broadcast(o), ensureDash, skipProviders: AGY_LOCKED ? ['google'] : [] });
 // ---- IRIS Doctor 입구(선택 기능): 바깥 Doctor 를 여는 손잡이 + 복구에 쓸 계정의 상태 요약. Doctor 가 없으면 화면이 묶음을 숨긴다. 상주시키는 것은 없다(화면이 물을 때만 읽는다). ----
 const doctor = new DoctorGate({ log: (m) => log(m) });
 const features = () => ({ doctor: doctor.public(), auth: auth.available, memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });

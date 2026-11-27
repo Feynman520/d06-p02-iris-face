@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import net from 'node:net';
 import vm from 'node:vm';
 import cp from 'node:child_process';
 import { once } from 'node:events';
@@ -300,6 +301,32 @@ async function parent() {
       ok(J(cut.items.map((i) => i.id)) === J(['iris', 'c', 'o']) && cut.worst === 'soon' && J(cut.due) === J(['c']) && cut.nextExpiry.id === 'c' && cut.extra === 'x' && info.items.length === 4, '2 로그인 감시 결과: 구글 항목만 빠지고 급한 정도 · 급한 항목 · 가장 먼저 끝나는 열쇠를 다시 셈(선택 항목은 세지 않음 · 받은 자료는 그대로)', J(cut));
       ok(withoutHidden(info, null) === info && withoutHidden(info, () => false) === info && withoutHidden(null, isG) === null && J(withoutHidden({ items: [it('g', 'google', 'expired', 1)] }, isG)) === J({ items: [], worst: 'ok', due: [], nextExpiry: null }), '2 로그인 감시 결과: 뺄 것이 없으면(열린 PC · 구글 계정 없음) 도구가 준 그대로');
     }
+    // 로그인 도구를 부르는 모든 길에 `--skip-provider=google` 이 붙는가 — 도구는 결과를 돌려주기 전에 윈도 알림 · 상태 파일을 쓰므로 뒤에서 거르는 것으로는 늦다.
+    // 가짜 도구(받은 인수를 적는다 · 옛 도구처럼 인수를 모르고 구글 항목을 그대로 돌려준다)만 쓴다 — 진짜 로그인 도구는 실행하지 않는다.
+    {
+      const { AuthWatch } = await imp('daemon/auth.mjs');
+      const TOOL = ["import fs from 'node:fs';", "fs.appendFileSync(new URL('./calls.log', import.meta.url), process.argv.slice(2).join(' ') + '\\n');",
+        'console.log(JSON.stringify({ items: [{ id: "tc:anthropic:a", group: "teamclaude", provider: "anthropic", level: "ok" }, { id: "tc:google:g", group: "teamclaude", provider: "google", level: "expired" }], worst: "expired", due: ["tc:google:g"], nextExpiry: null }));', ''].join('\n');
+      const probe = async (name, skipProviders) => {
+        const dir = path.join(d, name); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'status.mjs'), TOOL, 'utf8');
+        const health = path.join(dir, 'tc.auth-health.json'); wj(health, { accounts: [{ provider: 'google', name: 'g', state: 'ok' }] });
+        const w = new AuthWatch({ dir, skipProviders, healthFile: health, watchMs: 0 });
+        await w.refresh({ notify: true });            // 시작 20초 뒤 · 30분 주기(알림과 함께)
+        await w.refresh();                             // 설정의 「다시 확인」 · 처음 읽기
+        await w.refreshIfStale(-1);                    // 설정을 열 때(?fresh=1)
+        w.healthSig = '(바뀌기 전)'; await w.watchTick(); // 중계기의 계정 상태가 바뀌었을 때
+        const calls = fs.readFileSync(path.join(dir, 'calls.log'), 'utf8').split('\n').filter(Boolean);
+        return { calls, providers: (w.info?.items || []).map((i) => i.provider), worst: w.info?.worst };
+      };
+      const lk = await probe('auth-locked', ['google']), op = await probe('auth-open', []);
+      ok(lk.calls.length === 4 && lk.calls.every((l) => /(^| )--skip-provider=google$/.test(l)) && lk.calls[0] === '--json --notify --skip-provider=google', '2 로그인 도구 호출 넷(알림 주기 · 다시 확인 · 설정을 열 때 · 계정 상태가 바뀔 때) 모두에 --skip-provider=google — 잠겼을 때', J(lk.calls));
+      ok(J(lk.providers) === J(['anthropic']) && lk.worst === 'ok', '2 인수를 모르는 옛 도구가 구글 항목을 돌려줘도 한 겹 더 걸러 낸다', J(lk));
+      ok(op.calls.length === 4 && !op.calls.some((l) => /skip-provider/.test(l)) && op.calls[0] === '--json --notify' && op.providers.includes('google') && op.worst === 'expired', '2 열렸을 때는 어느 호출에도 그 인수가 없고 결과도 도구가 준 그대로', J(op));
+      const w2 = new AuthWatch({ dir: path.join(d, 'auth-open'), healthFile: null, skipProviders: ['google', 'x y', 5, '--evil', 'google', 'GOOGLE'] });
+      ok(J(w2.statusArgs(false)) === J(['--json', '--skip-provider=google']) && J(new AuthWatch({ dir: path.join(d, 'auth-open'), healthFile: null }).statusArgs(true)) === J(['--json', '--notify']), '2 공급자 이름은 소문자 낱말만 받는다(이상한 값은 인수에 싣지 않음) · 손잡이를 주지 않으면 예전 인수 그대로');
+      const authSrc = src('daemon/auth.mjs'), srvSrc = src('daemon/server.mjs');
+      ok((authSrc.match(/this\.run\('status\.mjs'/g) || []).length === 1 && /this\.run\('status\.mjs', this\.statusArgs\(notify\)\)/.test(authSrc) && !/auth\.run\(/.test(srvSrc), '2 소스: 로그인 도구(status.mjs)를 부르는 자리는 하나뿐이고 인수는 statusArgs 가 만든다');
+    }
     // 소스: 문턱의 자리
     const ad = src('daemon/agents/antigravity.mjs');
     const pre = ad.slice(ad.indexOf('export function preTrust(cwd, env)'), ad.indexOf('export const readyCheck'));
@@ -381,7 +408,7 @@ async function parent() {
     ok(/const agyGateReady = async \(agent\) => \{\n\s*if \(agent === 'antigravity'\) agyLock\.assertOpen\(\);/.test(srv) && gateReady.indexOf('agyLock.assertOpen()') < gateReady.indexOf('agyGate.refresh()'), '4 데몬: agyGateReady 맨 앞에서 거절(중계기에 묻기 전)');
     const block = srv.slice(srv.indexOf('if (!AGY_LOCKED) {'), srv.indexOf('const sleepWatcher = new SleepWatcher'));
     ok(/^const AGY_LOCKED = agyLock\.isLocked\(\);$/m.test(srv) && ['setTimeout(tickAgy, 3000)', 'setInterval(tickAgy, 60_000)', 'agyGateFirst = agyGate.refresh()', 'const loop = () => setTimeout('].every((x) => block.includes(x)) && (srv.match(/tickAgy/g) || []).length === (block.match(/tickAgy/g) || []).length && (srv.match(/agyGate\.refresh\(\)/g) || []).length - (block.match(/agyGate\.refresh\(\)/g) || []).length === 1, '4 데몬: 잠금은 켜질 때 한 번 정하고, 안티그래비티 타이머 넷(3초 뒤 · 매분 · 중계기 첫 판정 · 5초/15초)은 잠금이 아닐 때만 건다 — 그 묶음 밖의 중계기 조회는 문턱 뒤의 한 곳뿐');
-    ok(/hide: AGY_LOCKED \? \(i\) => i\?\.provider === 'google' : null/.test(srv) && /locked: AGY_LOCKED \? \['antigravity'\] : \[\]/.test(srv) && /sm\.lost\(\)\.some\(\(r\) => r\.agent === 'antigravity'\) && !AGY_LOCKED;/.test(srv), '4 데몬: 로그인 감시에서 구글만 뺌 · 도구 목록에 잠금 표시 · 자동 재개에서 잠긴 카드를 기다리지 않음');
+    ok(/skipProviders: AGY_LOCKED \? \['google'\] : \[\]/.test(srv) && /locked: AGY_LOCKED \? \['antigravity'\] : \[\]/.test(srv) && /sm\.lost\(\)\.some\(\(r\) => r\.agent === 'antigravity'\) && !AGY_LOCKED;/.test(srv), '4 데몬: 로그인 감시에서 구글만 뺌 · 도구 목록에 잠금 표시 · 자동 재개에서 잠긴 카드를 기다리지 않음');
   }
 
   // ───────────────────────── 3절 시험 데몬 · 5절 화면 ─────────────────────────
@@ -421,15 +448,29 @@ async function parent() {
       return { d, st, soul, home, gem, ostmp, work, fakeExe, trace, statusFile, env, authDir };
     };
     const api = async (method, p, body) => { const r = await fetch(BASE + p, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body: body ? J(body) : undefined }); let j = null; try { j = await r.json(); } catch {} return { status: r.status, json: j }; };
+    /** 이 포트에 누가 듣고 있는가(연결만 해 본다 — 아무것도 보내지 않는다) */
+    const portBusy = () => new Promise((resolve) => { const sk = net.connect({ host: '127.0.0.1', port: PORT }); const done = (v) => { try { sk.destroy(); } catch {} resolve(v); }; sk.once('connect', () => done(true)); sk.once('error', () => done(false)); sk.setTimeout(1500, () => done(false)); });
+    /** 이 포트에서 답하는 데몬의 PID(답이 없으면 null) — 읽기만 한다 */
+    const owner = async () => { try { const r = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(3000) }); return (await r.json())?.pid ?? null; } catch { return null; } };
     const start = async (s) => {
+      // 포트가 이미 쓰이고 있으면(다른 시험 데몬이 도는 중) 띄우지도 건드리지도 않는다
+      if (await portBusy()) return { busy: true, mine: false, first: null, proc: { pid: null, exitCode: null }, stop: async () => {} };
       const proc = cp.spawn(process.execPath, ['--import', pathToFileURL(path.join(ROOT, 'scripts', 'fixtures', 'agy-lock-trace.mjs')).href, path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: process.env.AGYLOCK_DEBUG ? 'inherit' : 'ignore', env: s.env }); // AGYLOCK_DEBUG=1 = 시험 데몬의 출력을 그대로 본다(검사를 고칠 때)
       const t0 = Date.now(); let first = null;
-      // 자기가 띄운 PID 만 끝낸다: 먼저 데몬의 전부 종료 창구로, 안 되면 그 PID 에 신호
-      const stop = async () => { if (proc.exitCode != null) return; try { await fetch(`${BASE}/api/shutdown?wait=1`, { method: 'POST', signal: AbortSignal.timeout(25000) }); } catch {} for (let i = 0; i < 60 && proc.exitCode == null; i++) await sleep(100); if (proc.exitCode == null) { try { proc.kill(); } catch {} } };
+      // 🔴 자기가 띄운 것만 끝낸다. 이 포트에서 답하는 서버가 내 자식인지(PID)를 종료 요청 **직전에** 확인하고, 내 자식일 때만 데몬의 전부 종료 창구를 쓴다.
+      //    다른 서버가 답하거나 아무도 답하지 않으면 그 포트에는 아무것도 보내지 않고 내 자식만 PID 로 정리한다(남의 시험 데몬을 끄지 않는다).
+      const stop = async () => {
+        if (proc.exitCode != null) return;
+        if ((await owner()) === proc.pid) { try { await fetch(`${BASE}/api/shutdown?wait=1`, { method: 'POST', signal: AbortSignal.timeout(25000) }); } catch {} }
+        for (let i = 0; i < 60 && proc.exitCode == null; i++) await sleep(100);
+        if (proc.exitCode == null) { try { proc.kill(); } catch {} for (let i = 0; i < 30 && proc.exitCode == null; i++) await sleep(100); }
+      };
       cleanups.push(stop);
-      for (let i = 0; i < 150 && !first && proc.exitCode == null; i++) { await sleep(100); try { const r = await fetch(`${BASE}/api/antigravity/status`); if (r.ok) first = await r.json(); } catch {} } // 켜지자마자의 첫 답
-      let mine = false; try { mine = (await api('GET', '/api/health')).json?.pid === proc.pid; } catch {}
-      return { proc, t0, first, stop, mine };
+      // 내 자식이 이 포트의 주인이 될 때까지 기다린다(그 전의 답은 믿지 않는다). 주인이 된 직후의 상태 답 = 켜지자마자의 첫 답
+      let mine = false;
+      for (let i = 0; i < 150 && !mine && proc.exitCode == null; i++) { await sleep(100); mine = (await owner()) === proc.pid; }
+      if (mine) { try { const r = await fetch(`${BASE}/api/antigravity/status`); if (r.ok) first = await r.json(); } catch {} }
+      return { proc, t0, first, stop, mine, busy: false };
     };
     // 화면처럼 붙어 hello 를 받는다. 그 뒤 0.7초 동안 온 { type: 'agy' } 방송도 함께 돌려준다(hello.agyCast = 그 방송들의 state)
     const hello = async () => { const { WebSocket } = await import('ws'); return new Promise((resolve) => { const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`); let h = null; const casts = []; const done = () => { try { ws.close(); } catch {} resolve(h ? { ...h, agyCast: casts } : null); }; const t = setTimeout(done, 5000); ws.on('message', (raw) => { try { const m = JSON.parse(String(raw)); if (m.type === 'agy') casts.push(m.status?.state); if (m.type === 'hello' && !h) { h = m; clearTimeout(t); setTimeout(done, 700); } } catch {} }); ws.on('error', () => { clearTimeout(t); resolve(null); }); }); };
@@ -444,7 +485,9 @@ async function parent() {
       total: rows.length, timersAll: rows.filter((r) => r.t === 'timer').length,
     });
     const exists = (p) => fs.existsSync(p);
-    const logOf = (s) => { try { return fs.readFileSync(path.join(s.st, 'daemon.log'), 'utf8'); } catch { return ''; } };
+    /** 가짜 로그인 도구가 불린 기록(한 줄 = 한 번의 호출에 받은 인수) */
+    const callsOf = (s) => { try { return fs.readFileSync(path.join(s.authDir, 'calls.log'), 'utf8').split('\n').filter(Boolean); } catch { return []; } };
+    const logOf =(s) => { try { return fs.readFileSync(path.join(s.st, 'daemon.log'), 'utf8'); } catch { return ''; } };
 
     // ── 잠긴 데몬: 끊긴 안티그래비티 카드 하나(자동 재개 대상이었을 것) + 끝난 클로드 카드 하나 ──
     const conv = 'aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb', cid = 'cccccccc-1111-4222-8333-dddddddddddd', dead = deadPid();
@@ -455,6 +498,8 @@ async function parent() {
     const L = setup('locked', { sessions: seed });
     const hits0 = gateHits;
     const dl = await start(L);
+    const BUSY = `3 포트 ${PORT} 가 이미 쓰이고 있다 — 다른 시험 데몬이 도는 중이다. 그 데몬은 건드리지 않고 여기서 멈춘다(끝난 뒤 다시 돌린다)`;
+    if (dl.busy) { ok(false, BUSY); return; }
     ok(!!dl.first && dl.mine, `3 잠긴 시험 데몬 ${PORT} pid=${dl.proc.pid}`, J({ first: dl.first, exit: dl.proc.exitCode }));
     if (!dl.first || !dl.mine) return;
     ok(dl.first.state === 'locked' && Array.isArray(dl.first.groups) && !dl.first.groups.length, '3 켜지자마자 받은 첫 상태 답이 locked(unknown 을 거치지 않는다)', J(dl.first));
@@ -479,6 +524,10 @@ async function parent() {
     ok(J(tools?.locked) === J(['antigravity']) && tools.agents.includes('antigravity') && ![...tools.mcp, ...tools.skills, ...tools.plugins].some((t) => t.agent === 'antigravity'), '3 도구 목록: 탭은 남고(agents) 잠금 표시 · 안티그래비티 줄은 내놓지 않는다', J({ locked: tools?.locked, agents: tools?.agents }));
     const auth = (await api('GET', '/api/auth')).json;
     ok(auth?.available && J(auth.info?.items?.map((i) => i.id)) === J(['iris:longkey', 'tc:anthropic:a', 'tc:codex:c']) && auth.info.worst === 'ok' && J(auth.info.due) === '[]' && auth.info.nextExpiry?.id === 'tc:codex:c' && exists(path.join(L.authDir, 'calls.log')), '3 로그인 감시: 도구는 그대로 돌고 결과에서 구글 항목만 빠진다(급한 정도 · 급한 항목도 다시 셈)', J(auth?.info));
+    // 로그인 도구를 부르는 호출마다 `--skip-provider=google` — 도구가 윈도 알림 · 상태 파일을 쓰기 전에 구글을 빼게(뒤에서 거르는 것으로는 늦다)
+    await api('POST', '/api/auth/refresh'); await api('GET', '/api/auth?fresh=1');
+    const lc = callsOf(L);
+    ok(lc.length >= 2 && lc.every((l) => /(^| )--skip-provider=google( |$)/.test(l)), `3 로그인 도구 호출 ${lc.length}번 모두에 --skip-provider=google(처음 읽기 · 설정의 다시 확인)`, J(lc));
     const lg = logOf(L);
     ok(/antigravity: locked/.test(lg) && /auto-resume: antigravity locked — 1 card\(s\) kept as they are, not resumed \(s1\)/.test(lg) && !/antigravity status:/.test(lg) && !/auto-resume failed/.test(lg) && !/auto-resume: \d+ lost session/.test(lg), '3 데몬 기록: 잠김 · 잠긴 카드 1장을 그대로 둠 · 상태 갱신 · 재개 시도 · 실패 기록 없음');
     const a = agyOf(L, readTrace(L));
@@ -497,6 +546,7 @@ async function parent() {
     const O = setup('open', { key: true, autoResume: false });
     const hits1 = gateHits;
     const dop = await start(O);
+    if (dop.busy) { ok(false, BUSY); return; }
     ok(!!dop.first && dop.mine, `3(대조) 열쇠가 있는 시험 데몬 ${PORT} pid=${dop.proc.pid}`, J({ first: dop.first, exit: dop.proc.exitCode }));
     if (!dop.first || !dop.mine) return;
     ok(dop.first.state !== 'locked', '3(대조) 시험 상태 폴더에 열쇠가 있으면 열린다(첫 답이 locked 가 아님)', J(dop.first));
@@ -506,6 +556,9 @@ async function parent() {
     const ho = await hello(); const to = (await api('GET', '/api/tools')).json; const auo = (await api('GET', '/api/auth')).json;
     ok(ho?.agy && ho.agy.state !== 'locked' && !ho.agyCast.includes('locked') && J(to?.locked) === '[]' && to.mcp.some((t) => t.agent === 'antigravity' && t.name === 'demo') && auo.info.items.some((i) => i.provider === 'google') && auo.info.worst === 'expired', '3(대조) 열린 데몬: hello · 도구 줄 · 로그인 감시의 구글 항목이 지금까지와 같다', J({ agy: ho?.agy?.state, locked: to?.locked, worst: auo?.info?.worst }));
     ok(/antigravity: open \(key\)/.test(logOf(O)), '3(대조) 데몬 기록: 열쇠로 열림');
+    await api('POST', '/api/auth/refresh');
+    const oc = callsOf(O);
+    ok(oc.length >= 2 && !oc.some((l) => /skip-provider/.test(l)), `3(대조) 열린 데몬: 로그인 도구 호출 ${oc.length}번 어디에도 --skip-provider 가 없다`, J(oc));
     await dop.stop();
   }
 

@@ -85,9 +85,14 @@ export function withoutHidden(info, hide) {
 
 export class AuthWatch {
   /** opts: { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs } — dir 를 주면 시험용 가짜 도구 폴더, post 는 시험용 가짜 대시보드 호출 */
-  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson, healthFile = healthFileOf(), watchMs = 30_000, hide = null } = {}) {
-    // hide(item) = 감시 결과에서 뺄 항목(2026-11-27 안티그래비티 화면 잠금 — 잠겨 있으면 구글 계정 항목). 없으면(null) 도구가 준 그대로다.
-    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs, hide: typeof hide === 'function' ? hide : null });
+  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson, healthFile = healthFileOf(), watchMs = 30_000, skipProviders = [] } = {}) {
+    // skipProviders = 감시에서 처음부터 뺄 공급자(2026-11-27 안티그래비티 화면 잠금 — 잠겨 있으면 ['google']). 손잡이는 이것 하나다:
+    //   ① 판정 도구를 부르는 모든 호출에 `--skip-provider=<공급자,…>` 를 붙인다 → 도구가 그 공급자의 중계기 계정을 윈도 알림 · 상태 파일 · 출력에서 처음부터 뺀다
+    //      (도구는 결과를 돌려주기 전에 알림을 띄우므로 뒤에서 걸러서는 늦다). 옛 도구는 모르는 인자를 무시한다.
+    //   ② 그래서 한 겹 더: 받은 결과에서도 그 공급자의 항목을 뺀다(withoutHidden — 옛 도구 사본이 깔린 PC 대비).
+    // 비어 있으면(열린 PC) 인자도 붙지 않고 결과도 도구가 준 그대로다.
+    const skip = [...new Set((Array.isArray(skipProviders) ? skipProviders : []).filter((p) => typeof p === 'string' && /^[a-z][a-z0-9-]*$/.test(p)))];
+    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs, skipProviders: skip, hide: skip.length ? (i) => skip.includes(i?.provider) : null });
     this.available = !!dir;
     this.info = null; this.job = null; this.timer = null; this.lastKey = '';
     // 2026-11-25 사용자 신고 "재로그인하고 재시작까지 했는데 설정에는 계속 끊김": 사본을 30분에 한 번만 다시 읽었다.
@@ -104,13 +109,17 @@ export class AuthWatch {
       child.on('error', () => finish(-1)); child.on('exit', finish);
     });
   }
+  /** 판정 도구(status.mjs)에 넘기는 인수 — 도구를 부르는 길은 refresh() 하나뿐이고(시작 뒤 · 주기 · 상태 감시 · 설정 화면의 다시 읽기가 모두 그리로 온다) 인수는 여기서만 만든다. */
+  statusArgs(notify = false) {
+    return ['--json', ...(notify ? ['--notify'] : []), ...(this.skipProviders.length ? [`--skip-provider=${this.skipProviders.join(',')}`] : [])];
+  }
   /** 판정 도구를 한 번 돌려 사본을 갈아 끼운다. 도는 중에 또 부르면 그 결과를 함께 기다린다(화면 열기와 감시가 겹쳐도 도구는 한 번). 실패하면 지난 사본을 그대로 둔다. */
   refresh({ notify = false } = {}) {
     if (!this.available) return Promise.resolve(null);
     if (this.refreshing) return this.refreshing;
     this.refreshing = (async () => {
       try {
-        const r = await this.run('status.mjs', notify ? ['--json', '--notify'] : ['--json']);
+        const r = await this.run('status.mjs', this.statusArgs(notify));
         try { this.info = { ...withoutHidden(JSON.parse(r.out.trim().split(/\r?\n/).pop()), this.hide), checkedAt: new Date().toISOString() }; }
         catch { this.log(`auth: status 읽기 실패(code ${r.code})`); return this.info; }
         // 방송 조건 = 급한 정도 · 급한 항목 + 항목마다의 단계와 중계기 판정(health). 「정상 ↔ 확인 중」처럼 급한 정도가 같은 변화도 화면에 가야 한다.
