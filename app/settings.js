@@ -233,7 +233,7 @@ window.Settings = (() => {
     const set = (id, t) => { const el = $(id); if (el) { el.textContent = t; el.title = t; } };
     const th = R.THEMES.find(t => t.id === cfg.theme) || R.THEMES[0], st = R.STAGES.find(s => s.id === cfg.stage) || R.STAGES[0];
     set('#st-sum-design', `${th.name} · ${st.name}`);
-    set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}${$('#st-agy-grp').hidden ? '' : ` · Antigravity ${optText('#st-agy-perm')}`}`);
+    set('#st-sum-session', `Claude ${optText('#st-perm')} · Codex ${optText('#st-approval')}${$('#st-agy-grp').hidden ? '' : ` · Antigravity ${agyInfo?.state === 'locked' ? '곧 열립니다' : optText('#st-agy-perm')}`}`);
     set('#st-sum-ontology', '역할 캐릭터 · 폴더 나무');
     set('#st-sum-tools', 'Skill · MCP · Plugin');
     set('#st-sum-feedback', '개발자에게 바로');
@@ -427,7 +427,8 @@ window.Settings = (() => {
   // 열쇠 값은 화면에 오지 않는다(데몬 auth.mjs). 곧 만료·만료가 있으면 설정(톱니) 단추에 점 + 하루 한 번 창 알림.
   let auth = null, authBusy = false;
   const AUTH_WORD = { ok: '정상', soon: '곧 만료', expired: '만료', unknown: '모름' };
-  const authDue = () => (auth?.info?.items || []).filter(i => !i.optional && (i.level === 'soon' || i.level === 'expired'));
+  // 화면 잠금(2026-11-27): 잠겨 있으면 구글(Antigravity) 계정은 경고 · 알림 대상이 아니다(데몬이 그 항목을 이미 빼고 보낸다 — 여기는 한 겹 더).
+  const authDue = () => (auth?.info?.items || []).filter(i => !i.optional && (i.level === 'soon' || i.level === 'expired') && !(i.provider === 'google' && agyInfo?.state === 'locked'));
   function authBadge() {
     const b = $('#btn-settings'); if (!b) return;
     const due = authDue(); const bad = due.some(i => i.level === 'expired');
@@ -455,7 +456,14 @@ window.Settings = (() => {
     if (grp.hidden) return;
     sel.innerHTML = list.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('');
     sel.value = list.some(o => o.id === cfg.agyPermission) ? cfg.agyPermission : '';
+    // 화면 잠금(2026-11-27): 카드는 보이되 고를 수 없다 + 꼬리표 「곧 열립니다」. 저장된 값은 건드리지 않는다(열린 뒤 그대로 쓴다).
+    const lock = agyLocked();
+    sel.disabled = lock; sel.title = lock ? AGY_SOON_TIP : '';
+    const tag = $('#st-agy-soon'); if (tag) tag.hidden = !lock;
   }
+  /** 안티그래비티 화면 잠금인가(데몬의 판정 state = locked — daemon/agents/antigravity.lock.mjs). 판정을 아직 못 읽었으면 아니다. */
+  const agyLocked = () => agyInfo?.state === 'locked';
+  const AGY_SOON = '곧 열립니다', AGY_SOON_TIP = 'Antigravity 는 준비 중입니다. 곧 열립니다.';
   function agyRow(i) {
     const cur = agyInfo?.state === 'ok' && agyInfo.account && agyInfo.account === i.label;
     // 낱말은 대시보드와 같게(2026-11-25): 정상 / 확인 중 / 재로그인 필요. 확인 중 = 갱신이 한 번 실패해 중계기가 다시 확인하는 동안 — 단추 없음(스스로 돌아올 수 있다).
@@ -466,6 +474,8 @@ window.Settings = (() => {
       + `<span class="auth-right"><span class="auth-d">${esc(checking ? '확인 중' : bad ? '재로그인 필요' : (AUTH_WORD[i.level] || '모름'))}</span>${bad ? '<button class="text-btn accent" type="button" data-dash="1" title="사용량 대시보드를 엽니다 — 거기서 Antigravity 계정으로 다시 로그인합니다">대시보드에서 다시 로그인</button>' : ''}</span></div>`;
   }
   function agyCard(list = []) {
+    // 화면 잠금(2026-11-27): 묶음은 보이되 「곧 열립니다」 한 줄뿐 — 계정 줄 · 판정 줄 · 재로그인 단추를 내지 않는다(받은 목록이 있어도 그리지 않는다).
+    if (agyLocked()) return `<section class="st-grp auth-card" data-kind="antigravity" data-locked="1"><h3 class="auth-sec-h"><span class="chip antigravity">Antigravity</span><span class="auth-sec-t">계정</span><span class="soon-tag">${esc(AGY_SOON)}</span></h3><div class="upd-line st-sub auth-empty">${esc(AGY_SOON_TIP)}</div></section>`;
     const known = agyInfo && agyInfo.state !== 'missing';
     if (!known && !list.length) return '';
     const viaGate = agyInfo?.connection === 'gate' || list.length > 0; // 2026-11-23: 중계기(IRIS Gate)의 구글 계정을 돌려 쓴다
@@ -625,6 +635,8 @@ window.Settings = (() => {
     $('#st-pl-quiet')?.addEventListener('click', (e) => { const b = e.target.closest('[data-quiet]'); if (b && !b.disabled) setQuiet(b.dataset.quiet); });
     $('#st-pl-folder')?.addEventListener('click', openPlannerFolder);
     fetch('/api/agents').then(r => r.json()).then((a) => { agents = a; if (open) renderPanel(); }).catch(() => {});
+    // 안티그래비티 판정을 켤 때 한 번 미리 읽어 둔다(2026-11-27) — 화면 잠금인 PC 에서 설정을 처음 열 때부터 「곧 열립니다」로 보이게(늦게 읽어 잠깐 고를 수 있어 보이지 않게)
+    loadAgy().then(() => { authBadge(); if (open) { renderAuth(); syncAgyPerm(); renderNav(); } }).catch(() => {});
     $('#st-mods').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (!b) return; modAct(b.closest('[data-mod]').dataset.mod, b.dataset.act); });
     // 업데이트(v2.58): 절 머리 단추 하나 + 하루 1회 스위치. 상태는 데몬이 준다(웹소켓 방송은 main.js 가 onUpdate 로 넘긴다).
     window.UpdateChatView?.init(); // 「대화로 업데이트」 단추(app/update-chat.js)

@@ -342,7 +342,9 @@ else {
     await sleep(300);
     const cards = await p.evaluate(() => [...document.querySelectorAll('#st-auth .auth-card')].map(c => `${c.dataset.kind}:${c.querySelectorAll('.auth-row').length}:${c.querySelector('.auth-empty') ? 'empty' : ''}`).join(','));
     // 2026-11-23: 이 PC 에 agy 가 있으면 넷째 카드 「Antigravity 로그인」(줄 하나)이 맨 뒤에 붙는다 — 그 밖의 세 장은 그대로여야 한다
-    ok(cards.replace(/,antigravity:1:$/, '') === 'iris:1:,claude:2:,codex:0:empty', `7 계정·보안 = 열쇠 카드 세 장(+ 안티그래비티 카드), 빈 카드는 안내 (${cards})`);
+    // 2026-11-27 화면 잠금: 시험 데몬에는 열쇠가 없어 잠겨 있다 → 넷째 카드는 계정 줄 · 단추 없이 「곧 열립니다」 한 줄(antigravity:0:empty). 앞의 세 장은 그대로다.
+    ok(cards === 'iris:1:,claude:2:,codex:0:empty,antigravity:0:empty', `7 계정·보안 = 열쇠 카드 세 장 + 잠긴 안티그래비티 카드(줄 0 · 안내 한 줄), 빈 카드는 안내 (${cards})`);
+    ok(await p.evaluate(() => { const c = document.querySelector('#st-auth .auth-card[data-kind="antigravity"]'); return !!c && c.dataset.locked === '1' && /곧 열립니다/.test(c.textContent) && !c.querySelector('button'); }), '7 잠긴 안티그래비티 카드 = 「곧 열립니다」 · 단추 없음');
     ok(/대시보드에서 추가/.test(await p.locator('#st-auth .auth-card[data-kind="codex"]').textContent()), '7 Codex 0개 = "계정 없음 — 대시보드에서 추가"');
     await p.locator('#st-auth-act').isVisible().then(v => ok(v, '7 머리 「다시 확인」은 카드 밖에 그대로'));
     await shot('s-account');
@@ -459,7 +461,9 @@ else {
     await p.locator('#tl-kinds [data-kind="skills"]').click(); await sleep(150);
     const tabs = await p.locator('#tl-agents [data-agent]').evaluateAll(bs => bs.map(b => b.textContent.replace(/\s*\d+$/, '').trim()).join(','));
     // 2026-11-25: 이 PC 에 agy 가 있으면 「Antigravity 전용」 탭이 더해지고 마지막 탭 이름이 「여럿이 함께」가 된다 — 없으면 예전 넷 그대로
-    ok(tabs === '전체,Claude 전용,Codex 전용,둘 다' || tabs === '전체,Claude 전용,Codex 전용,Antigravity 전용,여럿이 함께', `7 에이전트 탭 (${tabs})`);
+    // 2026-11-27 화면 잠금: 시험 데몬에는 열쇠가 없어 잠겨 있다 → 「Antigravity 전용」 탭은 보이되 개수 대신 꼬리표 「곧 열립니다」(고를 수 없음). 다른 탭은 그대로다.
+    ok(tabs === '전체,Claude 전용,Codex 전용,Antigravity 전용 곧 열립니다,여럿이 함께', `7 에이전트 탭 — 잠긴 Antigravity 탭은 「곧 열립니다」 (${tabs})`);
+    ok(await p.locator('#tl-agents [data-agent="antigravity"]').getAttribute('aria-disabled') === 'true', '7 잠긴 Antigravity 탭은 누를 수 없음');
     await p.locator('#tl-agents [data-agent="codex"]').click(); await sleep(100);
     const tc = await p.locator('#st-tools').textContent();
     ok(/codex-home-skill/.test(tc) && !/demo-skill/.test(tc), '7 Codex 전용 탭 = Codex 에만 있는 것');

@@ -21,6 +21,9 @@ window.ToolsView = (() => {
   // 안티그래비티가 없는 PC · 다시 켜기 전의 옛 데몬에서는 지금까지와 같은 탭 넷이다.
   const AGENT_NAME = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
   const hasAgy = () => Array.isArray(data?.agents) && data.agents.includes('antigravity');
+  // 안티그래비티 화면 잠금(2026-11-27): 데몬이 응답의 locked 로 알려 준다. 탭은 보이되 고를 수 없고 꼬리표 「곧 열립니다」 — 줄은 데몬이 내놓지 않는다.
+  const agyLocked = () => Array.isArray(data?.locked) && data.locked.includes('antigravity');
+  const AGY_SOON = '곧 열립니다', AGY_SOON_TIP = 'Antigravity 는 준비 중입니다. 곧 열립니다.';
   const agentTabs = () => [['all', '전체'], ['claude', 'Claude 전용'], ['codex', 'Codex 전용'], ...(hasAgy() ? [['antigravity', 'Antigravity 전용'], ['both', '여럿이 함께']] : [['both', '둘 다']])];
   const chip = (a) => `<span class="chip ${AGENT_NAME[a] ? a : 'claude'}">${AGENT_NAME[a] || 'Claude'}</span>`;
   const whose = (agents) => agents.length > 1 ? 'both' : (AGENT_NAME[agents[0]] ? agents[0] : 'claude');
@@ -99,8 +102,10 @@ window.ToolsView = (() => {
     }
     const avail = cats.filter(c => !irisIds.has(c.id) && !Object.values(c.state?.agents || {}).includes('installed'));
     const allRows = [...inst.map(r => ({ t: 'inst', agents: r.agents, r })), ...avail.map(c => ({ t: 'cat', agents: c.agents, c }))];
-    if (agent === 'antigravity' && !hasAgy()) agent = 'all';
-    ags.innerHTML = agentTabs().map(([a, t]) => `<button type="button" data-agent="${a}" aria-pressed="${agent === a}">${t} <b>${a === 'all' ? allRows.length : allRows.filter(x => whose(x.agents) === a).length}</b></button>`).join('');
+    if (agent === 'antigravity' && (!hasAgy() || agyLocked())) agent = 'all';
+    ags.innerHTML = agentTabs().map(([a, t]) => (a === 'antigravity' && agyLocked())
+      ? `<button type="button" class="locked" data-agent="${a}" aria-pressed="false" aria-disabled="true" title="${esc(AGY_SOON_TIP)}">${t} <span class="soon-tag">${esc(AGY_SOON)}</span></button>`
+      : `<button type="button" data-agent="${a}" aria-pressed="${agent === a}">${t} <b>${a === 'all' ? allRows.length : allRows.filter(x => whose(x.agents) === a).length}</b></button>`).join('');
     const words = q.trim().toLowerCase();
     const match = (s) => !words || s.toLowerCase().includes(words);
 
@@ -205,7 +210,7 @@ window.ToolsView = (() => {
       input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { input.value = ''; q = ''; render(); } });
       host.addEventListener('click', (e) => {
         const t = e.target.closest('[data-kind]'); if (t && t.closest('#tl-kinds')) { kind = t.dataset.kind; try { localStorage.setItem(KEY_TAB, kind); } catch {} return render(); }
-        const a = e.target.closest('[data-agent]'); if (a) { agent = a.dataset.agent; return render(); }
+        const a = e.target.closest('[data-agent]'); if (a) { if (a.getAttribute('aria-disabled') === 'true') return; agent = a.dataset.agent; return render(); } // 잠긴 탭(화면 잠금)은 누름을 받지 않는다
         const b = e.target.closest('[data-act]'); if (b && !b.disabled) act(b.dataset.act, b.dataset.id);
       });
     }

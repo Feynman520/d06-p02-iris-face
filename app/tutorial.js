@@ -48,14 +48,26 @@ window.Tutorial = (() => {
   }
 
   // ---------- 덱(그림자 DOM) ----------
+  // 안티그래비티 화면 잠금(2026-11-27, 데몬의 판정 state = locked): 덱의 「터미널」 쪽에 있는 안티그래비티 CLI 설치 명령을 보이지 않고 그 자리에 「곧 열립니다」를 적는다 —
+  // 잠긴 PC 에서는 설치해도 IRIS 에서 쓸 수 없으므로. 덱 파일은 고치지 않고 그릴 때만 바꾼다(잠금이 풀리면 원본 그대로 보인다). 다른 회사의 줄 · 앱 · IDE 소개는 그대로다.
+  function lockDeck(root) {
+    let n = 0;
+    for (const code of root.querySelectorAll('.drow code')) {
+      if (!/antigravity\.google\/cli/i.test(code.textContent || '')) continue;
+      code.textContent = 'IRIS 에서는 곧 열립니다'; code.className = 'soon'; n++;
+    }
+    if (n) { const st = document.createElement('style'); st.textContent = '.drow code.soon{font-family:inherit;font-weight:600;background:none;color:var(--mute);border:2px solid var(--line)}'; root.appendChild(st); }
+    return n;
+  }
   let deckP = null;
   function loadDeck() {
     if (deckP) return deckP;
     deckP = (async () => {
       const get = async (f, kind) => { const r = await fetch(`${DECK}/${f}`); if (!r.ok) throw new Error(f); return kind === 'json' ? r.json() : r.text(); };
-      const [css, html, man] = await Promise.all([get('deck.css'), get('slides.html'), get('manifest.json', 'json')]);
+      const [css, html, man, agy] = await Promise.all([get('deck.css'), get('slides.html'), get('manifest.json', 'json'), fetch('/api/antigravity/status').then((r) => (r.ok ? r.json() : null)).catch(() => null)]);
       const host = $('.tu-deck', el()); const sr = host.shadowRoot || host.attachShadow({ mode: 'open' });
       sr.innerHTML = `<style>${css}</style><div id="stage">${html}</div>`;
+      if (agy?.state === 'locked') lockDeck(sr);
       sr.addEventListener('click', (e) => { if (e.target.closest?.('a')) e.preventDefault(); }); // 덱 안 링크로 창이 다른 곳으로 가지 않게
       if (typeof ResizeObserver === 'function') new ResizeObserver(fitDeck).observe(host);
       makeScenes(man); return man;

@@ -748,6 +748,13 @@ input[type=range] { accent-color: var(--iris); width: 160px; }
 /* 셋째 에이전트 안티그래비티(2026-11-23) — 파랑 계열. 위 두 에이전트의 규칙은 그대로 */
 .seg-agent .seg-btn[data-agent="antigravity"].active { color: #9cc3ff; }
 .chip.antigravity { color: #9cc3ff; border-color: rgba(156,195,255,.35); }
+/* 안티그래비티 화면 잠금(2026-11-27): 단추는 보이지만 눌리지 않고 꼬리표 「곧 열립니다」(main.js 가 data-tag 를 단다). 흐리게 만들지 않는다 — 꼬리표가 읽혀야 한다 */
+.seg-agent .seg-btn.locked { cursor: not-allowed; color: var(--ink-3); }
+.seg-agent .seg-btn.locked:hover { background: none; color: var(--ink-3); }
+.seg-agent .seg-btn.locked::after { content: attr(data-tag); margin-left: 6px; font-size: 10.5px; line-height: 14px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-3); white-space: nowrap; vertical-align: 1px; }
+/* 설정(세션 기본값 · 계정 · 보안 · 도구)의 같은 꼬리표 */
+.soon-tag { flex: none; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-3); white-space: nowrap; }
+#st-agy-perm:disabled { opacity: .45; cursor: not-allowed; } /* 잠긴 동안의 권한 모드 칸 — 보이되 고를 수 없음 */
 :root:is([data-iris-theme="ivory"], [data-iris-theme="mist"], [data-iris-theme="paper"]) .chip.antigravity { color: #1f5fbf; border-color: rgba(31,95,191,.4); }
 
 /* ---- 폴더 팝오버 ---- */
@@ -1060,6 +1067,7 @@ button.tl-pill[aria-pressed="true"] { border-color: var(--iris); background: var
 .tl-agents button { padding: 7px 14px 8px; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: 13px; color: var(--ink-2); }
 .tl-agents button b { margin-left: 4px; font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .tl-agents button:hover { color: var(--ink); }
+.tl-agents button.locked, .tl-agents button.locked:hover { color: var(--ink-3); cursor: not-allowed; } /* 안티그래비티 화면 잠금(2026-11-27): 탭은 보이되 고를 수 없음 */
 .tl-agents button[aria-pressed="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--iris); } .tl-agents button[aria-pressed="true"] b { color: var(--iris); }
 .st-grp > h3.tl-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tl-h svg { color: var(--iris); } .tl-t { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }

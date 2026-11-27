@@ -86,42 +86,32 @@
   const AGENT_NAME = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
   // v2.96.2(2026-10-27 사용자 결정, 옛 v2.76 한 줄 안내 대체): 입력창 위 긴 안내 글은 없앴다. 프로그램이 없거나 계정이 0개인
   // 에이전트 버튼은 **비활성**(누를 수 없음) + 마우스를 올리면 짧은 말풍선. 고른 쪽이 꺼지면 켜진 쪽으로 옮긴다. 둘 다 꺼지면 막지 않는다(할 수 있는 게 없어짐).
-  const OFF_TIP = { missing: '프로그램 없음 — IRIS 설치 파일을 다시 실행하면 받습니다', account: '계정 연결 안 됨 — 대시보드에서 계정을 추가하면 켜집니다' };
-  // 안티그래비티는 중계기 밖이라 대시보드에서 계정을 더하지 않는다(2026-11-23) — 안내만 다르다.
-  const OFF_TIP_AGENT = { antigravity: { missing: '프로그램 없음 — 공식 설치(antigravity.google/cli) 뒤 IRIS 창을 다시 켜면 켜집니다', account: '로그인 안 됨 — 터미널에서 agy 를 한 번 실행해 구글 계정으로 로그인하면 켜집니다', gate: '중계기(IRIS Gate)를 쓸 수 없음 — 사용량 대시보드에서 구글 계정 · 재시작을 확인하면 1분 안에 켜집니다' } };
-  function agentOff() {
-    const off = {};
-    for (const k of ACCT?.missing || []) if (AGENTS[k]) off[k] = 'missing';
-    const acc = ACCT?.accounts;
-    // "모두 꺼졌으면 막지 않는다"는 클로드 · 코덱스 둘만으로 예전과 똑같이 셈한다(셋째 에이전트가 생겨도 두 단추의 판정이 바뀌지 않게 — 2026-11-23 코덱스 재검토)
-    const relayKeys = Object.keys(AGENTS).filter((k) => k !== 'antigravity');
-    if (acc) for (const k of relayKeys) if (!off[k] && acc[k] === 0) off[k] = 'account';
-    const base = Object.keys(off).length >= relayKeys.length ? {} : off;
-    // 안티그래비티(중계기 밖)는 위 상태 객체에 없다 — 데몬이 따로 보내는 판정(AGY)으로만 끈다. 모름(unknown)이면 끄지 않는다.
-    if (AGENTS.antigravity) { if (AGY?.state === 'missing') return { ...base, antigravity: 'missing' }; if (AGY?.state === 'auth') return { ...base, antigravity: 'account' }; if (AGY?.state === 'gate') return { ...base, antigravity: 'gate' }; }
-    return base;
-  }
-  // 단추로 여는 대화(quickStart)용 — 위 "모두 꺼졌으면 막지 않는다" 예외 없이 그 에이전트 하나의 실제 상태만 본다(없는 계정 · 없는 프로그램으로 대화를 만들지 않게).
+  // 판정 · 말풍선 글은 app/agent-gate.js(순수 함수 — 화면 없이 검사한다, 2026-11-27): 단추마다 꺼진 까닭 = AgentGate.off, 그 에이전트 하나의 실제 상태 = AgentGate.block.
+  // "모두 꺼졌으면 막지 않는다"는 클로드 · 코덱스 둘만으로 셈하고, 안티그래비티는 데몬이 따로 보내는 판정(AGY)으로만 끈다 — 화면 잠금(state = locked)이 다른 판정보다 먼저다.
+  const agentOff = () => AgentGate.off(AGENTS, ACCT, AGY);
+  // 단추로 여는 대화(quickStart)용 — 위 "모두 꺼졌으면 막지 않는다" 예외 없이 그 에이전트 하나의 실제 상태만 본다(없는 계정 · 없는 프로그램 · 잠긴 에이전트로 대화를 만들지 않게).
   // 계정 수를 모르는 PC(영수증 없음 = accounts null)는 판단하지 않는다 = 막지 않는다.
+  const agentBlock = (k) => AgentGate.block(k, AGENTS, ACCT, AGY);
+  /** 잠긴 Antigravity 로 무엇을 하려 할 때의 안내(말풍선 하나 — 고장이 아니므로 오류 창 · IRIS Doctor 권유를 띄우지 않는다) */
+  const lockedNotice = (sub = '') => Dialog.notice(AgentGate.LOCK_TIP, { sub, tone: 'info' });
   /** 꺼진 에이전트 단추를 눌렀을 때: 왜 꺼졌는지(단추의 설명 글)와 IRIS Doctor 로 가는 단추. Doctor 가 없는 PC 에서는 지금까지처럼 아무 일도 없다. */
   function agentOffHelp(b) {
+    if (b.classList.contains('locked')) { lockedNotice(); return; } // 화면 잠금 = 준비 중일 뿐 고장이 아니다 — Doctor 로 보내지 않는다
     if (!window.DoctorView?.available?.()) return;
     const [name, ...why] = String(b.title || '').split(' · ');
     Dialog.error({ title: `${name || '이 에이전트'}를 지금 쓸 수 없습니다`, message: why.join(' · ') || '연결 상태를 확인해 주세요.', retryLabel: 'IRIS Doctor' }).then((go) => { if (go) window.DoctorView.show(); });
-  }
-  function agentBlock(k) {
-    if (!AGENTS?.[k]) return 'missing';
-    if ((ACCT?.missing || []).includes(k)) return 'missing';
-    if (k === 'antigravity') return AGY?.state === 'missing' ? 'missing' : AGY?.state === 'auth' ? 'account' : AGY?.state === 'gate' ? 'gate' : '';
-    return ACCT?.accounts && ACCT.accounts[k] === 0 ? 'account' : '';
   }
   function renderSetup() {
     if (!AGENTS) return;
     const off = agentOff();
     for (const b of document.querySelectorAll('.seg-agent .seg-btn')) {
-      const k = b.dataset.agent; b.hidden = !AGENTS[k];
+      // 안티그래비티 단추는 데몬의 판정(AGY)을 받은 뒤에 보인다 — 잠긴 PC 에서 단추가 잠깐 켜졌다 꺼지지 않게(2026-11-27). 판정은 hello 와 GET /api/antigravity/status 로 곧바로 온다.
+      const k = b.dataset.agent; b.hidden = !AGENTS[k] || (k === 'antigravity' && !AGY);
+      const lock = off[k] === 'locked';
       // disabled 속성 대신 aria-disabled + 누름 무시: disabled 버튼은 마우스 사건을 안 받아 말풍선이 안 뜰 수 있다
-      b.setAttribute('aria-disabled', off[k] ? 'true' : 'false'); b.classList.toggle('no-account', !!off[k]); b.title = off[k] ? `${AGENT_NAME[k] || k} · ${OFF_TIP_AGENT[k]?.[off[k]] || OFF_TIP[off[k]]}` : '';
+      b.setAttribute('aria-disabled', off[k] ? 'true' : 'false'); b.classList.toggle('no-account', !!off[k] && !lock); b.title = off[k] ? AgentGate.tip(k, off[k]) : '';
+      // 화면 잠금: 보이지만 눌리지 않음 + 꼬리표 「곧 열립니다」(CSS 가 data-tag 를 단추 옆에 그린다). 흐리게 만드는 no-account 는 쓰지 않는다 — 꼬리표가 읽혀야 한다.
+      b.classList.toggle('locked', lock); if (lock) b.dataset.tag = AgentGate.LOCK_TAG; else delete b.dataset.tag;
     }
     if (!AGENTS[sel.agent] || (off[sel.agent] && setupMode !== 'switch')) { const on = Object.keys(AGENTS).find(k => !off[k]); if (on && on !== sel.agent) { sel.agent = on; saveSel(); } }
     const a = AGENTS[sel.agent];
@@ -159,6 +149,8 @@
   $('#setup-cancel').onclick = () => { setupMode = 'new'; renderSetup(); };
   $('#setup-apply').onclick = async () => {
     const s = cur(); if (!s) return; const c = currentSel();
+    // 화면 잠금: 바꾸기 화면에서는 고른 에이전트가 스스로 옮겨지지 않으므로(위 renderSetup 의 예외) 잠긴 Antigravity 로의 제출을 여기서 막는다 — 데몬에 보내지 않는다
+    if (agentBlock(c.agent) === 'locked') { lockedNotice('대화는 그대로입니다.'); return; }
     const to = `${AGENT_KO[c.agent]} ${$('#sel-model').selectedOptions[0]?.textContent}${c.effort ? ` · ${c.effort}` : ''}`;
     const cross = c.agent !== s.agent;
     if (!cross && !s.sessionId) { await Dialog.notice('첫 메시지를 보낸 뒤에 바꿀 수 있습니다.'); return; }
@@ -179,7 +171,7 @@
     ws.onclose = () => { $('#link-dot').className = 'link-dot bad'; setTimeout(connect, 1500); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'hello') { sessions = m.sessions; if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); window.Planner?.onHello(m.planner); Settings.resync(); render();} // resync = 데몬과 (다시) 붙었을 때 그사이 놓친 설정 변화를 다시 읽는다
+      if (m.type === 'hello') { sessions = m.sessions; if (m.agy) AGY = m.agy; /* agy(2026-11-27) = 안티그래비티 판정(잠겨 있으면 처음부터 locked) — 아래 renderSetup 이 그린다 */ if (m.subs) for (const [id, l] of Object.entries(m.subs)) SubPanel.setList(id, l); bgMap.clear(); if (m.bg) for (const [id, l] of Object.entries(m.bg)) bgMap.set(id, l); if (Array.isArray(m.modules)) setModules(m.modules); if (m.update) Settings.setUpdate(m.update); if (m.updateResult) Settings.showUpdateResult(m.updateResult); renderSetup(m.setup); Handoff.apply(m.handoff); applyLeadAgent(m.handoff); Tutorial.maybeOpen(m.handoff); if (m.mem) MemGauge.onSample(m.mem); if (m.auth) Settings.setAuth(m.auth); window.Planner?.onHello(m.planner); Settings.resync(); render();} // resync = 데몬과 (다시) 붙었을 때 그사이 놓친 설정 변화를 다시 읽는다
       else if (m.type === 'shutdown') showQuitting();                                                       // 전부 종료 시작(v2.97) — 어느 창·탭이 시작했든 「종료하는 중」
       else if (m.type === 'mem') MemGauge.onSample(m.s);                                                    // 메모리 계기판(v2.78): 2초마다 실제 RAM·커밋
       else if (m.type === 'setup') renderSetup(m.progress);                                                // 세팅 진행 막대(v2.65)
@@ -613,6 +605,7 @@
       } else {
         if (!folder) { FolderPicker.show(); return; }
         const c = currentSel();
+        if (agentBlock(c.agent) === 'locked') { lockedNotice('입력창의 글은 그대로입니다 — 다른 에이전트를 골라 주세요.'); return; } // 화면 잠금: 잠긴 Antigravity 로는 새 대화를 만들지 않는다(글은 입력창에 남는다)
         const rec = await api('POST', '/api/sessions', { cwd: folder.path, agent: c.agent, model: c.model, expectModel: expectOf(c), effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox, prompt: text });
         select(rec.id);
         Transcript.prime(text); // 기록파일이 생기기 전에도 요청문 + "세션 여는 중"을 바로 보여 준다(멈춘 것처럼 보이지 않게)
@@ -665,7 +658,7 @@
       const where = cwd || Settings.health()?.root;
       if (!where) return { ok: false, reason: 'no-root' };
       const why = agentBlock(c.agent);
-      if (why) return { ok: false, reason: 'agent-off', agent: AGENT_NAME[c.agent] || c.agent, why: why === 'missing' ? '프로그램 없음' : why === 'gate' ? '중계기를 쓸 수 없음' : '계정 연결 안 됨' };
+      if (why) return { ok: false, reason: 'agent-off', agent: AGENT_NAME[c.agent] || c.agent, why: AgentGate.word(why) }; // 프로그램 없음 · 중계기를 쓸 수 없음 · 계정 연결 안 됨 · (화면 잠금) 곧 열립니다
       let rec;
       try { rec = await api('POST', '/api/sessions', { cwd: where, agent: c.agent, model: c.model, expectModel: expectOf(c), effort: c.effort, permission: c.permission, approval: c.approval, sandbox: c.sandbox, prompt: text }); }
       catch (e) { return { ok: false, reason: 'error', message: e?.message || String(e) }; }
@@ -729,7 +722,10 @@
   $('#btn-forget').onclick = () => $('#btn-close').click();
   // 죽은 카드 그 자리에서 재개(v2.42): 데몬이 같은 세션 id로 --resume / codex resume 을 띄운다. 세션 id를 모르는 카드(첫 메시지 전)는 데몬이 400으로 거절.
   $('#btn-resume').onclick = async () => {
-    const s = cur(); if (!s) return; const btn = $('#btn-resume'); btn.disabled = true;
+    const s = cur(); if (!s) return;
+    // 화면 잠금: 잠긴 Antigravity 의 옛 카드는 다시 열지 않는다(카드와 기록은 그대로 둔다 — 열린 뒤에 잇는다). 데몬도 같은 거절을 한다.
+    if (s.agent === 'antigravity' && AgentGate.locked(AGY)) { lockedNotice('이 대화의 기록은 그대로 남아 있습니다.'); return; }
+    const btn = $('#btn-resume'); btn.disabled = true;
     try { await api('POST', `/api/sessions/${s.id}/resume`, {}); } catch (e) { Dialog.error({ title: '대화를 다시 열지 못했습니다', detail: e.message }); } finally { btn.disabled = false; }
   };
   $('#btn-copy-resume').onclick = () => { const t = cur()?.resumeCmd; if (t) navigator.clipboard?.writeText(t); };
