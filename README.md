@@ -58,7 +58,7 @@ Optional (auto-detected; the feature simply stays off when missing):
 |---|---|
 | 🎤 Voice input | Python 3 + `pip install faster-whisper` (CUDA if available). Set `IRIS_FACE_PYTHON` if Python is not on PATH. |
 | Hangul / Office → PDF preview | Python with `pywin32` (Office) and a `pyhwpx` venv (Hangul). `IRIS_FACE_PY`, `IRIS_FACE_HWP_PY`. |
-| Usage batteries + Ctrl+D dashboard | The TeamClaude dashboard tool. `TEAMCLAUDE_DASH_DIR`, `TEAMCLAUDE_DASH_PORT`. Without it the header battery and the drawer are hidden. |
+| Usage batteries + Ctrl+D dashboard | The IRIS Gate dashboard tool. `TEAMCLAUDE_DASH_DIR`, `TEAMCLAUDE_DASH_PORT`. Without it the header battery and the drawer are hidden. |
 | Folder picker tree | An IRIS workspace (`_ontology/graph.json`). Otherwise you type/paste a folder path. |
 | "Leftover preview" in the memory gauge | The IRIS orphan sweeper `orphan-sweeper.py` + Python. `IRIS_FACE_SWEEPER`. Preview only — nothing is terminated. Hidden when missing. |
 
@@ -85,7 +85,7 @@ node launch.mjs            # starts the daemon if needed, opens the Electron win
 | `IRIS_ROOT` | auto (nearest folder with `_agent/` or `_ontology/graph.json`) | Workspace root shown in the header and used by the folder picker. |
 | `IRIS_FACE_PYTHON` | auto (`%LOCALAPPDATA%\Programs\Python`, then PATH) | Python for voice input. |
 | `IRIS_FACE_PY` / `IRIS_FACE_HWP_PY` | `python` / auto | Python for Office / Hangul document conversion. |
-| `TEAMCLAUDE_DASH_DIR` / `TEAMCLAUDE_DASH_PORT` | auto / `3457` | TeamClaude dashboard tool location and viewer port. |
+| `TEAMCLAUDE_DASH_DIR` / `TEAMCLAUDE_DASH_PORT` | auto / `3457` | IRIS Gate dashboard tool location and viewer port. |
 | `CLAUDE_CONFIG_DIR` | `<root>/_agent/claude` | Where Claude Code keeps its config (passed through). |
 | `IRIS_FACE_ENTER_QUIET_MS` / `IRIS_FACE_ENTER_MAX_WAIT_MS` | `300` / `3000` | Paste-then-Enter timing for the CLI input line (see `daemon/sessions.mjs`). |
 
