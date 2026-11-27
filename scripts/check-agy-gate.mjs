@@ -23,6 +23,10 @@ Object.assign(process.env, {
   IRIS_AGY_STATUS_FILE: path.join(TMP, 'agy-status.json'), LOCALAPPDATA: path.join(TMP, 'la'), IRIS_AGY_GATE_URL: GATE,
 });
 delete process.env.IRIS_AGY_EXE;
+// 화면 잠금(2026-11-27, daemon/agents/antigravity.lock.mjs): 이 검사는 "열린 길"의 검사다 — 시험 상태 폴더에 열쇠를 놓아 연다(진짜 영혼의 열쇠는 읽지 않는다).
+// 잠긴 길(조회 0 · 거절)은 verify:agy-lock 이 본다.
+fs.mkdirSync(process.env.IRIS_FACE_STATE, { recursive: true });
+fs.writeFileSync(path.join(process.env.IRIS_FACE_STATE, 'iris-keys.json'), JSON.stringify({ antigravity: 'open' }), 'utf8');
 const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href);
 
 let pass = 0, fail = 0;

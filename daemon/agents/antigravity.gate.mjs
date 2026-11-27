@@ -5,7 +5,9 @@
 //   직결은 antigravity.mjs 의 connection 한 줄을 'direct' 로 바꿀 때만이다.
 // 통과 조건(셋 다): 중계기가 구글을 안다(status.google.supported) · 구글 멈춤이 아니다(status.google.halt 없음) · 켜져 있고 오류가 아닌 구글 계정이 1개 이상.
 //   옛 중계기(구글을 모름)는 모르는 경로를 앤트로픽으로 넘기므로(11/23 실측) 'supported' 가 없으면 반드시 막는다.
-export const GATE_URL = (process.env.IRIS_AGY_GATE_URL || 'http://127.0.0.1:3456').replace(/\/+$/, '');
+import { isLocked, LOCKED_MESSAGE } from './antigravity.lock.mjs';
+
+export const GATE_URL =(process.env.IRIS_AGY_GATE_URL || 'http://127.0.0.1:3456').replace(/\/+$/, '');
 const FRESH_MS = 60_000;
 const TIMEOUT_MS = 3_000;
 let last = null; // { ok, why, at, accounts: [{ name, status }] }
@@ -41,6 +43,8 @@ export function judge(status, at = Date.now()) {
 
 /** 뒤에서 새로 읽는다(기다리지 않는 쪽 — 데몬 주기 갱신) */
 export async function refresh() {
+  // 화면 잠금(antigravity.lock.mjs): 잠겨 있으면 중계기에 묻지 않는다(조회 0) — 판정은 '막힘'으로 둔다
+  if (isLocked()) { last = { ok: false, why: LOCKED_MESSAGE, at: Date.now(), accounts: [], locked: true }; return last; }
   try {
     const r = await fetch(`${GATE_URL}/teamclaude/status`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     last = judge(r.ok ? await r.json() : null);

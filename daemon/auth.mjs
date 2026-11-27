@@ -67,10 +67,27 @@ export function healthSignature(file) {
   } catch { return null; }
 }
 
+const LEVEL_RANK = { expired: 3, soon: 2, unknown: 1, ok: 0 }; // 급한 정도의 순서(판정 도구와 같다)
+/**
+ * 판정 도구의 결과에서 hide(item) 이 참인 항목을 뺀다(순수 함수). 급한 정도(worst) · 급한 항목(due) · 가장 먼저 끝나는 열쇠(nextExpiry)는
+ * 남은 항목으로 도구와 같은 규칙(선택 항목 optional 은 세지 않는다)으로 다시 셈한다. hide 가 없거나 뺄 것이 없으면 받은 그대로 돌려준다.
+ */
+export function withoutHidden(info, hide) {
+  if (typeof hide !== 'function' || !info || !Array.isArray(info.items)) return info;
+  const items = info.items.filter((i) => !hide(i));
+  if (items.length === info.items.length) return info;
+  const counted = items.filter((i) => !i?.optional);
+  const worst = counted.reduce((w, i) => ((LEVEL_RANK[i.level] ?? 0) > LEVEL_RANK[w] ? i.level : w), 'ok');
+  const due = counted.filter((i) => i.level === 'expired' || i.level === 'soon').map((i) => i.id);
+  const next = counted.filter((i) => Number.isFinite(i.expiresAt)).sort((x, y) => x.expiresAt - y.expiresAt)[0] || null;
+  return { ...info, items, worst, due, nextExpiry: next ? { id: next.id, label: next.label, expiresAt: next.expiresAt } : null };
+}
+
 export class AuthWatch {
   /** opts: { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs } — dir 를 주면 시험용 가짜 도구 폴더, post 는 시험용 가짜 대시보드 호출 */
-  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson, healthFile = healthFileOf(), watchMs = 30_000 } = {}) {
-    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs });
+  constructor({ log = () => {}, broadcast = () => {}, node = process.execPath, dir = authDir(), everyMs = 30 * 60_000, ensureDash = null, post = postJson, healthFile = healthFileOf(), watchMs = 30_000, hide = null } = {}) {
+    // hide(item) = 감시 결과에서 뺄 항목(2026-11-27 안티그래비티 화면 잠금 — 잠겨 있으면 구글 계정 항목). 없으면(null) 도구가 준 그대로다.
+    Object.assign(this, { log, broadcast, node, dir, everyMs, ensureDash, post, healthFile, watchMs, hide: typeof hide === 'function' ? hide : null });
     this.available = !!dir;
     this.info = null; this.job = null; this.timer = null; this.lastKey = '';
     // 2026-11-25 사용자 신고 "재로그인하고 재시작까지 했는데 설정에는 계속 끊김": 사본을 30분에 한 번만 다시 읽었다.
@@ -94,7 +111,7 @@ export class AuthWatch {
     this.refreshing = (async () => {
       try {
         const r = await this.run('status.mjs', notify ? ['--json', '--notify'] : ['--json']);
-        try { this.info = { ...JSON.parse(r.out.trim().split(/\r?\n/).pop()), checkedAt: new Date().toISOString() }; }
+        try { this.info = { ...withoutHidden(JSON.parse(r.out.trim().split(/\r?\n/).pop()), this.hide), checkedAt: new Date().toISOString() }; }
         catch { this.log(`auth: status 읽기 실패(code ${r.code})`); return this.info; }
         // 방송 조건 = 급한 정도 · 급한 항목 + 항목마다의 단계와 중계기 판정(health). 「정상 ↔ 확인 중」처럼 급한 정도가 같은 변화도 화면에 가야 한다.
         const key = `${this.info.worst}|${(this.info.due || []).join(',')}|${(this.info.items || []).map((i) => `${i.id}:${i.level}:${i.health || ''}`).join(',')}`;

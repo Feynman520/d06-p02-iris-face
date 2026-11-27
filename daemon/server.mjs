@@ -46,6 +46,7 @@ import { CLAUDE_CONFIG_DIR, CODEX_HOME } from './agents.mjs';
 import * as agyStatus from './agents/antigravity.status.mjs';
 import * as agyGate from './agents/antigravity.gate.mjs'; // 2026-11-23 중계기 길 판정
 import { connection as agyConnection } from './agents/antigravity.mjs';
+import * as agyLock from './agents/antigravity.lock.mjs'; // 2026-11-27 화면 잠금 — 판정은 그 파일 한 곳
 import { taskkillTree, pidAlive } from './proctree.mjs';
 
 const PORT = Number(process.env.IRIS_FACE_PORT) || 3458;          // 시험용 두 번째 데몬: IRIS_FACE_PORT=3459 IRIS_FACE_STATE=<폴더>
@@ -60,6 +61,9 @@ const PID_FILE = path.join(STATE, 'daemon.pid');
 const LOG_FILE = path.join(STATE, 'daemon.log');
 fs.mkdirSync(STATE, { recursive: true });
 const log = (msg) => fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${msg}\n`, 'utf8');
+// 🔴 안티그래비티 화면 잠금(2026-11-27 사용자 결정 — agents/antigravity.lock.mjs): 켜질 때 한 번 정하고 끝까지 쓴다(도는 중에 열쇠 파일이 바뀌어도 따라가지 않는다).
+// 잠겨 있으면 아래의 안티그래비티 전용 일(상태 · 모델 갱신 타이머, 중계기에 구글 상태 묻기, 자동 재개)을 시작조차 하지 않는다. 클로드 · 코덱스의 일은 그대로다.
+const AGY_LOCKED = agyLock.isLocked();
 
 // ---- sessions + ws fan-out ----
 const clients = new Set();
@@ -125,12 +129,16 @@ const agentsMsg = (status = agentStatus()) => ({ type: 'agents', agents: activeA
 let agyGateFirst = Promise.resolve();
 // 사용자가 안티그래비티 세션을 열 · 바꿀 · 재개할 때: 미리 읽어 둔 판정이 '통과 · 1분 안'이 아니면 그 자리에서 한 번 다시 묻는다(비동기, 최대 약 3초 —
 // 그 요청만 기다리고 데몬은 멈추지 않는다). 중계기를 막 다시 켠 직후에도 옛 실패 판정으로 거절하지 않게(코덱스 재검토 F-2). 다른 에이전트는 기다리지 않는다.
+// 🔴 화면 잠금의 둘째 문턱(첫째 = 어댑터 preTrust): 잠겨 있으면 중계기에 묻기 전에 · 지금 프로세스를 끄기 전에 거절한다(code AGY_LOCKED → 400 + 「곧 열립니다」).
 const agyGateReady = async (agent) => {
+  if (agent === 'antigravity') agyLock.assertOpen();
   if (agent !== 'antigravity' || agyConnection !== 'gate') return;
   if (agyGate.current()?.ok && agyGate.fresh()) return;
   await agyGate.refresh().catch(() => {});
 };
-{
+// 잠겨 있으면 이 묶음 전체(시작 3초 뒤 · 매분의 상태 · 모델 갱신, 시작 즉시와 5초/15초의 중계기 판정)를 걸지 않는다 — 타이머 0 · agy 실행 0 · 조회 0.
+// 화면은 GET /api/antigravity/status 와 hello 의 agy 로 처음부터 state = locked 를 받는다.
+if (!AGY_LOCKED) {
   let prevState = null;
   const tickAgy = () => {
     // 모델 목록은 상태(중계기 판정 포함)를 읽은 뒤에 묻는다 — 중계기 길의 판정이 먼저 있어야 목록도 그 길로 묻는다(2026-11-23)
@@ -188,7 +196,9 @@ async function ensureDash() {
 // 선택 기능 표 — 화면이 /api/health.features 로 읽어 없는 기능(배터리·Ctrl+D 서랍·🎤)을 숨기거나 안내만 한다(2026-09-11 매듭 풀기).
 // voice 는 데몬 시작 뒤 probe 가 끝나기 전엔 null(확인 중) → 화면은 null 을 "있음"으로 보고, /api/voice/status 로 다시 확인한다.
 // ---- 로그인 열쇠 만료 감시(v2.84): 도구(iris-auth)가 있을 때만. 30분마다 점검 + 곧 만료면 윈도 알림(도구가 띄움) + 화면 방송 {type:'auth'}. ----
-const auth = new AuthWatch({ log: (m) => log(m), broadcast: (o) => broadcast(o), ensureDash });
+// 화면 잠금(2026-11-27): 잠겨 있으면 감시 결과에서 구글(Antigravity) 계정 항목만 뺀다 — 화면의 계정 줄 · 톱니 점 · 알림에 나오지 않게. 클로드 · 코덱스 항목과 감시 주기는 그대로다.
+// (바깥 도구 iris-auth 가 스스로 띄우는 윈도 알림 풍선에는 손대지 못한다 — 그 도구는 이 저장소 밖이다.)
+const auth = new AuthWatch({ log: (m) => log(m), broadcast: (o) => broadcast(o), ensureDash, hide: AGY_LOCKED ? (i) => i?.provider === 'google' : null });
 // ---- IRIS Doctor 입구(선택 기능): 바깥 Doctor 를 여는 손잡이 + 복구에 쓸 계정의 상태 요약. Doctor 가 없으면 화면이 묶음을 숨긴다. 상주시키는 것은 없다(화면이 물을 때만 읽는다). ----
 const doctor = new DoctorGate({ log: (m) => log(m) });
 const features = () => ({ doctor: doctor.public(), auth: auth.available, memory: memory.features(), dashboard: DASH_AVAILABLE, dashPort: dashPort(), voice: voice.status().available, python: !!voice.py, modules: uiModules(), update: { mode: updater.mode, enabled: updater.enabled } });
@@ -461,10 +471,11 @@ const server = http.createServer(async (req, res) => {
     // agents = 이 PC 에서 쓰는 에이전트 이름들(도구 화면이 Antigravity 탭을 보일지 정한다, 2026-11-25)
     // 안티그래비티 프로그램이 없는 PC(state = missing)에서는 탭도 줄도 내놓지 않는다 — .gemini 폴더만 남아 있어도(2026-11-25 코덱스 검토 2번).
     if (req.method === 'GET' && p === '/api/tools') {
+      // 화면 잠금(2026-11-27): 잠겨 있으면 탭은 보이되(agents 에 남는다) 줄은 내놓지 않고 ~/.gemini 도 읽지 않는다 — 화면은 locked 를 보고 「곧 열립니다」만 적는다.
       const agentIds = Object.keys(activeAgentsMap(AGENTS)).filter((a) => a !== 'antigravity' || agyStatus.current()?.state !== 'missing');
-      const list = tools.annotate(listTools(WS_ROOT)); const keep = (rows) => (rows || []).filter((r) => r.agent !== 'antigravity' || agentIds.includes('antigravity'));
+      const list = tools.annotate(listTools(WS_ROOT, AGY_LOCKED ? { antigravity: false } : {})); const keep = (rows) => (rows || []).filter((r) => r.agent !== 'antigravity' || (!AGY_LOCKED && agentIds.includes('antigravity')));
       const skills = keep(list.skills), mcp = keep(list.mcp), plugins = keep(list.plugins);
-      return json(res, 200, { ...list, counts: { skills: skills.length, mcp: mcp.length, plugins: plugins.length }, skills, mcp, plugins, catalog: tools.status(), agents: agentIds });
+      return json(res, 200, { ...list, counts: { skills: skills.length, mcp: mcp.length, plugins: plugins.length }, skills, mcp, plugins, catalog: tools.status(), agents: agentIds, locked: AGY_LOCKED ? ['antigravity'] : [] });
     }
     if (req.method === 'POST' && (p === '/api/tools/install' || p === '/api/tools/remove' || p === '/api/tools/cancel')) {
       if (!sameOrigin(req)) { log(`403 tools: origin=${String(req.headers.origin || '(none)').slice(0, 120)}`); return json(res, 403, { error: 'forbidden origin' }); }
@@ -725,8 +736,10 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (ws) => {
   clients.add(ws); ws.attached = null; ws.attachedSub = null;
   // 적용기가 남긴 결과는 첫 화면에 한 번만 실어 보낸다(v2.58) — 새로고침마다 같은 토스트가 다시 뜨지 않게.
-  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public(), planner: planner.hello() });
+  send(ws, { type: 'hello', version: VERSION, sessions: publicList(), subs: allSubs(), bg: allBg(), modules: uiModules(), update: updater.info(), updateResult, setup: setupProgress.info(), handoff: handoff.info(), mem: memory.latest(), auth: auth.public(), planner: planner.hello(), agy: agyStatus.brief() }); // agy(2026-11-27) = 안티그래비티 판정 — 잠겨 있으면 처음부터 state = locked
   if (updateResult) updateResult = null;
+  // 화면 잠금: 잠겨 있으면 주기 방송(1분마다의 { type: 'agy' })이 없으므로 붙자마자 한 번 보낸다 — 화면이 받는 첫 agy 방송부터 state = locked
+  if (AGY_LOCKED) send(ws, { type: 'agy', status: agyStatus.brief() });
   ws.on('message', (raw) => {
     let msg; try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
     try {
@@ -776,13 +789,15 @@ function shutdown() {
   return shuttingDown;
 }
 server.on('error', (e) => { if (e.code === 'EADDRINUSE') { console.error(`[iris-face] port ${PORT} in use — daemon already running`); process.exit(2); } console.error(e); process.exit(1); });
-server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); voice.sweep();
+server.listen(PORT, '127.0.0.1', () => { fs.writeFileSync(PID_FILE, String(process.pid), 'utf8'); log(`daemon start v${VERSION} pid=${process.pid} sessions=${sm.list().length}`); console.log(`[iris-face] daemon v${VERSION} http://127.0.0.1:${PORT}/ pid=${process.pid}`); log(`features: dashboard=${DASH_AVAILABLE ? dashBase : 'off'} python=${voice.py || 'off'}`); log(`antigravity: ${AGY_LOCKED ? 'locked (coming soon — no agy, no gate query, no timers)' : `open (${agyLock.lockInfo().source})`}`); voice.sweep();
   // 메모리 계기판(v2.78): 포트를 잡은 뒤에만 측정기(typeperf)를 띄운다 — 두 번째 실행이 포트 충돌로 끝날 때 고아 측정기를 남기지 않게.
   try { auth.start(); log(`auth: ${auth.available ? 'on' : 'off (tool not installed)'}`); } catch (e) { log(`auth init error: ${e?.message || e}`); }
   try { memory.start(); log(`memory: commit=${memory.features().commit} sweep=${memory.features().sweep ? 'on' : 'off'}`); } catch (e) { log(`memory init error: ${e?.message || e}`); }
   try { mods.scan(); mods.startAll(); log(`modules: ${mods.list().length} in ${MODULES_DIR}`); } catch (e) { log(`modules error: ${e?.message || e}`); }
   // 데몬과 함께 죽은 세션 자동 재개(v2.42): 살아 있던 카드를 같은 자리에서 --resume. 사용자가 닫은 세션은 기록에 없으므로 되살아나지 않는다.
-  try { const ar = autoResumeState(settings.get()); const waitGate = ar.enabled && agyConnection === 'gate' && sm.lost().some((r) => r.agent === 'antigravity'); const ids = waitGate ? sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent !== 'antigravity' }) : sm.resumeLost({ enabled: ar.enabled }); if (waitGate) { const agyLost = () => sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent === 'antigravity' }); agyGateFirst.then(agyLost, agyLost); ids.push(...sm.lost().filter((r) => r.agent === 'antigravity').map((r) => r.id)); } if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
+  // 화면 잠금(2026-11-27): 잠긴 안티그래비티 카드는 처음부터 뺀다(sessions.mjs resumeLost 가 잠긴 에이전트의 카드를 거른다 — 재개 시도 · 실패 기록 · 중계기 기다림 없음).
+  //   카드와 기록은 지우지 않는다 — 열린 뒤 「여기서 재개」로 잇는다.
+  try { const ar = autoResumeState(settings.get()); const agyKept = AGY_LOCKED ? sm.lost().filter((r) => r.agent === 'antigravity').map((r) => r.id) : []; if (agyKept.length) log(`auto-resume: antigravity locked — ${agyKept.length} card(s) kept as they are, not resumed (${agyKept.join(', ')})`); const waitGate = ar.enabled && agyConnection === 'gate' && sm.lost().some((r) => r.agent === 'antigravity') && !AGY_LOCKED; const ids = waitGate ? sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent !== 'antigravity' }) : sm.resumeLost({ enabled: ar.enabled }); if (waitGate) { const agyLost = () => sm.resumeLost({ enabled: ar.enabled, filter: (r) => r.agent === 'antigravity' }); agyGateFirst.then(agyLost, agyLost); ids.push(...sm.lost().filter((r) => r.agent === 'antigravity').map((r) => r.id)); } if (!ar.enabled) log(`auto-resume: off (${ar.source}), ${sm.lost().length} lost session(s) left for manual resume`); else if (ids.length) log(`auto-resume: ${ids.length} lost session(s) → ${ids.join(', ')}`); } catch (e) { log(`auto-resume error: ${e?.message || e}`); } try { Promise.resolve(voice.preload()).catch((e) => log(`voice: preload skipped ${e.message}`)); } catch (e) { log(`voice: preload skipped ${e.message}`); }
   // 업데이트(v2.58): 적용기가 남긴 결과를 한 번 집어 두고(화면 토스트), 다 쓴 내려받기 폴더를 치운 뒤 하루 1회 확인을 건다.
   try { updateResult = updater.consumeResult(); if (updateResult) noteUpdate(() => updateChat.noteResult(updateResult, updater.installed())); updater.sweep(); const on = updater.start(); log(`update: mode=${updater.mode} daily=${on && updater.enabled ? 'on' : 'off'}`); } catch (e) { log(`update init error: ${e?.message || e}`); }
   // 첨부 보관 정리: 30일 지난 첨부를 시작할 때와 하루 한 번 지운다(daemon/uploads.mjs).

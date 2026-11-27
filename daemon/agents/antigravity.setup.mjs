@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { soulRoot } from '../paths.mjs';
+import { isLocked, LOCKED_MESSAGE } from './antigravity.lock.mjs';
 
 /** ~/.gemini (시험은 IRIS_GEMINI_DIR 로 임시 폴더를 준다) */
 export const geminiDir = () => process.env.IRIS_GEMINI_DIR || path.join(os.homedir(), '.gemini');
@@ -179,6 +180,8 @@ export function bridgeWorks(root = soulRoot(), python = findPython()) {
   return why;
 }
 export function prepare(cwd, root = soulRoot(), { selfTest = bridgeWorks } = {}) {
+  // 화면 잠금(antigravity.lock.mjs): 잠겨 있으면 ~/.gemini 에 아무것도 쓰지 않고 다리 시험 호출도 하지 않는다(문턱은 preTrust 맨 앞 — 여기는 한 겹 더)
+  if (isLocked()) return { ok: false, why: LOCKED_MESSAGE, results: {}, line: 'locked' };
   const results = { trust: trustFolder(cwd), rules: ensureRules(root), hooks: ensureHooks(root) };
   const missing = guardsPresent(root);
   const why = [];

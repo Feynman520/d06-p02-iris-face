@@ -72,12 +72,16 @@ else {
   const mod = await import(pathToFileURL(pw).href); const chromium = (mod.default || mod).chromium;
   const PORT = 3459, capDir = process.env.IRIS_CAPTURE_DIR || '';
   const state = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-settings-'));
+  // 안티그래비티 화면 잠금(2026-11-27): 이 절은 열린 화면(구글 계정 줄 · 「대시보드에서 다시 로그인」 · Antigravity 권한 고르기)을 본다 — 시험 상태 폴더에 열쇠를 놓아 연다.
+  // 열린 시험 데몬이 진짜 중계기 · agy · ~/.gemini 에 닿지 않게 자리를 가짜로 준다(중계기에 닿지 않음 = 판정 gate → 권한 카드는 보인다). 잠긴 화면은 verify:agy-lock 이 본다.
+  fs.writeFileSync(path.join(state, 'iris-keys.json'), JSON.stringify({ antigravity: 'open' }), 'utf8');
+  const AGY_OPEN = { IRIS_AGY_GATE_URL: 'http://127.0.0.1:9', IRIS_AGY_EXE: path.join(state, 'no-agy.exe'), IRIS_GEMINI_DIR: path.join(state, 'gemini'), IRIS_AGY_STATUS_FILE: path.join(state, 'agy-status.json') };
   const mods = fs.mkdtempSync(path.join(os.tmpdir(), 'iris-face-settings-mods-'));
   fs.writeFileSync(path.join(state, 'settings.json'), JSON.stringify({ voice: { preload: false } }), 'utf8');
   fs.writeFileSync(path.join(state, 'sessions.json'), '[]', 'utf8');
   fs.writeFileSync(path.join(state, 'planner-rules.json'), JSON.stringify({ intro: 'seen' }), 'utf8'); // 처음 한 번 소개 말풍선은 이미 본 사람으로(이 검사는 설정 화면을 본다)
   const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, windowsHide: true, stdio: 'ignore',
-    env: { ...process.env, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' } });
+    env: { ...process.env, ...AGY_OPEN, IRIS_FACE_PORT: String(PORT), IRIS_FACE_STATE: state, IRIS_FACE_MODULES: mods, IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0' } });
   let browser;
   try {
     let up = false; for (let i = 0; i < 60 && !up; i++) { await sleep(250); try { up = (await fetch(`http://127.0.0.1:${PORT}/api/health`)).ok; } catch {} }

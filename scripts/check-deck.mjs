@@ -40,7 +40,11 @@ wj(handoffFile(soul), { schema: HANDOFF_SCHEMA, packageVersion: '2.0.46', writte
 wj(receiptFile(soul), { schema: 2, package: { version: '2.0.46' }, setup: Object.fromEntries(SETUP_STAGES.map((id) => [id, { status: 'done', finishedAt: 't' }])), online: { stage: 'done', net: { ok: true, blocked: [] }, logins: { claude: { state: 'not-needed' }, chatgpt: { state: 'done' } }, relay: { state: 'done', accounts: 1 } } });
 fs.mkdirSync(path.join(soul, 'R01-교사(Teacher)'), { recursive: true }); // 역할 폴더가 있으면 「다음」 잠금이 없어 끝까지 넘길 수 있다
 const state = path.join(tmp, 'st'); fs.mkdirSync(state); wj(path.join(state, 'settings.json'), { voice: { preload: false } }); fs.writeFileSync(path.join(state, 'sessions.json'), '[]');
-const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, stdio: 'ignore', windowsHide: true, env: { ...process.env, IRIS_ROOT: soul, IRIS_FACE_PORT: '3459', IRIS_FACE_STATE: state, IRIS_FACE_MODULES: path.join(tmp, 'mods'), IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0', IRIS_AGENTS_HOME: path.join(tmp, 'home') } });
+// 안티그래비티 화면 잠금(2026-11-27): 잠긴 화면은 16쪽의 안티그래비티 CLI 설치 명령을 「곧 열립니다」로 바꿔 그린다(그쪽은 verify:agy-lock 이 본다).
+// 이 검사는 덱 ↔ 원본의 글자 대조이므로 열린 화면에서 본다 — 시험 상태 폴더에 열쇠를 놓고, 열린 데몬이 진짜 중계기 · agy · ~/.gemini 에 닿지 않게 자리를 가짜로 준다.
+wj(path.join(state, 'iris-keys.json'), { antigravity: 'open' });
+const AGY_FAKE = { IRIS_AGY_GATE_URL: 'http://127.0.0.1:9', IRIS_AGY_EXE: path.join(tmp, 'no-agy.exe'), IRIS_GEMINI_DIR: path.join(tmp, 'gemini'), IRIS_AGY_STATUS_FILE: path.join(tmp, 'agy-status.json') };
+const d = spawn(process.execPath, [path.join(ROOT, 'daemon', 'server.mjs')], { cwd: ROOT, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...AGY_FAKE, IRIS_ROOT: soul, IRIS_FACE_PORT: '3459', IRIS_FACE_STATE: state, IRIS_FACE_MODULES: path.join(tmp, 'mods'), IRIS_FACE_AUTO_RESUME: '0', IRIS_FACE_UPDATE_CHECK: '0', IRIS_AGENTS_HOME: path.join(tmp, 'home') } });
 
 // 페이지 안 수집기: 섹션 안 글자마다 {글, 색, 실제 배경, 투명도, 굵기, 보임}
 const COLLECT = (sec) => {

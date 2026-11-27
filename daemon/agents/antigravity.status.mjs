@@ -20,6 +20,7 @@ import * as gate from './antigravity.gate.mjs';
 import { soulRoot } from '../paths.mjs';
 import { cliHome } from './antigravity.setup.mjs';
 import { groupModels, fitDefault } from './antigravity.models.mjs';
+import { isLocked, lockedStatus } from './antigravity.lock.mjs';
 
 const FACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STATE = process.env.IRIS_FACE_STATE || path.join(FACE_ROOT, 'state');
@@ -129,6 +130,8 @@ function writeStatus(r) {
  * gate: 중계기 판정 → (때가 됐으면) agy 를 실제로 한 번 띄워 봄 → 아니면 중계기가 읽어 둔 한도를 가져다 씀. direct: 예전처럼 agy 에게 묻는다(5분 묵힘).
  */
 export function refresh({ force = false } = {}) {
+  // 화면 잠금(antigravity.lock.mjs): 다른 판정보다 먼저 — agy 를 띄우지 않고 · 중계기에 묻지 않고 · 임시 폴더도 상태 파일도 만들지 않는다
+  if (isLocked()) return Promise.resolve(lockedStatus());
   const exe = agyExe();
   if (!exe) { const was = last?.state; last = { state: 'missing', groups: [], at: now(), detail: 'agy.exe not found' }; if (was !== 'missing') { wroteSig = ''; writeStatus(last); } return Promise.resolve(last); }
   // 중계기를 못 쓰는 판정(state = gate)은 50초만 믿는다 — 사용자가 중계기를 다시 켜면 1분 안에 단추가 살아나게(데몬이 1분마다 부른다).
@@ -173,10 +176,10 @@ export function _setRunner(f) { runner = f || run; }
 export function _resetReal() { real = { at: 0, ok: null, key: '', bad: null }; last = null; running = null; wroteSig = ''; wroteAt = 0; }
 /** 시험용: 마지막으로 실제로 띄워 본 때를 옮긴다(6시간 · 10분이 지난 것처럼) */
 export function _ageReal(ms) { real.at -= ms; if (last) last.at = new Date(Date.parse(last.at) - ms).toISOString(); }
-/** 지금 아는 값(기다리지 않음) */
-export const current = () => last;
+/** 지금 아는 값(기다리지 않음). 잠겨 있으면 처음부터 state = locked(아직 안 물었을 때의 '모름'을 거치지 않는다 — 화면 단추가 잠깐 켜졌다 꺼지지 않게) */
+export const current = () => (isLocked() ? lockedStatus() : last);
 /** 화면에 보낼 짧은 값 */
-export const brief = () => (last ? { state: last.state, at: last.at, headline: headline(last), connection, ...(last.account ? { account: last.account } : {}), ...(last.state === 'gate' ? { detail: last.detail } : {}) } : { state: 'unknown', at: null, headline: null, connection });
+export const brief = () => (isLocked() ? { state: 'locked', at: lockedStatus().at, headline: null, connection } : last ? { state: last.state, at: last.at, headline: headline(last), connection, ...(last.account ? { account: last.account } : {}), ...(last.state === 'gate' ? { detail: last.detail } : {}) } : { state: 'unknown', at: null, headline: null, connection });
 
 // ───────── 토큰 수(보여 주기 전용) — ~/.gemini 의 기록 전체(IRIS 창 + 직접 띄운 agy), 한도가 계정 전체 기준이라서 ─────────
 // 파일마다 (크기 · 수정 시각)이 같으면 다시 읽지 않는다 · 없어진 파일은 캐시에서 뺀다. 5분에 한 번(상태를 적을 때)만 돈다.
@@ -242,6 +245,7 @@ export function applyModels(table, list) {
 let modelsAt = 0, modelsKey = '', modelsRun = null, cacheTried = false;
 /** @returns {Promise<boolean>} 목록이 바뀌었으면 true(저장한 목록을 처음 입힌 것도 포함) */
 export function refreshModels(table, { log = () => {} } = {}) {
+  if (isLocked()) return Promise.resolve(false); // 화면 잠금: agy models 를 묻지 않고 저장한 목록도 읽지 않는다(목록은 손 표 그대로)
   const exe = agyExe(); if (!exe) return Promise.resolve(false);
   // 저장 열쇠에 길을 넣는다(2026-11-23) — 중계기 길의 목록(무료 계정 = Flash 뿐)과 직결 목록(이 PC 계정)은 다르다.
   let key = ''; try { const st = fs.statSync(exe); key = `${st.size}|${Math.round(st.mtimeMs)}|${connection}`; } catch {}

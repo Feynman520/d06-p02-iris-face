@@ -288,7 +288,7 @@ export function codexMcp(toml) {
   return out;
 }
 /** home = 사용자 폴더(시험에서는 임시 폴더). 코덱스는 `CODEX_HOME\skills` 말고도 `<사용자 폴더>\.agents\skills`(여러 에이전트 공용 자리 — 이 PC 는 180개가 여기 링크로 있음)를 읽으므로 둘 다 센다(v2.92). */
-export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.homedir() } = {}) { // IRIS_AGENTS_HOME = 시험용(가짜 사용자 폴더)
+export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.homedir(), antigravity = true } = {}) { // IRIS_AGENTS_HOME = 시험용(가짜 사용자 폴더) · antigravity: false = 화면 잠금 중(.gemini 를 읽지 않는다)
   const cl = path.join(root, '_agent', 'claude'), cx = path.join(root, '_agent', 'codex');
   const skills = [...skillsIn(path.join(cl, 'skills'), 'claude'), ...skillsIn(path.join(cx, 'skills'), 'codex'), ...(home ? skillsIn(path.join(home, '.agents', 'skills'), 'codex') : [])];
   const mcp = [];
@@ -308,7 +308,7 @@ export function listTools(root, { home = process.env.IRIS_AGENTS_HOME ?? os.home
   // 안티그래비티(2026-11-25 사용자 요청 "도구에 Antigravity 가 없음" — 1단계 = 보이기만, IRIS 가 설치 · 제거하지 않는다): 설정 폴더는 언제나 <사용자 폴더>\.gemini.
   // 읽는 것 = MCP(config\mcp_config.json 의 mcpServers — 이름 · 종류 · 실행 파일 이름만) · 사용자가 넣은 스킬(config\skills · skills). agy 에 들어 있는 기본 스킬과
   // 플러그인(저장 자리 미확인)은 세지 않는다. .gemini 가 없는 PC 는 아무것도 더하지 않는다.
-  if (home) {
+  if (home && antigravity) {
     const gm = path.join(home, '.gemini');
     const servers = readJson(path.join(gm, 'config', 'mcp_config.json'))?.mcpServers;
     if (servers && typeof servers === 'object' && !Array.isArray(servers)) {

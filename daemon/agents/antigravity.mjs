@@ -18,9 +18,16 @@ import { fileURLToPath } from 'node:url';
 import { prepare, cliHome } from './antigravity.setup.mjs';
 import { applyRoute } from './antigravity.gate.mjs';
 import { groupModels, mapLegacySel, actualOf as rowActual, EFFORT_ORDER, HAND_LIST } from './antigravity.models.mjs';
+import { assertOpen, isLocked } from './antigravity.lock.mjs';
 
 export const id = 'antigravity';
 export const connection = 'gate';
+// 🔴 화면 잠금의 기본값(2026-11-27 사용자 결정) — 푸는 값은 이 한 줄이다: 'locked' 를 'open' 으로 바꾸면 모든 PC 에서 Antigravity 가 열린다.
+//   'locked' 인 동안에는 열쇠 파일(<영혼>\_agent\setup\iris-keys.json 의 "antigravity": "open")이 있는 PC 만 지금처럼 쓴다.
+//   판정 · 열쇠 읽기 · 잠겼을 때 잠드는 것의 목록 = antigravity.lock.mjs. 검사 = npm run verify:agy-lock.
+export const lockDefault = 'locked';
+/** 지금 잠겨 있는가 — 세션 관리자가 자동 재개에서 이 에이전트의 카드를 뺄 때 묻는다(sessions.mjs resumeLost). 클로드 · 코덱스 어댑터에는 없는 함수다. */
+export const locked = () => isLocked();
 const FACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STATE = process.env.IRIS_FACE_STATE || path.join(FACE_ROOT, 'state');
 
@@ -91,8 +98,11 @@ export function buildCommand(s, cwd, { resumeId } = {}) {
  * 폴더 신뢰 · 전역 지침 · 안전 훅(antigravity.setup.mjs). 기록 폴더도 여기서 만든다.
  * 🔴 클로드 · 코덱스의 preTrust 와 달리 **안전 준비가 안 되면 던진다** → sessions.mjs spawn() 이 CLI 를 띄우기 전에 멈추고 화면에 이유가 보인다
  * (권한을 묻지 않는 세션을 안전 훅 없이 열지 않는다 — 코덱스 코드 검토 2번).
+ * 🔴 맨 앞 = 화면 잠금의 문턱(antigravity.lock.mjs): 잠겨 있으면 아무것도 하기 전에 던진다(code AGY_LOCKED) — 기록 폴더도 만들지 않고 ~/.gemini 에도 쓰지 않는다.
+ *    새 세션 · 에이전트 바꾸기 · 모델 바꾸기 · 재개가 모두 이 함수를 지난다(바꾸기 · 재개는 readyCheck 로 — 지금 프로세스를 끄기 전에).
  */
 export function preTrust(cwd, env) {
+  assertOpen();
   try { fs.mkdirSync(logDir(), { recursive: true }); } catch {}
   let r; try { r = prepare(cwd); } catch (e) { r = { ok: false, why: `준비 중 오류(${String(e?.message || e)})`, line: 'error' }; }
   if (!r.ok) { const e = new Error(`안티그래비티 안전 준비가 안 되어 세션을 열지 않았습니다 — ${r.why}`); e.code = 'AGY_NOT_READY'; throw e; }

@@ -138,7 +138,9 @@ export class SessionManager {
   /** 시작 직후: 잃은 세션을 하나씩 간격을 두고 자동 재개한다. 돌려주는 값 = 재개 대상 id 목록(비동기로 진행). */
   resumeLost({ gapMs = AUTO_RESUME_GAP_MS, note = RESUME_NOTE, enabled = AUTO_RESUME, filter = null } = {}) {
     // filter(2026-11-23): 일부 카드만 — 안티그래비티 카드는 중계기 첫 판정 뒤에 따로 재개한다(server.mjs). 없으면 예전과 같이 전부.
-    const ids = this.lost().filter(r => !filter || filter(r)).map(r => r.id);
+    // 잠긴 에이전트의 카드(2026-11-27 안티그래비티 화면 잠금 — 어댑터의 locked())는 처음부터 뺀다: 재개를 시도하지 않고 실패 기록도 남기지 않는다.
+    // 카드와 기록은 그대로 둔다(잠금이 풀린 뒤 「여기서 재개」로 잇는다). 클로드 · 코덱스 어댑터에는 locked 가 없어 지금까지와 같다.
+    const ids = this.lost().filter(r => !filter || filter(r)).filter(r => !adapterOrDefault(r.agent)?.locked?.()).map(r => r.id);
     if (!enabled || !ids.length) return [];
     ids.forEach((id, i) => setTimeout(() => {
       const rec = this.sessions.get(id); if (!rec || rec.status !== 'dead') return; // 그 사이 사용자가 지웠거나 손으로 재개함
