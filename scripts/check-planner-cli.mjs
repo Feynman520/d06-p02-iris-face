@@ -65,6 +65,14 @@ try {
   ok(cli.note() === CLI_NOTE && !/[\u00B7\u29C9\u2015]/.test(CLI_NOTE) && CLI_NOTE.includes('iris-planner') && CLI_NOTE.includes('--asked') && CLI_NOTE.includes('고치기, 끝냄 표시, 지우기는 사용자가 직접 시켰을 때만 한다'), '안내문: 명령 이름 · --asked · 고치기와 지우기는 시킨 것만(코덱스가 떨어뜨리는 글자 없음)');
   // 2026-11-23 사용자 신고("등록된 내용이 길면 잘림"): 세션이 넣을 때 이름은 핵심만 짧게, 자세한 내용은 --note 에 — 안내문과 도움말 둘 다에 있어야 한다
   ok(CLI_NOTE.includes('이름(--title)은 핵심만 짧게') && CLI_NOTE.includes('--note') && /^[\x20-\x7E가-힣ㄱ-ㅎㅏ-ㅣ]*$/.test(CLI_NOTE) && fs.readFileSync(path.join(BIN_DIR, 'iris-planner.mjs'), 'utf8').includes('--title 은 핵심만 짧게'), '안내문 · 도움말: 이름은 핵심만 짧게, 자세한 내용은 --note (안내문은 한글 · 영문 · ASCII 문장부호만)');
+  // 2026-11-27 등록 규칙 두 문장: 쪼개지는 일은 세부일(--step)로 일하는 순서대로 · 이름은 전체 일의 이름 · 넣기 전에 list 로 같은 일이 있는지 — 안내문이 말하는 명령이 도움말에 실제로 있어야 한다
+  const helpSrc = fs.readFileSync(path.join(BIN_DIR, 'iris-planner.mjs'), 'utf8');
+  ok(CLI_NOTE.includes('--step 으로 세부일(단계)을 일하는 순서대로') && CLI_NOTE.includes('하나짜리 일에는 세부일을 만들지 않으며') && CLI_NOTE.includes('전체 일의 이름으로 적는다') && CLI_NOTE.includes('넣기 전에 iris-planner list 로 같은 일이 이미 있는지') && CLI_NOTE.includes('있으면 새 줄을 만들지 않는다')
+    && /^[\x20-\x7E가-힣ㄱ-ㅎㅏ-ㅣ]*$/.test(CLI_NOTE) && !/[\r\n\t]/.test(CLI_NOTE) && !CLI_NOTE.includes('아래가 실제 요청이다') && !CLI_NOTE.includes('[IRIS-Face 안내]'), '안내문: 쪼개지는 일은 --step 세부일로 · 이름은 전체 일의 이름 · 넣기 전에 list (한글 · 영문 · ASCII 문장부호만 · 끝 표식과 겹치지 않음)');
+  ok(helpSrc.includes('iris-planner list [--from YYYY-MM-DD] [--to YYYY-MM-DD]') && helpSrc.includes('기본: 오늘부터 14일') && helpSrc.includes('[--step "단계 이름@YYYY-MM-DD"]...') && CLI_NOTE.includes('--from 과 --to') && CLI_NOTE.includes('오늘부터 14일'), '안내문의 --step · list · --from · --to 는 도움말의 실제 명령과 같음(보는 기간의 기본 14일도)');
+  const before = '자세한 내용은 --note 에 적는다. ', after = '고치기, 끝냄 표시, 지우기는';
+  const added = CLI_NOTE.slice(CLI_NOTE.indexOf(before) + before.length, CLI_NOTE.indexOf(after));
+  ok(CLI_NOTE.includes(before) && CLI_NOTE.indexOf(after) > CLI_NOTE.indexOf(before) && (added.match(/다\. /g) || []).length === 2 && CLI_NOTE.length <= 560, '등록 규칙은 두 문장만(이름 규칙과 「시킨 것만」 사이) · 첫 요청이 길어지지 않게 안내문은 560자 안');
   const noted = withFaceNote('안녕', cli.note());
   ok(noted.includes(CLI_NOTE) && noted.endsWith('\n\n안녕') && stripFaceNote(noted) === '안녕' && withFaceNote('안녕') === `${FACE_NOTE}\n\n안녕` && withFaceNote('  ', cli.note()) === '', '안내문은 첫 요청 앞에만 · 대화 화면에서는 통째로 지워짐 · 덧붙임이 없으면 전과 같음');
   ok(stripFaceNote(noted.replace(/--/g, ' ')) === '안녕', '끝 표식의 장식이 떨어져도 지워짐');
