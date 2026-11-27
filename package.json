@@ -73,7 +73,8 @@
     "verify:update-chat": "node scripts/check-update-chat.mjs",
     "verify:agent-baseline": "node scripts/check-agent-baseline.mjs",
     "verify:antigravity": "node scripts/check-antigravity.mjs",
-    "verify:agy-gate": "node scripts/check-agy-gate.mjs"
+    "verify:agy-gate": "node scripts/check-agy-gate.mjs",
+    "verify:agy-lock": "node scripts/check-agy-lock.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
